@@ -7,6 +7,7 @@ version = "0.1.0"
 
 [tasks]
 main = "python solution.py"
+test = "python test_solution.py"
 
 [dependencies]
 python = ">=3.14.6,<3.15"
