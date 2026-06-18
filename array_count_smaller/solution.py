@@ -5,15 +5,22 @@ def smaller_numbers_than_current(nums: list[int]) -> list[int]:
 
     Return the answer in an array.
     """
-    n = len(nums)
-    counts_smaller = [0] * n
+    if not nums:
+        return []
 
-    for i in range(n):
-        for j in range(n):
-            if nums[j] < nums[i]:
-                counts_smaller[i] += 1
+    sorted_nums = sorted(nums)
+    counts = {}
+    counts[sorted_nums[0]] = 0
 
-    return counts_smaller
+    for i in range(1, len(sorted_nums)):
+        if sorted_nums[i] == sorted_nums[i - 1]:
+            # Shares the same count of smaller numbers as its left adjacent neighbor
+            pass
+        else:
+            # The number of smaller elements is equal to the index i
+            counts[sorted_nums[i]] = i
+
+    return [counts[num] for num in nums]
 
 if __name__ == "__main__":
     print("how many numbers are smaller than the current number?")
