@@ -1,26 +1,44 @@
 
-def smaller_numbers_than_current(nums: list[int]) -> list[int]:
+def smaller_numbers_than_current_sorted(nums: list[int]) -> list[int]:
     """
-    Given the array nums, for each nums[i] find out how many numbers in the array are smaller than it. That is, for each nums[i] you have to count the number of valid j's such that j != i and nums[j] < nums[i].
+    O(N log N) time complexity using sorting and a dictionary lookup.
+    """
+    sorted_nums = sorted(nums)
+    counts = {}
+    for i, num in enumerate(sorted_nums):
+        if num not in counts:
+            counts[num] = i
+    return [counts[num] for num in nums]
 
-    Return the answer in an array.
+
+def smaller_numbers_than_current_counting(nums: list[int]) -> list[int]:
+    """
+    O(N + K) time complexity using counting sort / prefix sums,
+    where K is the range of values (max_val - min_val).
     """
     if not nums:
         return []
 
-    sorted_nums = sorted(nums)
-    counts = {}
-    counts[sorted_nums[0]] = 0
+    min_val = min(nums)
+    max_val = max(nums)
+    k = max_val - min_val
 
-    for i in range(1, len(sorted_nums)):
-        if sorted_nums[i] == sorted_nums[i - 1]:
-            # Shares the same count of smaller numbers as its left adjacent neighbor
-            pass
-        else:
-            # The number of smaller elements is equal to the index i
-            counts[sorted_nums[i]] = i
+    # Shifting values by -min_val to support negative numbers
+    count = [0] * (k + 2)
+    for num in nums:
+        count[num - min_val + 1] += 1
 
-    return [counts[num] for num in nums]
+    for i in range(1, len(count)):
+        count[i] += count[i - 1]
+
+    return [count[num - min_val] for num in nums]
+
+
+def smaller_numbers_than_current(nums: list[int]) -> list[int]:
+    """
+    Given the array nums, for each nums[i] find out how many numbers in the array are smaller than it.
+    """
+    return smaller_numbers_than_current_sorted(nums)
 
 if __name__ == "__main__":
     print("how many numbers are smaller than the current number?")
