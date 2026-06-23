@@ -1,6 +1,7 @@
 #include <stdio.h>
 
-int main(void) {
+int main(void) {  // no arguments
+// int main(int argc, char *argv[]) {  // with cli arguments
     printf("Hello, world!\n");
     printf("Hello, blasagna!\n");
     

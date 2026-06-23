@@ -1,0 +1,1 @@
+build:strict --copt=-Wall --copt=-Werror --copt=-Wextra --copt=-pedantic
