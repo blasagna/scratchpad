@@ -1,7 +1,6 @@
 #include <stdio.h>
 
-// int main(void) {
-int main() {
+int main(void) {
     printf("Hello, world!\n");
     printf("Hello, blasagna!\n");
     
@@ -11,5 +10,5 @@ int main() {
     if (res_puts == EOF) {
         printf("puts failed\n");
     }
-//    return 0;
+    return 0;
 }
