@@ -32,6 +32,13 @@ int sum_to_n(int n) {
     return n + sum_to_n(n - 1);
 }
 
+int power(int a, int b) {
+    if (b == 1) {
+        return a;
+    }
+    return a * power(a, b - 1);
+}
+
 int main(void) {
     int count_down_start = 10;
     printf("count down from %d: \n", count_down_start);
@@ -50,5 +57,11 @@ int main(void) {
     int sum_n = 8;
     printf("sum to %d: %d", sum_n, sum_to_n(sum_n));
     printf("\n==========\n");
+
+    int power_a = 2;
+    int power_b = 10;
+    printf("%d^%d = %d", power_a, power_b, power(power_a, power_b));
+    printf("\n==========\n");
+    
     return 0;
 }
