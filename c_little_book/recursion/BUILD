@@ -1,5 +1,4 @@
-load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
-load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 cc_library(
     name = "math",
@@ -13,4 +12,14 @@ cc_binary(
     deps = [
         ":math",
     ]
+)
+
+cc_test(
+    name = "test_math",
+    srcs = ["test_math.c"],
+    copts = ["-x", "c++"],
+    deps = [
+        ":math",
+        "@googletest//:gtest_main",
+    ],
 )

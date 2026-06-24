@@ -1,1 +1,3 @@
+common --incompatible_autoload_externally=+@rules_cc
 build:strict --copt=-Wall --copt=-Werror --copt=-Wextra --copt=-pedantic
+
