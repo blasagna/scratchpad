@@ -1,3 +1,10 @@
 common --incompatible_autoload_externally=+@rules_cc
+
+# Make strict warning behavior the default for all builds
+build --config=strict
+
+# Config 'strict': Treat all warnings as errors
 build:strict --copt=-Wall --copt=-Werror --copt=-Wextra --copt=-pedantic
 
+# Config 'permissive': Opt-out of treating warnings as errors (warnings will still be shown but won't fail the build)
+build:permissive --copt=-Wno-error
