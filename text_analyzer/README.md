@@ -11,3 +11,11 @@ Requirements:
 4. count total characters, total words, and total lines.
 5. compute the most commonly used words and characters.
 6. print a summary at the end to stdout
+
+## TODO
+
+1. add option to write output as json format
+1. move magic numbers to parameters
+1. try to move preprocessor defined values to constants
+1. translate to modern cpp
+1. translate to rust
