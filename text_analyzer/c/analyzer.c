@@ -110,7 +110,7 @@ int analyze_file(FILE *f, TextStats *out) {
     for (int rank = 0; rank < TOP_N && rank < 256; rank++) {
         long target = sorted_char_counts[rank];
         if (target == 0) break;
-        for (int i = 32; i < 127; i++) {
+        for (int i = 33; i < 127; i++) {
             if (char_counts[i] == target) {
                 out->top_chars[out->top_char_count].ch = (char)i;
                 out->top_chars[out->top_char_count].count = target;
