@@ -194,15 +194,23 @@ void print_stats(const TextStats *stats) {
 
     printf("\nTop words:\n");
     for (int i = 0; i < stats->top_word_count; i++) {
-        printf("  %d. %s (%ld)\n", i + 1,
+        double pct = stats->word_count > 0
+            ? 100.0 * stats->top_words[i].count / stats->word_count
+            : 0.0;
+        printf("  %d. %s (%ld, %.1f%%)\n", i + 1,
                stats->top_words[i].word,
-               stats->top_words[i].count);
+               stats->top_words[i].count,
+               pct);
     }
 
     printf("\nTop characters:\n");
     for (int i = 0; i < stats->top_char_count; i++) {
-        printf("  %d. '%c' (%ld)\n", i + 1,
+        double pct = stats->char_count > 0
+            ? 100.0 * stats->top_chars[i].count / stats->char_count
+            : 0.0;
+        printf("  %d. '%c' (%ld, %.1f%%)\n", i + 1,
                stats->top_chars[i].ch,
-               stats->top_chars[i].count);
+               stats->top_chars[i].count,
+               pct);
     }
 }
