@@ -233,3 +233,6 @@ production
 .bazelversion
 # User-specific .bazelrc
 user.bazelrc
+
+# Rust / cargo build output
+target/

@@ -18,4 +18,8 @@ Requirements:
 
 ## TODO
 
-1. translate to rust
+1. ~~translate to rust~~ (done — see `rust/`)
+1. report word length statistics: mean, min, max, quantiles 25, 50, 75
+1. count blank lines, digits, and punctuation marks
+1. support reading from stdin
+1. support multiple files

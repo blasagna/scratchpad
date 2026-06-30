@@ -65,7 +65,7 @@ pixi init <directory>
 
 ## Rust with cargo
 
-Each Rust project lives in its own directory with a standard `Cargo.toml`. Use cargo directly from within that directory:
+Each Rust project lives in its own directory with a standard `Cargo.toml`. New projects should use the 2024 edition (`edition = "2024"` in `Cargo.toml`). Use cargo directly from within that directory:
 
 ```sh
 cargo build
