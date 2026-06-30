@@ -11,6 +11,10 @@ Requirements:
 4. count total characters, total words, and total lines.
 5. compute the most commonly used words and characters, both as counts and frequencies.
 6. print a summary at the end to stdout
+7. include a CLI option to print the output in json format
+8. avoid magic numbers or repeated constants throughout the code. Reuse constant values, making them settable by command line options with sane defaults.
+9. structure the project as a main CLI executable using one or more libraries. Write unit tests of the libaries. 
+10. Add a help menu to the CLI program
 
 ## TODO
 
