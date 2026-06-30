@@ -1,5 +1,8 @@
 common --incompatible_autoload_externally=+@rules_cc
 
+# Compile all C++ with the C++20 standard (cxxopt only affects C++, not C)
+build --cxxopt=-std=c++20
+
 # Make strict warning behavior the default for all builds
 build --config=strict
 

@@ -1,4 +1,5 @@
 #include <getopt.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -28,6 +29,28 @@ static void print_help(void) {
     printf("  -h, --help          show this help\n");
 }
 
+static void print_usage_error(void) {
+    fprintf(stderr, "usage: text_analyzer [options] <file>\n");
+    fprintf(stderr, "       text_analyzer --help\n");
+}
+
+/*
+ * Parses value as a positive integer (>= 1, fitting in int). On success stores
+ * it in *out and returns 0. On failure prints an error mentioning opt_name and
+ * returns -1. Rejects empty input, trailing junk, and non-positive values.
+ */
+static int parse_positive(const char *opt_name, const char *value, int *out) {
+    char *endp;
+    long n = strtol(value, &endp, 10);
+    if (endp == value || *endp != '\0' || n < 1 || n > INT_MAX) {
+        fprintf(stderr, "error: invalid value '%s' for %s (expected a positive integer)\n",
+                value, opt_name);
+        return -1;
+    }
+    *out = (int)n;
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     AnalyzerConfig config = {
         .top_n = DEFAULT_TOP_N,
@@ -49,24 +72,28 @@ int main(int argc, char *argv[]) {
     int opt;
     while ((opt = getopt_long(argc, argv, "h", long_opts, NULL)) != -1) {
         switch (opt) {
-            case 't': config.top_n              = atoi(optarg); break;
-            case 'm': config.max_word_len        = atoi(optarg); break;
-            case 'w': config.word_table_init_cap = atoi(optarg); break;
+            case 't':
+                if (parse_positive("--top-n", optarg, &config.top_n) != 0) return 1;
+                break;
+            case 'm':
+                if (parse_positive("--max-word-len", optarg, &config.max_word_len) != 0) return 1;
+                break;
+            case 'w':
+                if (parse_positive("--word-table-cap", optarg, &config.word_table_init_cap) != 0) return 1;
+                break;
             case 'j': json_output = 1; break;
             case 'h':
                 print_help();
                 return 0;
             default:
-                fprintf(stderr, "usage: text_analyzer [options] <file>\n");
-                fprintf(stderr, "       text_analyzer --help\n");
+                print_usage_error();
                 return 1;
         }
     }
 
     if (optind >= argc) {
         fprintf(stderr, "error: no file specified\n");
-        fprintf(stderr, "usage: text_analyzer [options] <file>\n");
-        fprintf(stderr, "       text_analyzer --help\n");
+        print_usage_error();
         return 1;
     }
 
