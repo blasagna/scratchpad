@@ -73,4 +73,16 @@ int analyze_file(FILE *f, const AnalyzerConfig *config, TextStats *out);
  */
 void print_stats(const TextStats *stats);
 
+/*
+ * print_stats_json - prints stats to stdout as a single JSON object.
+ *
+ * Input:  stats - pointer to a populated TextStats struct (e.g. from
+ *                 analyze_file). Must not be NULL.
+ *
+ * Output: Writes one JSON object with line/word/character totals plus
+ *         top_words and top_characters arrays. Each entry carries its count
+ *         and a frequency expressed as a ratio in [0, 1]. Returns nothing.
+ */
+void print_stats_json(const TextStats *stats);
+
 #endif

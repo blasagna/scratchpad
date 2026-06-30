@@ -9,11 +9,10 @@ Requirements:
 2. open the file safely, reporting errors if it does not exist or cannot be read.
 3. read the file line by line
 4. count total characters, total words, and total lines.
-5. compute the most commonly used words and characters.
+5. compute the most commonly used words and characters, both as counts and frequencies.
 6. print a summary at the end to stdout
 
 ## TODO
 
-1. add option to write output as json format
 1. translate to modern cpp
 1. translate to rust

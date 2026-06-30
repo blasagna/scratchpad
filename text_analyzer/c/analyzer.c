@@ -214,3 +214,48 @@ void print_stats(const TextStats *stats) {
                pct);
     }
 }
+
+/* Prints c as the contents of a JSON string, escaping the two characters that
+ * are otherwise illegal inside one. The char range used for top characters
+ * ('!'..'~') contains no control characters, so only '"' and '\\' can appear. */
+static void print_json_char(char c) {
+    if (c == '"' || c == '\\') {
+        printf("\\%c", c);
+    } else {
+        printf("%c", c);
+    }
+}
+
+void print_stats_json(const TextStats *stats) {
+    printf("{\n");
+    printf("  \"lines\": %ld,\n", stats->line_count);
+    printf("  \"words\": %ld,\n", stats->word_count);
+    printf("  \"characters\": %ld,\n", stats->char_count);
+
+    printf("  \"top_words\": [");
+    for (int i = 0; i < stats->top_word_count; i++) {
+        double freq = stats->word_count > 0
+            ? (double)stats->top_words[i].count / stats->word_count
+            : 0.0;
+        printf("%s\n    {\"word\": \"%s\", \"count\": %ld, \"frequency\": %.4f}",
+               i == 0 ? "" : ",",
+               stats->top_words[i].word,  /* words are alpha-only; no escaping needed */
+               stats->top_words[i].count,
+               freq);
+    }
+    printf("%s],\n", stats->top_word_count > 0 ? "\n  " : "");
+
+    printf("  \"top_characters\": [");
+    for (int i = 0; i < stats->top_char_count; i++) {
+        double freq = stats->char_count > 0
+            ? (double)stats->top_chars[i].count / stats->char_count
+            : 0.0;
+        printf("%s\n    {\"char\": \"", i == 0 ? "" : ",");
+        print_json_char(stats->top_chars[i].ch);
+        printf("\", \"count\": %ld, \"frequency\": %.4f}",
+               stats->top_chars[i].count, freq);
+    }
+    printf("%s]\n", stats->top_char_count > 0 ? "\n  " : "");
+
+    printf("}\n");
+}

@@ -24,6 +24,7 @@ static void print_help(void) {
            DEFAULT_MAX_WORD_LEN);
     printf("  --word-table-cap N  initial word frequency table capacity (default: %d)\n",
            DEFAULT_WORD_TABLE_CAP);
+    printf("  --json              print the summary as JSON instead of text\n");
     printf("  -h, --help          show this help\n");
 }
 
@@ -34,10 +35,13 @@ int main(int argc, char *argv[]) {
         .word_table_init_cap = DEFAULT_WORD_TABLE_CAP,
     };
 
+    int json_output = 0;
+
     static struct option long_opts[] = {
         {"top-n",          required_argument, NULL, 't'},
         {"max-word-len",   required_argument, NULL, 'm'},
         {"word-table-cap", required_argument, NULL, 'w'},
+        {"json",           no_argument,       NULL, 'j'},
         {"help",           no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
@@ -48,6 +52,7 @@ int main(int argc, char *argv[]) {
             case 't': config.top_n              = atoi(optarg); break;
             case 'm': config.max_word_len        = atoi(optarg); break;
             case 'w': config.word_table_init_cap = atoi(optarg); break;
+            case 'j': json_output = 1; break;
             case 'h':
                 print_help();
                 return 0;
@@ -80,7 +85,11 @@ int main(int argc, char *argv[]) {
     }
 
     fclose(f);
-    print_stats(&stats);
+    if (json_output) {
+        print_stats_json(&stats);
+    } else {
+        print_stats(&stats);
+    }
     text_stats_free(&stats);
     return 0;
 }

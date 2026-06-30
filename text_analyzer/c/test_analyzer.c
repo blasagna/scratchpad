@@ -114,3 +114,20 @@ TEST(AnalyzerTest, ConfigMaxWordLen) {
     EXPECT_EQ(stats.top_words[0].count, 2);
     text_stats_free(&stats);
 }
+
+TEST(AnalyzerTest, JsonOutput) {
+    FILE *f = make_stream("the the cat\n");
+    TextStats stats;
+    ASSERT_EQ(analyze_file(f, NULL, &stats), 0);
+    fclose(f);
+
+    testing::internal::CaptureStdout();
+    print_stats_json(&stats);
+    std::string out = testing::internal::GetCapturedStdout();
+    text_stats_free(&stats);
+
+    EXPECT_NE(out.find("\"words\": 3"), std::string::npos);
+    EXPECT_NE(out.find("\"word\": \"the\""), std::string::npos);
+    EXPECT_NE(out.find("\"count\": 2"), std::string::npos);
+    EXPECT_NE(out.find("\"top_characters\""), std::string::npos);
+}
