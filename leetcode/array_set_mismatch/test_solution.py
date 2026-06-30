@@ -1,6 +1,7 @@
 import unittest
 from solution import find_error_nums, find_error_nums_math, find_error_nums_xor
 
+
 class TestFindErrorNumsOriginal(unittest.TestCase):
     def test_example_case(self):
         self.assertEqual(find_error_nums([1, 2, 2, 4]), (2, 3))

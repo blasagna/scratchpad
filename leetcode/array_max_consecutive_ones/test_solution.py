@@ -1,6 +1,7 @@
 import unittest
 from solution import find_max_consecutive_ones
 
+
 class TestFindMaxConsecutiveOnes(unittest.TestCase):
     def test_empty_list(self):
         self.assertEqual(find_max_consecutive_ones([]), 0)
@@ -28,6 +29,7 @@ class TestFindMaxConsecutiveOnes(unittest.TestCase):
 
     def test_single_one(self):
         self.assertEqual(find_max_consecutive_ones([1]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

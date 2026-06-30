@@ -1,4 +1,3 @@
-
 def smaller_numbers_than_current_sorted(nums: list[int]) -> list[int]:
     """
     O(N log N) time complexity using sorting and a dictionary lookup.
@@ -39,6 +38,7 @@ def smaller_numbers_than_current(nums: list[int]) -> list[int]:
     Given the array nums, for each nums[i] find out how many numbers in the array are smaller than it.
     """
     return smaller_numbers_than_current_sorted(nums)
+
 
 if __name__ == "__main__":
     print("how many numbers are smaller than the current number?")

@@ -1,4 +1,4 @@
-typedef enum { TYPE_INT,  TYPE_FLOAT,  TYPE_STRING } DataType;
+typedef enum { TYPE_INT, TYPE_FLOAT, TYPE_STRING } DataType;
 
 typedef union {
   int i;
@@ -11,4 +11,4 @@ typedef struct {
   DataValue value;
 } Variant;
 
-const char* get_data_type(Variant v);
+const char *get_data_type(Variant v);

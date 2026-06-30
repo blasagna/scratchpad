@@ -8,8 +8,8 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use text_analyzer::{
-    analyze, render_json, render_text, Config, DEFAULT_MAX_WORD_LEN, DEFAULT_TOP_N,
-    DEFAULT_WORD_TABLE_CAP,
+    Config, DEFAULT_MAX_WORD_LEN, DEFAULT_TOP_N, DEFAULT_WORD_TABLE_CAP, analyze, render_json,
+    render_text,
 };
 
 #[derive(Parser)]

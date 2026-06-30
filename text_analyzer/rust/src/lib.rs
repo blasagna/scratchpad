@@ -5,7 +5,7 @@ pub mod analyzer;
 pub mod report;
 
 pub use analyzer::{
-    analyze, CharFreq, Config, TextStats, WordFreq, DEFAULT_MAX_WORD_LEN, DEFAULT_TOP_N,
-    DEFAULT_WORD_TABLE_CAP,
+    CharFreq, Config, DEFAULT_MAX_WORD_LEN, DEFAULT_TOP_N, DEFAULT_WORD_TABLE_CAP, TextStats,
+    WordFreq, analyze,
 };
 pub use report::{render_json, render_text};

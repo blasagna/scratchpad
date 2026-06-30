@@ -5,6 +5,7 @@ from solution import (
     smaller_numbers_than_current_counting,
 )
 
+
 class TestSmallerNumbersThanCurrent(unittest.TestCase):
     def assert_all_implementations(self, nums, expected):
         for name, func in [
@@ -35,6 +36,7 @@ class TestSmallerNumbersThanCurrent(unittest.TestCase):
 
     def test_negative_numbers(self):
         self.assert_all_implementations([-1, -2, 0, 2], [1, 0, 2, 3])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -236,3 +236,7 @@ user.bazelrc
 
 # Rust / cargo build output
 target/
+
+# pixi environments
+.pixi
+*.egg-info

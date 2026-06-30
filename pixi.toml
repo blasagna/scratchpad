@@ -1,0 +1,17 @@
+[workspace]
+authors = ["Bob DiMaiolo <bdimaiolo@gmail.com>"]
+channels = ["conda-forge"]
+name = "scratchpad"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+fmt-py = "ruff format ."
+fmt-c = "clang-format -i ./**/*.c ./**/*.h ./**/*.cpp ./**/*.hpp"
+fmt-rust = "bash -c \"find . -name Cargo.toml -not -path '*/target/*' -exec cargo fmt --manifest-path {} \\;\""
+fmt = { depends-on = ["fmt-py", "fmt-c", "fmt-rust"] }
+
+[dependencies]
+ruff = ">=0.15.20,<0.16"
+clang-format = ">=22.1.8,<23"
+cppcheck = ">=2.21.0,<3"

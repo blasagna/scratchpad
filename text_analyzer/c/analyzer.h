@@ -11,13 +11,13 @@
 #define MAX_WORD_BUF 256
 
 typedef struct {
-    char word[MAX_WORD_BUF];
-    long count;
+  char word[MAX_WORD_BUF];
+  long count;
 } WordFreq;
 
 typedef struct {
-    char ch;
-    long count;
+  char ch;
+  long count;
 } CharFreq;
 
 /*
@@ -26,22 +26,26 @@ typedef struct {
  * analyze_file.
  */
 typedef struct {
-    int max_word_len;        /* chars kept per word (must be <= MAX_WORD_BUF); default 256 */
-    int top_n;               /* number of top words/chars to report; default 5 */
-    int word_table_init_cap; /* initial capacity of the word frequency table; default 64 */
+  int max_word_len; /* chars kept per word (must be <= MAX_WORD_BUF); default
+                       256 */
+  int top_n;        /* number of top words/chars to report; default 5 */
+  int word_table_init_cap; /* initial capacity of the word frequency table;
+                              default 64 */
 } AnalyzerConfig;
 
 /* Returns an AnalyzerConfig populated with sane defaults. */
 AnalyzerConfig analyzer_config_default(void);
 
 typedef struct {
-    long line_count;
-    long word_count;
-    long char_count;
-    WordFreq *top_words;   /* top_word_count entries, heap-allocated by analyze_file */
-    int top_word_count;
-    CharFreq *top_chars;   /* top_char_count entries, heap-allocated by analyze_file */
-    int top_char_count;
+  long line_count;
+  long word_count;
+  long char_count;
+  WordFreq
+      *top_words; /* top_word_count entries, heap-allocated by analyze_file */
+  int top_word_count;
+  CharFreq
+      *top_chars; /* top_char_count entries, heap-allocated by analyze_file */
+  int top_char_count;
 } TextStats;
 
 /* Frees heap memory allocated inside stats by analyze_file. */
@@ -53,8 +57,8 @@ void text_stats_free(TextStats *stats);
  * Input:  f      - open, readable FILE* positioned at the start of the content.
  *                  The caller retains ownership and must fclose() it afterward.
  *         config - runtime options; pass NULL to use sane defaults.
- *         out    - pointer to a TextStats struct that will be fully overwritten.
- *                  Call text_stats_free(out) when done.
+ *         out    - pointer to a TextStats struct that will be fully
+ * overwritten. Call text_stats_free(out) when done.
  *
  * Output: Returns 0 on success. Returns -1 if f or out is NULL.
  *         On success, out->top_words and out->top_chars are heap-allocated

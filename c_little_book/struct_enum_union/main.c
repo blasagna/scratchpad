@@ -1,5 +1,5 @@
-#include <stdio.h>
 #include "variant.h"
+#include <stdio.h>
 
 int main(void) {
 
@@ -11,16 +11,16 @@ int main(void) {
   printf("data type is: %s\n", get_data_type(v));
   printf("data value is: ");
   switch (v.type) {
-    case TYPE_INT:
-      printf("%d", v.value.i);
-      break;
-    case TYPE_FLOAT:
-      printf("%f", v.value.f);
-      break;
-    case TYPE_STRING:
-      printf("%s", v.value.text);
-      break;
+  case TYPE_INT:
+    printf("%d", v.value.i);
+    break;
+  case TYPE_FLOAT:
+    printf("%f", v.value.f);
+    break;
+  case TYPE_STRING:
+    printf("%s", v.value.text);
+    break;
   };
-  printf("\n");  
+  printf("\n");
   return 0;
 }
