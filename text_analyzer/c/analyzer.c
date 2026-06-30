@@ -1,8 +1,19 @@
 #include "analyzer.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* All possible byte values (0-255), used to size the character frequency table. */
+#define CHAR_TABLE_SIZE (UCHAR_MAX + 1)
+
+/*
+ * Printable ASCII range excluding space: '!' (33) through '~' (126).
+ * These are the only characters considered for the top-chars report.
+ */
+static const int PRINTABLE_ASCII_MIN = '!';
+static const int PRINTABLE_ASCII_MAX = '~';
 
 typedef struct {
     WordFreq *entries;
@@ -10,34 +21,39 @@ typedef struct {
     int capacity;
 } WordTable;
 
-static void word_table_init(WordTable *t) {
-    t->capacity = 64;
+static int word_table_init(WordTable *t, int capacity) {
+    t->capacity = capacity;
     t->size = 0;
     t->entries = malloc(t->capacity * sizeof(WordFreq));
+    return t->entries ? 0 : -1;
 }
 
 static void word_table_free(WordTable *t) {
     free(t->entries);
 }
 
-static void word_table_add(WordTable *t, const char *word) {
+static int word_table_add(WordTable *t, const char *word) {
     for (int i = 0; i < t->size; i++) {
         if (strcmp(t->entries[i].word, word) == 0) {
             t->entries[i].count++;
-            return;
+            return 0;
         }
     }
     if (t->size == t->capacity) {
-        t->capacity *= 2;
-        t->entries = realloc(t->entries, t->capacity * sizeof(WordFreq));
+        int new_cap = t->capacity * 2;
+        WordFreq *tmp = realloc(t->entries, new_cap * sizeof(WordFreq));
+        if (!tmp) return -1;
+        t->entries = tmp;
+        t->capacity = new_cap;
     }
-    strncpy(t->entries[t->size].word, word, MAX_WORD_LEN - 1);
-    t->entries[t->size].word[MAX_WORD_LEN - 1] = '\0';
+    strncpy(t->entries[t->size].word, word, MAX_WORD_BUF - 1);
+    t->entries[t->size].word[MAX_WORD_BUF - 1] = '\0';
     t->entries[t->size].count = 1;
     t->size++;
+    return 0;
 }
 
-static int cmp_word_entry_desc(const void *a, const void *b) {
+static int cmp_word_freq_desc(const void *a, const void *b) {
     const WordFreq *wa = (const WordFreq *)a;
     const WordFreq *wb = (const WordFreq *)b;
     if (wb->count > wa->count) return 1;
@@ -53,18 +69,41 @@ static int cmp_long_desc(const void *a, const void *b) {
     return 0;
 }
 
-int analyze_file(FILE *f, TextStats *out) {
+AnalyzerConfig analyzer_config_default(void) {
+    AnalyzerConfig cfg;
+    cfg.max_word_len = MAX_WORD_BUF;
+    cfg.top_n = 5;
+    cfg.word_table_init_cap = 64;
+    return cfg;
+}
+
+void text_stats_free(TextStats *stats) {
+    if (!stats) return;
+    free(stats->top_words);
+    free(stats->top_chars);
+    stats->top_words = NULL;
+    stats->top_chars = NULL;
+}
+
+int analyze_file(FILE *f, const AnalyzerConfig *config, TextStats *out) {
     if (!f || !out) return -1;
+
+    AnalyzerConfig cfg = config ? *config : analyzer_config_default();
+    if (cfg.max_word_len <= 0 || cfg.max_word_len > MAX_WORD_BUF)
+        cfg.max_word_len = MAX_WORD_BUF;
+    if (cfg.top_n <= 0) cfg.top_n = 5;
+    if (cfg.word_table_init_cap <= 0) cfg.word_table_init_cap = 64;
 
     memset(out, 0, sizeof(*out));
 
-    long char_counts[256] = {0};
+    long char_counts[CHAR_TABLE_SIZE] = {0};
     WordTable words;
-    word_table_init(&words);
+    if (word_table_init(&words, cfg.word_table_init_cap) != 0) return -1;
 
-    char word_buf[MAX_WORD_LEN];
+    char word_buf[MAX_WORD_BUF];
     int word_len = 0;
     int in_word = 0;
+    int err = 0;
 
     int c;
     while ((c = fgetc(f)) != EOF) {
@@ -76,51 +115,73 @@ int analyze_file(FILE *f, TextStats *out) {
         }
 
         if (isalpha(c)) {
-            if (word_len < MAX_WORD_LEN - 1) {
+            if (word_len < cfg.max_word_len - 1) {
                 word_buf[word_len++] = (char)tolower(c);
             }
             in_word = 1;
         } else {
             if (in_word) {
                 word_buf[word_len] = '\0';
-                word_table_add(&words, word_buf);
+                if (word_table_add(&words, word_buf) != 0) { err = 1; break; }
                 out->word_count++;
                 word_len = 0;
                 in_word = 0;
             }
         }
     }
-    if (in_word) {
+    if (!err && in_word) {
         word_buf[word_len] = '\0';
-        word_table_add(&words, word_buf);
-        out->word_count++;
+        if (word_table_add(&words, word_buf) != 0) err = 1;
+        else out->word_count++;
+    }
+    if (err) {
+        word_table_free(&words);
+        return -1;
     }
 
-    qsort(words.entries, words.size, sizeof(WordFreq), cmp_word_entry_desc);
-    out->top_word_count = words.size < TOP_N ? words.size : TOP_N;
-    for (int i = 0; i < out->top_word_count; i++) {
-        out->top_words[i] = words.entries[i];
+    qsort(words.entries, words.size, sizeof(WordFreq), cmp_word_freq_desc);
+    out->top_word_count = words.size < cfg.top_n ? words.size : cfg.top_n;
+    if (out->top_word_count > 0) {
+        out->top_words = malloc(out->top_word_count * sizeof(WordFreq));
+        if (!out->top_words) {
+            word_table_free(&words);
+            return -1;
+        }
+        for (int i = 0; i < out->top_word_count; i++) {
+            out->top_words[i] = words.entries[i];
+        }
     }
 
-    long sorted_char_counts[256];
+    long sorted_char_counts[CHAR_TABLE_SIZE];
     memcpy(sorted_char_counts, char_counts, sizeof(char_counts));
-    qsort(sorted_char_counts, 256, sizeof(long), cmp_long_desc);
+    qsort(sorted_char_counts, CHAR_TABLE_SIZE, sizeof(long), cmp_long_desc);
 
+    CharFreq *top_chars_buf = NULL;
+    if (cfg.top_n > 0) {
+        top_chars_buf = malloc(cfg.top_n * sizeof(CharFreq));
+        if (!top_chars_buf) {
+            free(out->top_words);
+            out->top_words = NULL;
+            word_table_free(&words);
+            return -1;
+        }
+    }
     out->top_char_count = 0;
-    for (int rank = 0; rank < TOP_N && rank < 256; rank++) {
+
+    for (int rank = 0; rank < CHAR_TABLE_SIZE && out->top_char_count < cfg.top_n; rank++) {
         long target = sorted_char_counts[rank];
         if (target == 0) break;
-        for (int i = 33; i < 127; i++) {
+        for (int i = PRINTABLE_ASCII_MIN; i <= PRINTABLE_ASCII_MAX; i++) {
             if (char_counts[i] == target) {
-                out->top_chars[out->top_char_count].ch = (char)i;
-                out->top_chars[out->top_char_count].count = target;
+                top_chars_buf[out->top_char_count].ch = (char)i;
+                top_chars_buf[out->top_char_count].count = target;
                 out->top_char_count++;
                 char_counts[i] = -1;
                 break;
             }
         }
-        if (out->top_char_count >= TOP_N) break;
     }
+    out->top_chars = top_chars_buf;
 
     word_table_free(&words);
     return 0;

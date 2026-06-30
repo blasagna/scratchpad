@@ -15,7 +15,5 @@ Requirements:
 ## TODO
 
 1. add option to write output as json format
-1. move magic numbers to parameters
-1. try to move preprocessor defined values to constants
 1. translate to modern cpp
 1. translate to rust
