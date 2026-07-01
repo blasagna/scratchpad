@@ -5,9 +5,7 @@ from solution import build_array
 
 class TestBuildArray(unittest.TestCase):
     def test_example_1(self):
-        self.assertEqual(
-            build_array([1, 3], 3), ["Push", "Push", "Pop", "Push"]
-        )
+        self.assertEqual(build_array([1, 3], 3), ["Push", "Push", "Pop", "Push"])
 
     def test_example_2(self):
         self.assertEqual(build_array([1, 2, 3], 3), ["Push", "Push", "Push"])
@@ -20,9 +18,7 @@ class TestBuildArray(unittest.TestCase):
         self.assertEqual(build_array([1], 5), ["Push"])
 
     def test_single_element_later(self):
-        self.assertEqual(
-            build_array([3], 3), ["Push", "Pop", "Push", "Pop", "Push"]
-        )
+        self.assertEqual(build_array([3], 3), ["Push", "Pop", "Push", "Pop", "Push"])
 
     def test_full_range(self):
         self.assertEqual(
