@@ -1,4 +1,4 @@
-def get_concatenation(nums: List[int]) -> List[int]:
+def get_concatenation(nums: list[int]) -> list[int]:
     return nums + nums
 
 
