@@ -7,6 +7,7 @@ version = "0.1.0"
 
 [tasks]
 stack = "python stack.py"
+queue = "python queue.py"
 
 [dependencies]
 python = ">=3.14.6,<3.15"
