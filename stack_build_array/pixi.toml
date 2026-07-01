@@ -1,0 +1,13 @@
+[workspace]
+authors = ["Bob DiMaiolo <bdimaiolo@gmail.com>"]
+channels = ["conda-forge"]
+name = "stack_build_array"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+main = "python solution.py"
+test = "python -m unittest test_solution.py"
+
+[dependencies]
+python = ">=3.14.6,<3.15"
