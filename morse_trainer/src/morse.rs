@@ -128,6 +128,25 @@ pub fn encode(ch: char) -> Option<&'static [InputEvent]> {
     encode_symbol(Symbol::Char(ch.to_ascii_lowercase()))
 }
 
+/// A human-readable legend of the full table in dichotomic order: each entry
+/// pairs a character label with its dot/dash rendering. The space and backspace
+/// extensions are labeled by name rather than by an invisible glyph.
+///
+/// Used by the TUI to show a toggleable Morse reference chart during practice.
+pub fn legend_entries() -> Vec<(String, String)> {
+    TABLE
+        .iter()
+        .map(|(symbol, seq)| {
+            let label = match symbol {
+                Symbol::Char(' ') => "space".to_string(),
+                Symbol::Char(c) => c.to_string(),
+                Symbol::Backspace => "bksp".to_string(),
+            };
+            (label, render_sequence(seq))
+        })
+        .collect()
+}
+
 /// Renders a sequence as dots and dashes, e.g. `[Dot, Dash]` → `".-"`.
 pub fn render_sequence(seq: &[InputEvent]) -> String {
     seq.iter()

@@ -47,6 +47,8 @@ pub struct App {
     pub target: String,
     /// Whether to reveal the Morse for the next expected character.
     pub show_hint: bool,
+    /// Whether the full Morse legend/reference chart is shown during practice.
+    pub show_legend: bool,
     /// Set when the user asks to quit.
     pub should_quit: bool,
     /// In-progress dot/dash sequence, not yet committed.
@@ -66,6 +68,7 @@ impl Default for App {
             typed: String::new(),
             target: String::new(),
             show_hint: false,
+            show_legend: false,
             should_quit: false,
             seq: Vec::new(),
         }
@@ -146,6 +149,11 @@ impl App {
     /// Toggles the Morse hint for the next expected character.
     pub fn toggle_hint(&mut self) {
         self.show_hint = !self.show_hint;
+    }
+
+    /// Toggles the full Morse legend/reference chart shown during practice.
+    pub fn toggle_legend(&mut self) {
+        self.show_legend = !self.show_legend;
     }
 
     /// Moves the menu highlight up, wrapping around.
@@ -341,6 +349,16 @@ mod tests {
         assert_eq!(app.selection, 1); // wrapped to last
         app.menu_down();
         assert_eq!(app.selection, 0);
+    }
+
+    #[test]
+    fn legend_toggles_on_and_off() {
+        let mut app = free_text_app();
+        assert!(!app.show_legend);
+        app.toggle_legend();
+        assert!(app.show_legend);
+        app.toggle_legend();
+        assert!(!app.show_legend);
     }
 
     #[test]

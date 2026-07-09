@@ -69,3 +69,19 @@ fn prompted_practice_renders_target_and_hint() {
     // Hint shows the Morse for the next expected char 'e' == "."
     assert!(text.contains("next: e"));
 }
+
+#[test]
+fn legend_overlay_renders_when_toggled_on() {
+    let mut app = App::new();
+    app.menu_select(); // Free text practice
+
+    let hidden = render_to_string(&app);
+    assert!(!hidden.contains("morse legend"));
+
+    app.toggle_legend();
+    let shown = render_to_string(&app);
+    assert!(shown.contains("morse legend"));
+    // A couple of table entries should appear in the chart.
+    assert!(shown.contains("space"));
+    assert!(shown.contains("bksp"));
+}

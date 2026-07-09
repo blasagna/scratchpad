@@ -5,7 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use crate::app::{App, Mode, Screen};
 use crate::lessons;
@@ -112,6 +112,54 @@ fn render_practice(frame: &mut Frame, app: &App, legend: &str) {
     }
 
     render_keying_bar(frame, app, chunks[2]);
+
+    if app.show_legend {
+        render_legend_overlay(frame);
+    }
+}
+
+/// Draws the full Morse reference chart as a centered popup over the practice
+/// screen. Entries are laid out column-major so each column reads top-to-bottom
+/// in the table's dichotomic (learning) order.
+fn render_legend_overlay(frame: &mut Frame) {
+    const COLS: usize = 4;
+    /// Width of one "label  sequence" cell, in columns.
+    const CELL_WIDTH: usize = 14;
+
+    let entries = morse::legend_entries();
+    let rows = entries.len().div_ceil(COLS);
+
+    let lines: Vec<Line> = (0..rows)
+        .map(|r| {
+            let spans: Vec<Span> = (0..COLS)
+                .filter_map(|c| entries.get(c * rows + r))
+                .flat_map(|(label, seq)| {
+                    vec![
+                        Span::styled(
+                            format!("{label:>5} "),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(format!("{seq:<8}")),
+                    ]
+                })
+                .collect();
+            Line::from(spans)
+        })
+        .collect();
+
+    let width = (COLS * CELL_WIDTH) as u16 + 4;
+    let height = rows as u16 + 2;
+    let area = centered_fixed(width, height, frame.area());
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" morse legend  ·  l to close "),
+    );
+    frame.render_widget(Clear, area); // clear whatever is underneath the popup
+    frame.render_widget(widget, area);
 }
 
 fn render_free_text(frame: &mut Frame, app: &App, area: Rect) {
@@ -245,6 +293,19 @@ fn extension_sequence(symbol: Symbol) -> String {
     morse::encode_symbol(symbol)
         .map(morse::render_sequence)
         .unwrap_or_default()
+}
+
+/// Centers a rectangle of a fixed `width` × `height` within `r`, clamping to
+/// `r`'s bounds so the popup never overflows a small terminal.
+fn centered_fixed(width: u16, height: u16, r: Rect) -> Rect {
+    let width = width.min(r.width);
+    let height = height.min(r.height);
+    Rect {
+        x: r.x + r.width.saturating_sub(width) / 2,
+        y: r.y + r.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
 }
 
 /// Centers a rectangle taking `percent_x` × `percent_y` of `r`.

@@ -127,7 +127,7 @@ fn run(terminal: &mut Tui, cli: &Cli) -> io::Result<()> {
     };
     let timeout = Duration::from_millis(cli.timeout);
     let legend = format!(
-        "dot: {}   dash: {}   quit: {}   timeout: {}ms   |   ↑/↓ ⏎ menu   esc back   tab hint",
+        "dot: {}   dash: {}   quit: {}   timeout: {}ms   |   ↑/↓ ⏎ menu   esc back   tab hint   l legend",
         display_key(keys.dot),
         display_key(keys.dash),
         display_key(keys.quit),
@@ -141,18 +141,18 @@ fn run(terminal: &mut Tui, cli: &Cli) -> io::Result<()> {
         terminal.draw(|frame| ui::render(frame, &app, &legend))?;
 
         if event::poll(POLL_INTERVAL)? {
-            match event::read()? {
+            let keyed = match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if handle_key(&mut app, key.code, &keys) {
-                        last_input = Instant::now();
-                    }
+                    handle_key(&mut app, key.code, &keys)
                 }
                 Event::Mouse(mouse) if cli.mouse && app.in_practice() => {
-                    if handle_mouse(&mut app, mouse.kind) {
-                        last_input = Instant::now();
-                    }
+                    handle_mouse(&mut app, mouse.kind)
                 }
-                _ => {}
+                _ => false,
+            };
+            // A dot/dash resets the input-timeout clock.
+            if keyed {
+                last_input = Instant::now();
             }
         }
 
@@ -201,6 +201,10 @@ fn handle_key(app: &mut App, code: KeyCode, keys: &Keys) -> bool {
             if app.in_practice() {
                 app.toggle_hint();
             }
+            false
+        }
+        KeyCode::Char('l') if app.in_practice() => {
+            app.toggle_legend();
             false
         }
         _ => false,

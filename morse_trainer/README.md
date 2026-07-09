@@ -33,6 +33,9 @@ The app opens on a menu (navigate with `↑`/`↓`, select with `⏎`, quit with
 
   ![Prompted practice](img/prompted_entry.png)
 
+During either practice mode, press `l` to toggle a Morse reference chart
+overlay listing every character and its dot/dash sequence.
+
 Press `Esc` to return to the menu.
 
 ### Keying
