@@ -23,10 +23,15 @@ The app opens on a menu (navigate with `↑`/`↓`, select with `⏎`, quit with
 
 - **Free text entry** — key freely; each decoded character is appended to a
   buffer. Great for warming up.
+
+  ![Free text entry](img/free_entry.png)
+
 - **Prompted practice** — reproduce a given prompt one character at a time.
   Choose either a **mixed phrases** track or one of the **progressive lessons**.
   Correct characters turn green, mistakes red, and the current position is
   underlined. Press `Tab` to reveal the Morse for the next expected character.
+
+  ![Prompted practice](img/prompted_entry.png)
 
 Press `Esc` to return to the menu.
 
