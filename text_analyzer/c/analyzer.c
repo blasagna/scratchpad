@@ -1,6 +1,7 @@
 #include "analyzer.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,45 +15,167 @@ static const int PRINTABLE_ASCII_MAX = '~';
 /* Width of the label column in the text summary, sized for the longest label. */
 #define LABEL_WIDTH 13
 
+/* Bytes read per fread() call. Reading in blocks rather than one getc() at a
+ * time keeps the scan loop off the stdio locking path. */
+#define READ_BUF_SIZE (64 * 1024)
+
+/* Payload bytes in a normal arena block. Words too long to fit get their own
+ * oversized block. */
+#define ARENA_BLOCK_SIZE (64 * 1024)
+
+/* Smallest permitted table capacity, and the load factor (as a percentage) at
+ * which the table doubles. Open addressing degrades badly as it fills, so this
+ * stays well below 100. */
+#define MIN_TABLE_CAPACITY 8
+#define MAX_LOAD_PERCENT 70
+
+/*
+ * A block of interned word bytes, bump-allocated and never moved. Declared
+ * opaquely in analyzer.h; the flexible array member keeps the header and its
+ * bytes in a single allocation.
+ */
+struct ArenaBlock {
+  struct ArenaBlock *next;
+  size_t used;
+  size_t cap;
+  char data[];
+};
+
+/*
+ * Copies len bytes of word plus a terminator into the arena and returns a
+ * pointer to them, or NULL on allocation failure. Blocks are never moved, so
+ * the returned pointer stays valid for the lifetime of the table.
+ */
+static const char *arena_intern(WordTable *t, const char *word, size_t len) {
+  const size_t need = len + 1;
+
+  if (!t->arena || t->arena->cap - t->arena->used < need) {
+    const size_t cap = need > ARENA_BLOCK_SIZE ? need : ARENA_BLOCK_SIZE;
+    ArenaBlock *block = malloc(sizeof(ArenaBlock) + cap);
+    if (!block)
+      return NULL;
+    block->next = t->arena;
+    block->used = 0;
+    block->cap = cap;
+    t->arena = block;
+  }
+
+  char *dst = t->arena->data + t->arena->used;
+  memcpy(dst, word, len);
+  dst[len] = '\0';
+  t->arena->used += need;
+  return dst;
+}
+
+static void arena_free(ArenaBlock *block) {
+  while (block) {
+    ArenaBlock *next = block->next;
+    free(block);
+    block = next;
+  }
+}
+
+/* FNV-1a, 64-bit. Cheap, no setup, and well behaved on short ASCII keys. */
+static unsigned long long hash_word(const char *word, size_t len) {
+  unsigned long long h = 14695981039346656037ULL;
+  for (size_t i = 0; i < len; i++) {
+    h ^= (unsigned char)word[i];
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+/* Rounds capacity up to a power of two so the hash can be masked rather than
+ * divided. */
+static size_t round_up_pow2(size_t n) {
+  size_t cap = MIN_TABLE_CAPACITY;
+  while (cap < n) {
+    /* Saturate rather than wrap if a caller asks for something absurd. */
+    if (cap > SIZE_MAX / 2)
+      return cap;
+    cap *= 2;
+  }
+  return cap;
+}
+
 static int word_table_init(WordTable *t, int capacity) {
-  t->capacity = capacity;
+  t->capacity = round_up_pow2(capacity > 0 ? (size_t)capacity : 0);
   t->size = 0;
-  t->entries = malloc(t->capacity * sizeof(WordFreq));
-  return t->entries ? 0 : -1;
+  t->arena = NULL;
+  t->slots = calloc(t->capacity, sizeof(WordEntry));
+  return t->slots ? 0 : -1;
 }
 
 static void word_table_free(WordTable *t) {
-  free(t->entries);
-  t->entries = NULL;
+  free(t->slots);
+  arena_free(t->arena);
+  t->slots = NULL;
+  t->arena = NULL;
   t->size = 0;
   t->capacity = 0;
 }
 
-static int word_table_add(WordTable *t, const char *word) {
-  for (int i = 0; i < t->size; i++) {
-    if (strcmp(t->entries[i].word, word) == 0) {
-      t->entries[i].count++;
-      return 0;
-    }
+/*
+ * Returns the slot holding word, or the empty slot where it belongs. The table
+ * is never full when this is called, so the probe always terminates.
+ */
+static WordEntry *word_table_lookup(WordEntry *slots, size_t capacity,
+                                    const char *word,
+                                    unsigned long long hash) {
+  size_t i = (size_t)hash & (capacity - 1);
+  while (slots[i].word && strcmp(slots[i].word, word) != 0) {
+    i = (i + 1) & (capacity - 1);
   }
-  if (t->size == t->capacity) {
-    int new_cap = t->capacity * 2;
-    WordFreq *tmp = realloc(t->entries, new_cap * sizeof(WordFreq));
-    if (!tmp)
-      return -1;
-    t->entries = tmp;
-    t->capacity = new_cap;
+  return &slots[i];
+}
+
+/* Doubles the table and reinserts every entry. Interned pointers are reused
+ * as-is, so no string bytes are copied. */
+static int word_table_grow(WordTable *t) {
+  const size_t new_cap = t->capacity * 2;
+  WordEntry *new_slots = calloc(new_cap, sizeof(WordEntry));
+  if (!new_slots)
+    return -1;
+
+  for (size_t i = 0; i < t->capacity; i++) {
+    const WordEntry *e = &t->slots[i];
+    if (!e->word)
+      continue;
+    const size_t len = strlen(e->word);
+    WordEntry *dst =
+        word_table_lookup(new_slots, new_cap, e->word, hash_word(e->word, len));
+    *dst = *e;
   }
-  strncpy(t->entries[t->size].word, word, MAX_WORD_BUF - 1);
-  t->entries[t->size].word[MAX_WORD_BUF - 1] = '\0';
-  t->entries[t->size].count = 1;
-  t->size++;
+
+  free(t->slots);
+  t->slots = new_slots;
+  t->capacity = new_cap;
   return 0;
 }
 
-static int cmp_word_freq_desc(const void *a, const void *b) {
-  const WordFreq *wa = (const WordFreq *)a;
-  const WordFreq *wb = (const WordFreq *)b;
+static int word_table_add(WordTable *t, const char *word, size_t len) {
+  WordEntry *slot =
+      word_table_lookup(t->slots, t->capacity, word, hash_word(word, len));
+  if (slot->word) {
+    slot->count++;
+    return 0;
+  }
+
+  const char *interned = arena_intern(t, word, len);
+  if (!interned)
+    return -1;
+  slot->word = interned;
+  slot->count = 1;
+  t->size++;
+
+  if (t->size * 100 >= t->capacity * MAX_LOAD_PERCENT)
+    return word_table_grow(t);
+  return 0;
+}
+
+static int cmp_word_entry_desc(const void *a, const void *b) {
+  const WordEntry *wa = (const WordEntry *)a;
+  const WordEntry *wb = (const WordEntry *)b;
   if (wb->count > wa->count)
     return 1;
   if (wb->count < wa->count)
@@ -115,7 +238,7 @@ void analyzer_free(Analyzer *a) {
 /* Records the accumulated word and its length, then resets word state. */
 static int flush_word(Analyzer *a) {
   a->word_buf[a->word_len] = '\0';
-  if (word_table_add(&a->words, a->word_buf) != 0)
+  if (word_table_add(&a->words, a->word_buf, (size_t)a->word_len) != 0)
     return -1;
   a->stats.word_count++;
 
@@ -138,29 +261,33 @@ int analyzer_feed(Analyzer *a, FILE *f) {
   if (!a || !f)
     return -1;
 
-  int c;
-  while ((c = fgetc(f)) != EOF) {
-    a->char_counts[(unsigned char)c]++;
-    a->stats.char_count++;
+  char buf[READ_BUF_SIZE];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+    for (size_t i = 0; i < n; i++) {
+      const int c = (unsigned char)buf[i];
+      a->char_counts[c]++;
+      a->stats.char_count++;
 
-    if (c == '\n') {
-      a->stats.line_count++;
-      if (!a->line_has_content)
-        a->stats.blank_line_count++;
-      a->line_has_content = 0;
-    } else if (!isspace(c)) {
-      a->line_has_content = 1;
-    }
+      if (c == '\n') {
+        a->stats.line_count++;
+        if (!a->line_has_content)
+          a->stats.blank_line_count++;
+        a->line_has_content = 0;
+      } else if (!isspace(c)) {
+        a->line_has_content = 1;
+      }
 
-    if (isalpha(c)) {
-      /* Keep at most max_word_len - 1 chars, but measure the true length. */
-      if (a->word_len < a->config.max_word_len - 1)
-        a->word_buf[a->word_len++] = (char)tolower(c);
-      a->cur_word_len++;
-      a->in_word = 1;
-    } else if (a->in_word) {
-      if (flush_word(a) != 0)
-        return -1;
+      if (isalpha(c)) {
+        /* Keep at most max_word_len - 1 chars, but measure the true length. */
+        if (a->word_len < a->config.max_word_len - 1)
+          a->word_buf[a->word_len++] = (char)tolower(c);
+        a->cur_word_len++;
+        a->in_word = 1;
+      } else if (a->in_word) {
+        if (flush_word(a) != 0)
+          return -1;
+      }
     }
   }
 
@@ -215,17 +342,37 @@ int analyzer_finish(Analyzer *a, TextStats *out) {
   out->top_chars = NULL;
   out->top_char_count = 0;
 
-  qsort(a->words.entries, a->words.size, sizeof(WordFreq), cmp_word_freq_desc);
-  out->top_word_count =
-      a->words.size < a->config.top_n ? a->words.size : a->config.top_n;
-  if (out->top_word_count > 0) {
-    out->top_words = malloc(out->top_word_count * sizeof(WordFreq));
+  /* Collect the occupied slots, rank them, and copy the top entries out. The
+   * hash table's slot order is arbitrary, but the comparator is a total order
+   * over distinct words, so the ranking is still reproducible. */
+  if (a->words.size > 0 && a->config.top_n > 0) {
+    WordEntry *ranked = malloc(a->words.size * sizeof(WordEntry));
+    if (!ranked)
+      return -1;
+    size_t ranked_count = 0;
+    for (size_t i = 0; i < a->words.capacity; i++) {
+      if (a->words.slots[i].word)
+        ranked[ranked_count++] = a->words.slots[i];
+    }
+    qsort(ranked, ranked_count, sizeof(WordEntry), cmp_word_entry_desc);
+
+    out->top_word_count = ranked_count < (size_t)a->config.top_n
+                              ? (int)ranked_count
+                              : a->config.top_n;
+    out->top_words = malloc((size_t)out->top_word_count * sizeof(WordFreq));
     if (!out->top_words) {
+      free(ranked);
       out->top_word_count = 0;
       return -1;
     }
-    for (int i = 0; i < out->top_word_count; i++)
-      out->top_words[i] = a->words.entries[i];
+    for (int i = 0; i < out->top_word_count; i++) {
+      /* The interned word is already bounded by max_word_len <= MAX_WORD_BUF,
+       * so it always fits; copy the exact bytes plus the terminator. */
+      const size_t len = strlen(ranked[i].word);
+      memcpy(out->top_words[i].word, ranked[i].word, len + 1);
+      out->top_words[i].count = ranked[i].count;
+    }
+    free(ranked);
   }
 
   /* Rank characters by walking the sorted counts and, for each, finding the

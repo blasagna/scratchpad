@@ -11,3 +11,7 @@ build:strict --copt=-Wall --copt=-Werror --copt=-Wextra --copt=-pedantic
 
 # Config 'permissive': Opt-out of treating warnings as errors (warnings will still be shown but won't fail the build)
 build:permissive --copt=-Wno-error
+
+# Config 'opt': Optimized build, for benchmarking. The default build is
+# fastbuild (-O0), so timings taken without this are not meaningful.
+build:opt --compilation_mode=opt

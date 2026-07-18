@@ -2,6 +2,7 @@
 #define TEXT_ANALYZER_ANALYZER_H
 
 #include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 
 /*
@@ -86,13 +87,32 @@ typedef struct {
 void text_stats_free(TextStats *stats);
 
 /*
- * Growable table of distinct words and their counts. Internal to the analyzer;
- * declared here only so Analyzer can be stack-allocated by callers.
+ * One distinct word and its count. The spelling is interned into the table's
+ * arena rather than stored inline, keeping entries small enough that a large
+ * vocabulary stays cheap to probe and to grow.
  */
 typedef struct {
-  WordFreq *entries;
-  int size;
-  int capacity;
+  const char *word; /* interned into the arena; NULL marks an empty slot */
+  long count;
+} WordEntry;
+
+/*
+ * A block of interned word bytes. Blocks are bump-allocated and never moved or
+ * reallocated, so pointers into them stay valid as the table grows. The layout
+ * is private to analyzer.c; only the pointer type is needed here.
+ */
+typedef struct ArenaBlock ArenaBlock;
+
+/*
+ * Hash table of distinct words and their counts, using open addressing with
+ * linear probing. Internal to the analyzer; declared here only so Analyzer can
+ * be stack-allocated by callers.
+ */
+typedef struct {
+  WordEntry *slots; /* capacity is always a power of two */
+  size_t size;      /* occupied slots */
+  size_t capacity;
+  ArenaBlock *arena;
 } WordTable;
 
 /*
