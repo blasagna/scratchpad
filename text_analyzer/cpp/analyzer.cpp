@@ -12,8 +12,32 @@ namespace text_analyzer {
 
 namespace {
 
-// All possible byte values (0-255), used to size the character frequency table.
-constexpr int kCharTableSize = UCHAR_MAX + 1;
+// Width of the label column in the text summary, sized for the longest label.
+constexpr int kLabelWidth = 13;
+
+// Returns the length at the pct-th percentile by nearest rank, or 0 when there
+// are no words. Integer arithmetic throughout so the three ports agree exactly.
+long quantile(const std::array<long, kLengthHistBuckets> &hist, long count,
+              long pct) {
+  if (count <= 0)
+    return 0;
+  // 1-based rank of the target element: ceil(pct/100 * count), at least 1.
+  const long rank = std::max(1L, (pct * count + 99) / 100);
+  long cumulative = 0;
+  for (std::size_t len = 0; len < hist.size(); len++) {
+    cumulative += hist[len];
+    if (cumulative >= rank)
+      return static_cast<long>(len);
+  }
+  return 0;
+}
+
+// Returns the mean word length, or 0.0 when no words were seen.
+double word_length_mean(const WordLengthStats &wl) {
+  return wl.count > 0 ? static_cast<double>(wl.sum) /
+                            static_cast<double>(wl.count)
+                      : 0.0;
+}
 
 // Writes c as the contents of a JSON string, escaping the two characters that
 // are otherwise illegal inside one. The char range used for top characters
@@ -27,81 +51,138 @@ void write_json_char(std::ostream &os, char c) {
 
 } // namespace
 
-TextStats analyze(std::istream &in, const AnalyzerConfig &config) {
-  TextStats stats;
+Analyzer::Analyzer(const AnalyzerConfig &config) : config_(config) {
+  word_counts_.reserve(config_.word_table_init_cap);
+}
 
-  std::array<long, kCharTableSize> char_counts{};
-  std::unordered_map<std::string, long> word_counts;
-  word_counts.reserve(config.word_table_init_cap);
-
-  std::string word;
-  bool in_word = false;
-
+void Analyzer::feed(std::istream &in) {
   char c;
   while (in.get(c)) {
     const auto uc = static_cast<unsigned char>(c);
-    char_counts[uc]++;
-    stats.char_count++;
+    char_counts_[uc]++;
+    stats_.char_count++;
 
-    if (c == '\n')
-      stats.line_count++;
+    if (c == '\n') {
+      stats_.line_count++;
+      if (!line_has_content_)
+        stats_.blank_line_count++;
+      line_has_content_ = false;
+    } else if (!std::isspace(uc)) {
+      line_has_content_ = true;
+    }
 
     if (std::isalpha(uc)) {
-      // Keep at most max_word_len - 1 chars, matching the C buffer.
-      if (std::ssize(word) <
-          static_cast<std::ptrdiff_t>(config.max_word_len) - 1) {
-        word.push_back(static_cast<char>(std::tolower(uc)));
+      // Keep at most max_word_len - 1 chars, matching the C buffer, but measure
+      // the untruncated length.
+      if (std::ssize(word_) <
+          static_cast<std::ptrdiff_t>(config_.max_word_len) - 1) {
+        word_.push_back(static_cast<char>(std::tolower(uc)));
       }
-      in_word = true;
-    } else if (in_word) {
-      word_counts[word]++;
-      stats.word_count++;
-      word.clear();
-      in_word = false;
+      cur_word_len_++;
+      in_word_ = true;
+    } else if (in_word_) {
+      flush_word();
     }
   }
-  if (in_word) {
-    word_counts[word]++;
-    stats.word_count++;
+}
+
+// Records the accumulated word and its length, then resets word state.
+void Analyzer::flush_word() {
+  word_counts_[word_]++;
+  stats_.word_count++;
+
+  const long len = cur_word_len_;
+  length_sum_ += len;
+  if (length_max_ == 0 || len > length_max_)
+    length_max_ = len;
+  if (length_min_ == 0 || len < length_min_)
+    length_min_ = len;
+  const auto bucket = std::min(static_cast<std::size_t>(len),
+                               length_hist_.size() - 1);
+  length_hist_[bucket]++;
+
+  word_.clear();
+  cur_word_len_ = 0;
+  in_word_ = false;
+}
+
+TextStats Analyzer::finish() {
+  if (in_word_)
+    flush_word();
+
+  for (std::size_t i = 0; i < char_counts_.size(); i++) {
+    const auto uc = static_cast<unsigned char>(i);
+    if (std::isdigit(uc))
+      stats_.digit_count += char_counts_[i];
+    else if (std::ispunct(uc))
+      stats_.punct_count += char_counts_[i];
   }
 
+  stats_.word_length = {
+      .count = stats_.word_count,
+      .sum = length_sum_,
+      .min = length_min_,
+      .max = length_max_,
+      .p25 = quantile(length_hist_, stats_.word_count, 25),
+      .p50 = quantile(length_hist_, stats_.word_count, 50),
+      .p75 = quantile(length_hist_, stats_.word_count, 75),
+  };
+
   // Top words: sort by count descending, ties broken by word ascending.
-  stats.top_words.reserve(word_counts.size());
-  for (auto &[w, count] : word_counts) {
-    stats.top_words.push_back({w, count});
+  stats_.top_words.reserve(word_counts_.size());
+  for (auto &[w, count] : word_counts_) {
+    stats_.top_words.push_back({w, count});
   }
-  std::ranges::sort(stats.top_words, [](const WordFreq &a, const WordFreq &b) {
+  std::ranges::sort(stats_.top_words, [](const WordFreq &a, const WordFreq &b) {
     if (a.count != b.count)
       return a.count > b.count;
     return a.word < b.word;
   });
-  if (stats.top_words.size() > config.top_n) {
-    stats.top_words.resize(config.top_n);
+  if (stats_.top_words.size() > config_.top_n) {
+    stats_.top_words.resize(config_.top_n);
   }
 
   // Top chars: only printable ASCII with a nonzero count, sorted by count
   // descending, ties broken by char ascending (lowest code point first).
   for (char ch = kPrintableAsciiMin; ch <= kPrintableAsciiMax; ch++) {
-    const long count = char_counts[static_cast<unsigned char>(ch)];
+    const long count = char_counts_[static_cast<unsigned char>(ch)];
     if (count > 0)
-      stats.top_chars.push_back({ch, count});
+      stats_.top_chars.push_back({ch, count});
   }
-  std::ranges::sort(stats.top_chars, [](const CharFreq &a, const CharFreq &b) {
+  std::ranges::sort(stats_.top_chars, [](const CharFreq &a, const CharFreq &b) {
     if (a.count != b.count)
       return a.count > b.count;
     return a.ch < b.ch;
   });
-  if (stats.top_chars.size() > config.top_n) {
-    stats.top_chars.resize(config.top_n);
+  if (stats_.top_chars.size() > config_.top_n) {
+    stats_.top_chars.resize(config_.top_n);
   }
 
-  return stats;
+  return std::move(stats_);
+}
+
+TextStats analyze(std::istream &in, const AnalyzerConfig &config) {
+  Analyzer analyzer(config);
+  analyzer.feed(in);
+  return analyzer.finish();
 }
 
 void print_stats(std::ostream &os, const TextStats &stats) {
-  os << std::format("Lines:      {}\n", stats.line_count);
-  os << std::format("Words:      {}\n", stats.word_count);
-  os << std::format("Characters: {}\n", stats.char_count);
+  const auto row = [&os](std::string_view label, long value) {
+    os << std::format("{:<{}} {}\n", label, kLabelWidth, value);
+  };
+  row("Lines:", stats.line_count);
+  row("Blank lines:", stats.blank_line_count);
+  row("Words:", stats.word_count);
+  row("Characters:", stats.char_count);
+  row("Digits:", stats.digit_count);
+  row("Punctuation:", stats.punct_count);
+
+  const WordLengthStats &wl = stats.word_length;
+  os << std::format(
+      "\n{:<{}} mean {:.1f}, min {}, max {}, p25 {}, p50 {}, p75 {}\n",
+      "Word length:", kLabelWidth, word_length_mean(wl), wl.min, wl.max, wl.p25,
+      wl.p50, wl.p75);
 
   os << "\nTop words:\n";
   for (std::size_t i = 0; i < stats.top_words.size(); i++) {
@@ -127,10 +208,24 @@ void print_stats(std::ostream &os, const TextStats &stats) {
 }
 
 void print_stats_json(std::ostream &os, const TextStats &stats) {
+  const WordLengthStats &wl = stats.word_length;
+
   os << "{\n";
   os << std::format("  \"lines\": {},\n", stats.line_count);
+  os << std::format("  \"blank_lines\": {},\n", stats.blank_line_count);
   os << std::format("  \"words\": {},\n", stats.word_count);
   os << std::format("  \"characters\": {},\n", stats.char_count);
+  os << std::format("  \"digits\": {},\n", stats.digit_count);
+  os << std::format("  \"punctuation\": {},\n", stats.punct_count);
+
+  os << "  \"word_length\": {\n";
+  os << std::format("    \"mean\": {:.4f},\n", word_length_mean(wl));
+  os << std::format("    \"min\": {},\n", wl.min);
+  os << std::format("    \"max\": {},\n", wl.max);
+  os << std::format("    \"p25\": {},\n", wl.p25);
+  os << std::format("    \"p50\": {},\n", wl.p50);
+  os << std::format("    \"p75\": {}\n", wl.p75);
+  os << "  },\n";
 
   os << "  \"top_words\": [";
   for (std::size_t i = 0; i < stats.top_words.size(); i++) {

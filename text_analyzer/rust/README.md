@@ -1,7 +1,8 @@
 # text_analyzer (Rust)
 
-Reads a text file and reports line, word, and character counts plus the most
-frequent words and characters. A Rust port of the C text analyzer.
+Reads text and reports line, blank line, word, character, digit, and punctuation
+counts, the word length distribution, and the most frequent words and
+characters. A Rust port of the C text analyzer.
 
 ## Build & run
 
@@ -9,8 +10,13 @@ frequent words and characters. A Rust port of the C text analyzer.
 cargo build
 cargo run -- path/to/file.txt
 cargo run -- --json --top-n 10 path/to/file.txt
+cargo run -- a.txt b.txt        # analyzed as one stream
+cat a.txt | cargo run           # stdin
 cargo test
 ```
+
+Multiple files are analyzed as a single concatenated stream. With no file
+argument, or with `-` as the file, input is read from stdin.
 
 ## Code review
 

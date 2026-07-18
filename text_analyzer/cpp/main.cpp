@@ -1,9 +1,12 @@
+#include <array>
 #include <charconv>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "analyzer.hpp"
 
@@ -11,16 +14,46 @@ namespace {
 
 using text_analyzer::AnalyzerConfig;
 
-constexpr std::string_view kUsage = "usage: text_analyzer [options] <file>\n"
-                                    "       text_analyzer -h | --help\n";
+constexpr std::string_view kUsage =
+    "usage: text_analyzer [options] [file...]\n"
+    "       text_analyzer -h | --help\n";
+
+// Argument that means "read stdin", and the label used for it in errors.
+constexpr std::string_view kStdinArg = "-";
+constexpr std::string_view kStdinLabel = "<stdin>";
+
+// The integer options, each paired with the config field it sets. Listing them
+// once keeps the "--flag N" and "--flag=N" paths in sync.
+constexpr std::array<std::pair<std::string_view, unsigned int AnalyzerConfig::*>,
+                     3>
+    kIntFlags = {{
+        {"--top-n", &AnalyzerConfig::top_n},
+        {"--max-word-len", &AnalyzerConfig::max_word_len},
+        {"--word-table-cap", &AnalyzerConfig::word_table_init_cap},
+    }};
+
+// Returns the config field an integer flag sets, or nullptr if name is not one.
+unsigned int AnalyzerConfig::*int_flag_field(std::string_view name) {
+  for (const auto &[flag, field] : kIntFlags) {
+    if (flag == name)
+      return field;
+  }
+  return nullptr;
+}
 
 void print_help() {
   std::cout << kUsage
             << "\n"
-               "Reads a text file and prints statistics:\n"
-               "  - total line, word, and character counts\n"
+               "Reads text files and prints statistics:\n"
+               "  - total line, blank line, word, character, digit, and "
+               "punctuation counts\n"
+               "  - word length distribution (mean, min, max, quartiles)\n"
                "  - top N most frequent words (case-insensitive)\n"
                "  - top N most frequent non-space characters\n"
+               "\n"
+               "Multiple files are analyzed as a single concatenated stream. "
+               "Reads\n"
+               "stdin when no file is given or when the file is '-'.\n"
                "\n"
                "Options:\n";
   std::cout
@@ -53,25 +86,40 @@ std::optional<unsigned int> parse_positive(std::string_view sv) {
 struct Options {
   AnalyzerConfig config;
   bool json = false;
-  std::string_view filename;
+  std::vector<std::string_view> filenames;
 };
+
+// Feeds one named input into analyzer, where "-" means stdin. Returns false
+// after reporting the failure against the input's display name.
+bool feed_named(text_analyzer::Analyzer &analyzer, std::string_view name) {
+  if (name == kStdinArg) {
+    analyzer.feed(std::cin);
+    if (std::cin.bad()) {
+      std::cerr << kStdinLabel << ": failed to read input\n";
+      return false;
+    }
+    return true;
+  }
+
+  const std::string filename(name);
+  std::ifstream in(filename, std::ios::binary);
+  if (!in) {
+    std::cerr << filename << ": cannot open file\n";
+    return false;
+  }
+  analyzer.feed(in);
+  if (in.bad()) {
+    std::cerr << filename << ": failed to read input\n";
+    return false;
+  }
+  return true;
+}
 
 } // namespace
 
 int main(int argc, char *argv[]) {
   const std::span<char *> args(argv, static_cast<std::size_t>(argc));
   Options opts;
-  bool have_file = false;
-
-  // Maps a "--flag" that expects an integer to the config field it sets.
-  auto set_int_flag = [&opts](std::string_view name, unsigned int value) {
-    if (name == "--top-n")
-      opts.config.top_n = value;
-    else if (name == "--max-word-len")
-      opts.config.max_word_len = value;
-    else if (name == "--word-table-cap")
-      opts.config.word_table_init_cap = value;
-  };
 
   for (std::size_t i = 1; i < args.size(); i++) {
     const std::string_view arg = args[i];
@@ -86,8 +134,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Integer options, accepting both "--flag N" and "--flag=N".
-    if (arg == "--top-n" || arg == "--max-word-len" ||
-        arg == "--word-table-cap") {
+    if (auto field = int_flag_field(arg); field != nullptr) {
       if (i + 1 >= args.size()) {
         std::cerr << "error: missing value for " << arg << "\n";
         print_usage_error();
@@ -101,15 +148,14 @@ int main(int argc, char *argv[]) {
         print_usage_error();
         return 1;
       }
-      set_int_flag(arg, *n);
+      opts.config.*field = *n;
       continue;
     }
     if (const std::size_t eq = arg.find('=');
         eq != std::string_view::npos && arg.starts_with("--")) {
       const std::string_view name = arg.substr(0, eq);
       const std::string_view value = arg.substr(eq + 1);
-      if (name == "--top-n" || name == "--max-word-len" ||
-          name == "--word-table-cap") {
+      if (auto field = int_flag_field(name); field != nullptr) {
         const std::optional<unsigned int> n = parse_positive(value);
         if (!n) {
           std::cerr << "error: invalid value '" << value << "' for " << name
@@ -117,42 +163,33 @@ int main(int argc, char *argv[]) {
           print_usage_error();
           return 1;
         }
-        set_int_flag(name, *n);
+        opts.config.*field = *n;
         continue;
       }
     }
 
-    if (arg.starts_with("-")) {
+    // "-" is a positional meaning stdin, so check it before rejecting options.
+    if (arg != kStdinArg && arg.starts_with("-")) {
       std::cerr << "error: unknown option '" << arg << "'\n";
       print_usage_error();
       return 1;
     }
 
-    // Positional argument: the input file.
-    if (have_file) {
-      std::cerr << "error: unexpected extra argument '" << arg << "'\n";
-      print_usage_error();
+    opts.filenames.push_back(arg);
+  }
+
+  text_analyzer::Analyzer analyzer(opts.config);
+  if (opts.filenames.empty()) {
+    if (!feed_named(analyzer, kStdinArg))
       return 1;
+  } else {
+    for (const std::string_view name : opts.filenames) {
+      if (!feed_named(analyzer, name))
+        return 1;
     }
-    opts.filename = arg;
-    have_file = true;
   }
 
-  if (!have_file) {
-    std::cerr << "error: no file specified\n";
-    print_usage_error();
-    return 1;
-  }
-
-  const std::string filename(opts.filename);
-  std::ifstream in(filename, std::ios::binary);
-  if (!in) {
-    std::cerr << filename << ": cannot open file\n";
-    return 1;
-  }
-
-  const text_analyzer::TextStats stats =
-      text_analyzer::analyze(in, opts.config);
+  const text_analyzer::TextStats stats = analyzer.finish();
   if (opts.json) {
     text_analyzer::print_stats_json(std::cout, stats);
   } else {

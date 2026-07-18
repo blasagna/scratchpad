@@ -115,6 +115,130 @@ TEST(AnalyzerTest, ConfigMaxWordLen) {
   text_stats_free(&stats);
 }
 
+TEST(AnalyzerTest, ZeroTopNYieldsEmptyRankings) {
+  AnalyzerConfig config = analyzer_config_default();
+  config.top_n = 0;
+  FILE *f = make_stream("the the cat\n");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, &config, &stats), 0);
+  fclose(f);
+  EXPECT_EQ(stats.word_count, 3);
+  EXPECT_EQ(stats.top_word_count, 0);
+  EXPECT_EQ(stats.top_char_count, 0);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, BlankLines) {
+  /* Four terminated lines; the empty one and the whitespace-only one are both
+   * blank. */
+  FILE *f = make_stream("a\n\n  \nb\n");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, NULL, &stats), 0);
+  fclose(f);
+  EXPECT_EQ(stats.line_count, 4);
+  EXPECT_EQ(stats.blank_line_count, 2);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, UnterminatedFinalLineIsNotCounted) {
+  /* Consistent with line_count: a final line without '\n' is not a line, so it
+   * is not a blank line either. */
+  FILE *f = make_stream("a\n   ");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, NULL, &stats), 0);
+  fclose(f);
+  EXPECT_EQ(stats.line_count, 1);
+  EXPECT_EQ(stats.blank_line_count, 0);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, DigitsAndPunctuation) {
+  FILE *f = make_stream("ab 12, c!\n");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, NULL, &stats), 0);
+  fclose(f);
+  EXPECT_EQ(stats.digit_count, 2);
+  EXPECT_EQ(stats.punct_count, 2);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, WordLengthStatistics) {
+  /* Lengths 1, 2, 3, 4. Nearest rank picks element ceil(p/100 * 4):
+   * p25 -> 1st (1), p50 -> 2nd (2), p75 -> 3rd (3). */
+  FILE *f = make_stream("a bb ccc dddd\n");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, NULL, &stats), 0);
+  fclose(f);
+  EXPECT_EQ(stats.word_length.count, 4);
+  EXPECT_EQ(stats.word_length.sum, 10);
+  EXPECT_EQ(stats.word_length.min, 1);
+  EXPECT_EQ(stats.word_length.max, 4);
+  EXPECT_EQ(stats.word_length.p25, 1);
+  EXPECT_EQ(stats.word_length.p50, 2);
+  EXPECT_EQ(stats.word_length.p75, 3);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, WordLengthIgnoresTruncation) {
+  AnalyzerConfig config = analyzer_config_default();
+  config.max_word_len = 3;
+  FILE *f = make_stream("hello\n");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, &config, &stats), 0);
+  fclose(f);
+  /* Stored spelling is truncated, but the measured length is the real one. */
+  ASSERT_GE(stats.top_word_count, 1);
+  EXPECT_STREQ(stats.top_words[0].word, "he");
+  EXPECT_EQ(stats.word_length.max, 5);
+  EXPECT_EQ(stats.word_length.sum, 5);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, MultiFeedAggregates) {
+  Analyzer a;
+  ASSERT_EQ(analyzer_init(&a, NULL), 0);
+
+  FILE *f1 = make_stream("the cat\n");
+  ASSERT_EQ(analyzer_feed(&a, f1), 0);
+  fclose(f1);
+  FILE *f2 = make_stream("the dog\n");
+  ASSERT_EQ(analyzer_feed(&a, f2), 0);
+  fclose(f2);
+
+  TextStats stats;
+  ASSERT_EQ(analyzer_finish(&a, &stats), 0);
+  analyzer_free(&a);
+
+  EXPECT_EQ(stats.line_count, 2);
+  EXPECT_EQ(stats.word_count, 4);
+  ASSERT_GE(stats.top_word_count, 1);
+  EXPECT_STREQ(stats.top_words[0].word, "the");
+  EXPECT_EQ(stats.top_words[0].count, 2);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, WordSplitAcrossFeeds) {
+  Analyzer a;
+  ASSERT_EQ(analyzer_init(&a, NULL), 0);
+
+  FILE *f1 = make_stream("hel");
+  ASSERT_EQ(analyzer_feed(&a, f1), 0);
+  fclose(f1);
+  FILE *f2 = make_stream("lo\n");
+  ASSERT_EQ(analyzer_feed(&a, f2), 0);
+  fclose(f2);
+
+  TextStats stats;
+  ASSERT_EQ(analyzer_finish(&a, &stats), 0);
+  analyzer_free(&a);
+
+  EXPECT_EQ(stats.word_count, 1);
+  ASSERT_GE(stats.top_word_count, 1);
+  EXPECT_STREQ(stats.top_words[0].word, "hello");
+  EXPECT_EQ(stats.word_length.max, 5);
+  text_stats_free(&stats);
+}
+
 TEST(AnalyzerTest, JsonOutput) {
   FILE *f = make_stream("the the cat\n");
   TextStats stats;
@@ -130,4 +254,7 @@ TEST(AnalyzerTest, JsonOutput) {
   EXPECT_NE(out.find("\"word\": \"the\""), std::string::npos);
   EXPECT_NE(out.find("\"count\": 2"), std::string::npos);
   EXPECT_NE(out.find("\"top_characters\""), std::string::npos);
+  EXPECT_NE(out.find("\"blank_lines\": 0"), std::string::npos);
+  EXPECT_NE(out.find("\"word_length\""), std::string::npos);
+  EXPECT_NE(out.find("\"p50\": 3"), std::string::npos);
 }

@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "analyzer.h"
 
@@ -9,14 +10,23 @@ static const int DEFAULT_TOP_N = 5;
 static const int DEFAULT_MAX_WORD_LEN = MAX_WORD_BUF;
 static const int DEFAULT_WORD_TABLE_CAP = 64;
 
+/* Argument that means "read stdin", and the label used for it in errors. */
+static const char *STDIN_ARG = "-";
+static const char *STDIN_LABEL = "<stdin>";
+
 static void print_help(void) {
-  printf("usage: text_analyzer [options] <file>\n");
+  printf("usage: text_analyzer [options] [file...]\n");
   printf("       text_analyzer -h | --help\n");
   printf("\n");
-  printf("Reads a text file and prints statistics:\n");
-  printf("  - total line, word, and character counts\n");
+  printf("Reads text files and prints statistics:\n");
+  printf("  - total line, blank line, word, character, digit, and punctuation "
+         "counts\n");
+  printf("  - word length distribution (mean, min, max, quartiles)\n");
   printf("  - top N most frequent words (case-insensitive)\n");
   printf("  - top N most frequent non-space characters\n");
+  printf("\n");
+  printf("Multiple files are analyzed as a single concatenated stream. Reads\n");
+  printf("stdin when no file is given or when the file is '-'.\n");
   printf("\n");
   printf("Options:\n");
   printf("  --top-n N           number of top words/chars to report (default: "
@@ -33,7 +43,7 @@ static void print_help(void) {
 }
 
 static void print_usage_error(void) {
-  fprintf(stderr, "usage: text_analyzer [options] <file>\n");
+  fprintf(stderr, "usage: text_analyzer [options] [file...]\n");
   fprintf(stderr, "       text_analyzer --help\n");
 }
 
@@ -52,6 +62,33 @@ static int parse_positive(const char *opt_name, const char *value, int *out) {
     return -1;
   }
   *out = (int)n;
+  return 0;
+}
+
+/*
+ * Feeds one named input into a, where "-" means stdin. Returns 0 on success, or
+ * -1 after reporting the failure against the input's display name.
+ */
+static int feed_named(Analyzer *a, const char *name) {
+  if (strcmp(name, STDIN_ARG) == 0) {
+    if (analyzer_feed(a, stdin) != 0) {
+      fprintf(stderr, "%s: failed to read input\n", STDIN_LABEL);
+      return -1;
+    }
+    return 0;
+  }
+
+  FILE *f = fopen(name, "r");
+  if (!f) {
+    perror(name);
+    return -1;
+  }
+  int rc = analyzer_feed(a, f);
+  fclose(f);
+  if (rc != 0) {
+    fprintf(stderr, "%s: failed to read input\n", name);
+    return -1;
+  }
   return 0;
 }
 
@@ -101,27 +138,32 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if (optind >= argc) {
-    fprintf(stderr, "error: no file specified\n");
-    print_usage_error();
+  Analyzer analyzer;
+  if (analyzer_init(&analyzer, &config) != 0) {
+    fprintf(stderr, "error: out of memory\n");
     return 1;
   }
 
-  const char *filename = argv[optind];
-  FILE *f = fopen(filename, "r");
-  if (!f) {
-    perror(filename);
+  int failed = 0;
+  if (optind >= argc) {
+    failed = feed_named(&analyzer, STDIN_ARG) != 0;
+  } else {
+    for (int i = optind; i < argc && !failed; i++)
+      failed = feed_named(&analyzer, argv[i]) != 0;
+  }
+  if (failed) {
+    analyzer_free(&analyzer);
     return 1;
   }
 
   TextStats stats;
-  if (analyze_file(f, &config, &stats) != 0) {
-    fprintf(stderr, "error: failed to analyze file\n");
-    fclose(f);
+  int rc = analyzer_finish(&analyzer, &stats);
+  analyzer_free(&analyzer);
+  if (rc != 0) {
+    fprintf(stderr, "error: failed to analyze input\n");
     return 1;
   }
 
-  fclose(f);
   if (json_output) {
     print_stats_json(&stats);
   } else {

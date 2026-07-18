@@ -1,16 +1,22 @@
 # text_analyzer (C)
 
-A small command-line tool that reads a text file and reports line, word, and
-character counts plus the top-N most frequent words and non-space characters.
-Output can be formatted as text or JSON.
+A small command-line tool that reads text and reports line, blank line, word,
+character, digit, and punctuation counts, the word length distribution, and the
+top-N most frequent words and non-space characters. Output can be formatted as
+text or JSON.
 
 ## Build & run
 
 ```sh
 bazel run //text_analyzer/c:text_analyzer -- <file>
 bazel run //text_analyzer/c:text_analyzer -- --top-n 10 --json <file>
+bazel run //text_analyzer/c:text_analyzer -- a.txt b.txt   # analyzed as one stream
+cat a.txt | bazel run //text_analyzer/c:text_analyzer      # stdin
 bazel test //text_analyzer/c:test_analyzer
 ```
+
+Multiple files are analyzed as a single concatenated stream. With no file
+argument, or with `-` as the file, input is read from stdin.
 
 Options: `--top-n N`, `--max-word-len N`, `--word-table-cap N`, `--json`,
 `-h/--help`.
@@ -24,17 +30,11 @@ path, and correct `(unsigned char)` casts before `char_counts` indexing and
 
 ### Correctness / robustness
 
-1. **`analyze_file` can't distinguish EOF from a read error**
-   (`analyzer.c`, main read loop). `while ((c = fgetc(f)) != EOF)` treats a
-   genuine stream error the same as end-of-file, silently returning partial
-   stats as success. Add a check after the loop:
-
-   ```c
-   if (ferror(f)) { word_table_free(&words); return -1; }
-   ```
-
-   `main.c` would then correctly report "failed to analyze file" instead of
-   printing truncated numbers. This is the one item worth actually fixing.
+1. ~~**`analyze_file` can't distinguish EOF from a read error**~~ (fixed).
+   `while ((c = fgetc(f)) != EOF)` treated a genuine stream error the same as
+   end-of-file, silently returning partial stats as success. The read loop now
+   lives in `analyzer_feed`, which ends with `return ferror(f) ? -1 : 0;` so
+   `main.c` reports the failure instead of printing truncated numbers.
 
 2. **Signed-overflow UB in growth math** (`word_table_add`). `int new_cap =
    t->capacity * 2;` overflows (signed → UB) if the table ever exceeds
