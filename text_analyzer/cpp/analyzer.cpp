@@ -15,6 +15,20 @@ namespace {
 // Width of the label column in the text summary, sized for the longest label.
 constexpr int kLabelWidth = 13;
 
+// Printable ASCII range excluding space: '!' (33) through '~' (126). These are
+// the only characters considered for the top-chars report.
+constexpr char kPrintableAsciiMin = '!';
+constexpr char kPrintableAsciiMax = '~';
+
+// All possible byte values (0-255), used to size the character frequency table.
+constexpr std::size_t kCharTableSize = UCHAR_MAX + 1;
+
+// Buckets in the word length histogram, indexed by length. Lengths at or above
+// the last index are clamped into it, so quantiles (but never the exactly
+// tracked count/sum/min/max) lose resolution for words longer than
+// kDefaultMaxWordLen characters.
+constexpr std::size_t kLengthHistBuckets = kDefaultMaxWordLen + 1;
+
 // Returns the length at the pct-th percentile by nearest rank, or 0 when there
 // are no words. Integer arithmetic throughout so the three ports agree exactly.
 long quantile(const std::array<long, kLengthHistBuckets> &hist, long count,
@@ -51,11 +65,42 @@ void write_json_char(std::ostream &os, char c) {
 
 } // namespace
 
-Analyzer::Analyzer(const AnalyzerConfig &config) : config_(config) {
-  word_counts_.reserve(config_.word_table_init_cap);
-}
+struct Analyzer::Impl {
+  explicit Impl(const AnalyzerConfig &config) : config_(config) {
+    word_counts_.reserve(config_.word_table_init_cap);
+  }
 
-void Analyzer::feed(std::istream &in) {
+  void feed(std::istream &in);
+  TextStats finish();
+  void flush_word();
+
+  AnalyzerConfig config_;
+  TextStats stats_;
+  std::array<long, kCharTableSize> char_counts_{};
+  std::unordered_map<std::string, long> word_counts_;
+  std::array<long, kLengthHistBuckets> length_hist_{};
+  long length_sum_ = 0;
+  long length_min_ = 0;
+  long length_max_ = 0;
+  std::string word_;      // spelling in progress, truncated
+  long cur_word_len_ = 0; // true length of the word in progress
+  bool in_word_ = false;
+  bool line_has_content_ = false;
+};
+
+Analyzer::Analyzer(const AnalyzerConfig &config)
+    : impl_(std::make_unique<Impl>(config)) {}
+
+// Defined here, where Impl is complete, so unique_ptr can instantiate its
+// deleter.
+Analyzer::~Analyzer() = default;
+Analyzer::Analyzer(Analyzer &&) noexcept = default;
+Analyzer &Analyzer::operator=(Analyzer &&) noexcept = default;
+
+void Analyzer::feed(std::istream &in) { impl_->feed(in); }
+TextStats Analyzer::finish() { return impl_->finish(); }
+
+void Analyzer::Impl::feed(std::istream &in) {
   char c;
   while (in.get(c)) {
     const auto uc = static_cast<unsigned char>(c);
@@ -87,7 +132,7 @@ void Analyzer::feed(std::istream &in) {
 }
 
 // Records the accumulated word and its length, then resets word state.
-void Analyzer::flush_word() {
+void Analyzer::Impl::flush_word() {
   word_counts_[word_]++;
   stats_.word_count++;
 
@@ -106,7 +151,7 @@ void Analyzer::flush_word() {
   in_word_ = false;
 }
 
-TextStats Analyzer::finish() {
+TextStats Analyzer::Impl::finish() {
   if (in_word_)
     flush_word();
 
@@ -234,10 +279,13 @@ void print_stats_json(std::ostream &os, const TextStats &stats) {
                                   static_cast<double>(stats.word_count)
                             : 0.0;
     os << (i == 0 ? "" : ",");
-    // Words are alpha-only; no escaping needed.
-    os << std::format(
-        "\n    {{\"word\": \"{}\", \"count\": {}, \"frequency\": {:.4f}}}",
-        stats.top_words[i].word, stats.top_words[i].count, freq);
+    // Words are ASCII letters only; no escaping needed.
+    os << std::format("\n    {{\n"
+                      "      \"word\": \"{}\",\n"
+                      "      \"count\": {},\n"
+                      "      \"frequency\": {:.4f}\n"
+                      "    }}",
+                      stats.top_words[i].word, stats.top_words[i].count, freq);
   }
   os << (stats.top_words.empty() ? "" : "\n  ") << "],\n";
 
@@ -248,9 +296,12 @@ void print_stats_json(std::ostream &os, const TextStats &stats) {
                                   static_cast<double>(stats.char_count)
                             : 0.0;
     os << (i == 0 ? "" : ",");
-    os << "\n    {\"char\": \"";
+    os << "\n    {\n      \"char\": \"";
     write_json_char(os, stats.top_chars[i].ch);
-    os << std::format("\", \"count\": {}, \"frequency\": {:.4f}}}",
+    os << std::format("\",\n"
+                      "      \"count\": {},\n"
+                      "      \"frequency\": {:.4f}\n"
+                      "    }}",
                       stats.top_chars[i].count, freq);
   }
   os << (stats.top_chars.empty() ? "" : "\n  ") << "]\n";

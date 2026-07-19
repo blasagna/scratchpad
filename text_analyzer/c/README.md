@@ -5,6 +5,10 @@ character, digit, and punctuation counts, the word length distribution, and the
 top-N most frequent words and non-space characters. Output can be formatted as
 text or JSON.
 
+Input is treated as ASCII bytes: characters are counted as bytes rather than
+Unicode codepoints, and any non-ASCII byte separates words. See the top-level
+README for the full contract.
+
 ## Build & run
 
 ```sh

@@ -185,14 +185,15 @@ static int cmp_word_entry_desc(const void *a, const void *b) {
   return strcmp(wa->word, wb->word);
 }
 
-static int cmp_long_desc(const void *a, const void *b) {
-  long va = *(const long *)a;
-  long vb = *(const long *)b;
-  if (vb > va)
+static int cmp_char_freq_desc(const void *a, const void *b) {
+  const CharFreq *ca = (const CharFreq *)a;
+  const CharFreq *cb = (const CharFreq *)b;
+  if (cb->count > ca->count)
     return 1;
-  if (vb < va)
+  if (cb->count < ca->count)
     return -1;
-  return 0;
+  /* Break ties ascending by character, matching the C++ and Rust ports. */
+  return (unsigned char)ca->ch - (unsigned char)cb->ch;
 }
 
 AnalyzerConfig analyzer_config_default(void) {
@@ -375,40 +376,32 @@ int analyzer_finish(Analyzer *a, TextStats *out) {
     free(ranked);
   }
 
-  /* Rank characters by walking the sorted counts and, for each, finding the
-   * first printable character still holding that count. Consumed entries are
-   * marked so duplicates are not reported twice. */
-  long char_counts[CHAR_TABLE_SIZE];
-  memcpy(char_counts, a->char_counts, sizeof(char_counts));
-  long sorted_char_counts[CHAR_TABLE_SIZE];
-  memcpy(sorted_char_counts, char_counts, sizeof(char_counts));
-  qsort(sorted_char_counts, CHAR_TABLE_SIZE, sizeof(long), cmp_long_desc);
+  /* Rank the printable characters that occurred at least once, sorted by count
+   * descending with ties broken ascending by character. */
+  CharFreq chars[PRINTABLE_ASCII_MAX - PRINTABLE_ASCII_MIN + 1];
+  int char_count = 0;
+  for (int i = PRINTABLE_ASCII_MIN; i <= PRINTABLE_ASCII_MAX; i++) {
+    if (a->char_counts[i] > 0) {
+      chars[char_count].ch = (char)i;
+      chars[char_count].count = a->char_counts[i];
+      char_count++;
+    }
+  }
+  qsort(chars, (size_t)char_count, sizeof(CharFreq), cmp_char_freq_desc);
 
-  if (a->config.top_n > 0) {
-    out->top_chars = malloc(a->config.top_n * sizeof(CharFreq));
+  out->top_char_count =
+      char_count < a->config.top_n ? char_count : a->config.top_n;
+  if (out->top_char_count > 0) {
+    out->top_chars = malloc((size_t)out->top_char_count * sizeof(CharFreq));
     if (!out->top_chars) {
       free(out->top_words);
       out->top_words = NULL;
       out->top_word_count = 0;
+      out->top_char_count = 0;
       return -1;
     }
-  }
-
-  for (int rank = 0;
-       rank < CHAR_TABLE_SIZE && out->top_char_count < a->config.top_n;
-       rank++) {
-    long target = sorted_char_counts[rank];
-    if (target == 0)
-      break;
-    for (int i = PRINTABLE_ASCII_MIN; i <= PRINTABLE_ASCII_MAX; i++) {
-      if (char_counts[i] == target) {
-        out->top_chars[out->top_char_count].ch = (char)i;
-        out->top_chars[out->top_char_count].count = target;
-        out->top_char_count++;
-        char_counts[i] = -1;
-        break;
-      }
-    }
+    memcpy(out->top_chars, chars,
+           (size_t)out->top_char_count * sizeof(CharFreq));
   }
 
   return 0;
@@ -504,11 +497,12 @@ void print_stats_json(const TextStats *stats) {
     double freq = stats->word_count > 0
                       ? (double)stats->top_words[i].count / stats->word_count
                       : 0.0;
-    printf(
-        "%s\n    {\"word\": \"%s\", \"count\": %ld, \"frequency\": %.4f}",
-        i == 0 ? "" : ",",
-        stats->top_words[i].word, /* words are alpha-only; no escaping needed */
-        stats->top_words[i].count, freq);
+    printf("%s\n    {\n", i == 0 ? "" : ",");
+    /* words are ASCII letters only; no escaping needed */
+    printf("      \"word\": \"%s\",\n", stats->top_words[i].word);
+    printf("      \"count\": %ld,\n", stats->top_words[i].count);
+    printf("      \"frequency\": %.4f\n", freq);
+    printf("    }");
   }
   printf("%s],\n", stats->top_word_count > 0 ? "\n  " : "");
 
@@ -517,10 +511,13 @@ void print_stats_json(const TextStats *stats) {
     double freq = stats->char_count > 0
                       ? (double)stats->top_chars[i].count / stats->char_count
                       : 0.0;
-    printf("%s\n    {\"char\": \"", i == 0 ? "" : ",");
+    printf("%s\n    {\n", i == 0 ? "" : ",");
+    printf("      \"char\": \"");
     print_json_char(stats->top_chars[i].ch);
-    printf("\", \"count\": %ld, \"frequency\": %.4f}",
-           stats->top_chars[i].count, freq);
+    printf("\",\n");
+    printf("      \"count\": %ld,\n", stats->top_chars[i].count);
+    printf("      \"frequency\": %.4f\n", freq);
+    printf("    }");
   }
   printf("%s]\n", stats->top_char_count > 0 ? "\n  " : "");
 

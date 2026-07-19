@@ -68,26 +68,48 @@ the 50-distinct one — same bytes, same word count.
 
 ### Correctness and implementation
 
-1. **Decide what to do about UTF-8.** Everything is byte-oriented, so
-   `Characters:` is really a byte count, and `café` tokenizes as `caf` plus a
-   stray byte. Either commit to ASCII explicitly in the docs and CLI help, or
-   decode UTF-8 and count codepoints. Worth an explicit decision rather than
-   drift; it is the largest remaining semantic gap.
-1. **Simplify C's top-chars ranking.** `analyzer_finish` sorts a 256-long array,
-   then for each rank rescans `'!'..'~'` for a matching count and writes `-1`
-   sentinels to mark entries consumed. Correct, but O(top_n × 256) and hard to
-   follow; C++ and Rust just build a vector and sort it. Making C match would
-   remove the last structural divergence between the ports.
+1. ~~**Decide what to do about UTF-8.**~~ (decided: ASCII) Everything is
+   byte-oriented, so `Characters:` is really a byte count and `café` tokenizes as
+   `caf` plus two stray bytes. **Resolved by committing to ASCII** and saying so
+   in the READMEs, `--help`, and the header docs — no behavior change.
+
+   Full Unicode was considered and rejected. It would have needed a Unicode
+   letter table *and* a case-folding table (words are lowercased, so `CAFÉ` and
+   `café` must fold together), generated from one source and used by all three
+   ports — including Rust, which could **not** use `char::is_alphabetic`, since
+   that tracks whatever Unicode version the toolchain ships and would silently
+   drift from a hand-written C table. Staying ASCII keeps the parity property
+   trivially true. See the *Implementations* section for the exact contract.
+1. ~~**Simplify C's top-chars ranking.**~~ (done) `analyzer_finish` sorted a
+   256-long array, then for each rank rescanned `'!'..'~'` for a matching count
+   and wrote `-1` sentinels to mark entries consumed. It now collects the
+   printable characters with nonzero counts into a 94-entry stack array and sorts
+   with `cmp_char_freq_desc` (count descending, ties ascending by character),
+   mirroring C++ and Rust. Output is unchanged — the old inner scan ran in
+   ascending ASCII order, which is the same tie-break, now made explicit.
 1. ~~**Fix the `int` overflow in table growth**~~ (done as part of the hash table
    rewrite). All capacity math is now `size_t`, and the power-of-two rounding
    saturates rather than wrapping.
-1. **Consider pimpl for the C++ `Analyzer`.** Giving the class members pulled
-   `<unordered_map>` and `<array>` into `analyzer.hpp`. Fine for a learning
-   project, but it is a real tradeoff worth revisiting.
-1. **JSON float formatting differs between ports.** serde prints `3.0` where
-   `%.4f` prints `3.0000`, so JSON output is not byte-identical across ports the
-   way text output is. Predates the multi-file work (it already affected
-   `frequency`). Either match formatting or document text as the parity target.
+1. ~~**Consider pimpl for the C++ `Analyzer`.**~~ (done) Members moved into a
+   `struct Analyzer::Impl` behind a `unique_ptr`, taking `<array>`, `<climits>`,
+   and `<unordered_map>` out of `analyzer.hpp` along with the four internal
+   constants. The destructor and move operations are declared in the header and
+   defined in the `.cpp` where `Impl` is complete, which `unique_ptr` requires.
+1. ~~**JSON float formatting differs between ports.**~~ (done) JSON is now
+   byte-identical across all three ports, so `--json` can be covered by
+   cross-port diffs alongside text output. Two things had to change:
+
+   - **Floats.** Rust now serializes through a `FixedFloatFormatter` wrapping
+     serde_json's `PrettyFormatter`, overriding `write_f64` to emit `{:.4}`
+     instead of the shortest round-trip form. Matching in the other direction
+     would have meant implementing Ryu/Grisu in C.
+   - **Values, not just spelling.** Rust's `frequency()` pre-rounded with
+     `f64::round`, which rounds halfway cases *away from zero*, so 5/32 rendered
+     as `0.1563` where `printf("%.4f")` gives `0.1562`. The pre-rounding is gone;
+     the formatter now performs the single rounding step, and Rust's `{:.4}`
+     rounds half to even exactly as `printf` does.
+   - **Layout.** C and C++ adopted serde's pretty layout for array elements
+     (each ranked entry expanded across lines rather than kept on one).
 
 ### Testing
 
@@ -122,11 +144,18 @@ the 50-distinct one — same bytes, same word count.
 ## Implementations
 
 The same program is implemented three times — `c/`, `cpp/`, and `rust/` — with
-matching semantics, so all three produce identical text output for the same
-input. Notes on the shared behavior:
+matching semantics, so all three produce identical output for the same input, in
+both text and JSON form. Notes on the shared behavior:
 
-- **Words** are maximal runs of alphabetic ASCII, lowercased. Digits and
-  punctuation are separators, never part of a word.
+- **Input is ASCII bytes.** `Characters:` counts bytes, not Unicode codepoints.
+  A word is a maximal run of ASCII letters `[A-Za-z]`; every non-ASCII byte
+  counts as a character, acts as a word separator, and is counted as neither a
+  digit nor a punctuation mark. So `café` is one word (`caf`) and five
+  characters. No port calls `setlocale`, so the C and C++ `isalpha`/`isdigit`/
+  `ispunct` calls run in the `"C"` locale and are ASCII-only by definition,
+  matching Rust's `is_ascii_*` — which is *why* the three agree.
+- **Words** are lowercased for counting. Digits and punctuation are separators,
+  never part of a word.
 - **Word lengths** are true lengths, unaffected by `--max-word-len` truncation of
   the stored spelling. Quantiles use nearest rank (`ceil(p/100 * n)`, 1-based) on
   a length histogram, so they are integers and need no interpolation.

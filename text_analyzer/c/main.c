@@ -28,6 +28,10 @@ static void print_help(void) {
   printf("Multiple files are analyzed as a single concatenated stream. Reads\n");
   printf("stdin when no file is given or when the file is '-'.\n");
   printf("\n");
+  printf("Input is treated as ASCII bytes: characters are counted as bytes, "
+         "not\n");
+  printf("Unicode codepoints, and any non-ASCII byte separates words.\n");
+  printf("\n");
   printf("Options:\n");
   printf("  --top-n N           number of top words/chars to report (default: "
          "%d)\n",

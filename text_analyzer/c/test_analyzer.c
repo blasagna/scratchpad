@@ -79,6 +79,37 @@ TEST(AnalyzerTest, CharFrequency) {
   text_stats_free(&stats);
 }
 
+TEST(AnalyzerTest, CharFrequencyTieBreak) {
+  /* Equal counts rank ascending by character, so 'a' precedes 'b'. qsort is not
+   * stable, so this depends on the comparator's explicit tiebreak. */
+  FILE *f = make_stream("ba\n");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, NULL, &stats), 0);
+  fclose(f);
+  ASSERT_GE(stats.top_char_count, 2);
+  EXPECT_EQ(stats.top_chars[0].ch, 'a');
+  EXPECT_EQ(stats.top_chars[1].ch, 'b');
+  EXPECT_EQ(stats.top_chars[0].count, 1);
+  text_stats_free(&stats);
+}
+
+TEST(AnalyzerTest, NonAsciiBytesSeparateWords) {
+  /* Input is processed as bytes: the two bytes of UTF-8 'é' each count as a
+   * character, neither is a letter, digit, nor punctuation, and together they
+   * end the word. */
+  FILE *f = make_stream("caf\xc3\xa9 x\n");
+  TextStats stats;
+  ASSERT_EQ(analyze_file(f, NULL, &stats), 0);
+  fclose(f);
+  EXPECT_EQ(stats.char_count, 8);
+  EXPECT_EQ(stats.word_count, 2);
+  EXPECT_EQ(stats.digit_count, 0);
+  EXPECT_EQ(stats.punct_count, 0);
+  ASSERT_GE(stats.top_word_count, 1);
+  EXPECT_STREQ(stats.top_words[0].word, "caf");
+  text_stats_free(&stats);
+}
+
 TEST(AnalyzerTest, TrailingWordNoNewline) {
   FILE *f = make_stream("hello world");
   TextStats stats;
@@ -257,4 +288,9 @@ TEST(AnalyzerTest, JsonOutput) {
   EXPECT_NE(out.find("\"blank_lines\": 0"), std::string::npos);
   EXPECT_NE(out.find("\"word_length\""), std::string::npos);
   EXPECT_NE(out.find("\"p50\": 3"), std::string::npos);
+  /* Floats carry four decimals and ranked entries are expanded across lines;
+   * both are required for byte-identical JSON with the C++ and Rust ports. */
+  EXPECT_NE(out.find("\"mean\": 3.0000"), std::string::npos);
+  EXPECT_NE(out.find("  \"top_words\": [\n    {\n      \"word\": \"the\",\n"),
+            std::string::npos);
 }

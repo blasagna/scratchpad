@@ -1,8 +1,10 @@
 //! Rendering of [`TextStats`] as a human-readable summary or as JSON.
 
 use std::fmt::Write;
+use std::io;
 
 use serde::Serialize;
+use serde_json::ser::{Formatter, PrettyFormatter};
 
 use crate::analyzer::{TextStats, WordLengthStats};
 
@@ -67,7 +69,7 @@ pub fn render_json(stats: &TextStats) -> String {
         digits: stats.digit_count,
         punctuation: stats.punct_count,
         word_length: JsonWordLength {
-            mean: round4(mean(wl)),
+            mean: mean(wl),
             min: wl.min,
             max: wl.max,
             p25: wl.p25,
@@ -93,8 +95,99 @@ pub fn render_json(stats: &TextStats) -> String {
             })
             .collect(),
     };
-    // Serialization of these plain owned types cannot fail.
-    serde_json::to_string_pretty(&report).expect("TextStats JSON serialization cannot fail")
+    // Serialization of these plain owned types into a Vec cannot fail.
+    let mut out = Vec::new();
+    let mut serializer =
+        serde_json::Serializer::with_formatter(&mut out, FixedFloatFormatter::default());
+    report
+        .serialize(&mut serializer)
+        .expect("TextStats JSON serialization cannot fail");
+    String::from_utf8(out).expect("serde_json emits UTF-8")
+}
+
+/// Pretty JSON, but with floats written to a fixed four decimal places.
+///
+/// serde_json's default is the shortest representation that round-trips, which
+/// prints `3.0` where the C and C++ ports print `3.0000`. Fixing the precision
+/// here is what lets all three ports emit byte-identical JSON. Rust's `{:.4}`
+/// and C's `printf("%.4f")` both round half to even, so the values agree too —
+/// which is why callers must hand this formatter *unrounded* ratios and let it
+/// perform the single rounding step.
+#[derive(Default)]
+struct FixedFloatFormatter<'a> {
+    inner: PrettyFormatter<'a>,
+}
+
+impl Formatter for FixedFloatFormatter<'_> {
+    fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        write!(writer, "{value:.4}")
+    }
+
+    fn begin_array<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_array(writer)
+    }
+
+    fn end_array<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_array(writer)
+    }
+
+    fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_array_value(writer, first)
+    }
+
+    fn end_array_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_array_value(writer)
+    }
+
+    fn begin_object<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_object(writer)
+    }
+
+    fn end_object<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_object(writer)
+    }
+
+    fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_object_key(writer, first)
+    }
+
+    fn begin_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_object_value(writer)
+    }
+
+    fn end_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_object_value(writer)
+    }
 }
 
 /// Returns the mean word length, or 0.0 when no words were seen.
@@ -115,17 +208,17 @@ fn percentage(count: u64, total: u64) -> f64 {
     }
 }
 
-/// Returns `count / total` rounded to four decimals, or 0.0 when `total` is zero.
+/// Returns `count / total`, or 0.0 when `total` is zero.
+///
+/// Deliberately unrounded: [`FixedFloatFormatter`] does the rounding when it
+/// writes the value. Pre-rounding here with `f64::round` would round halfway
+/// cases away from zero, disagreeing with `printf("%.4f")` in the C and C++
+/// ports — 5/32 would render as 0.1563 rather than 0.1562.
 fn frequency(count: u64, total: u64) -> f64 {
     if total == 0 {
         return 0.0;
     }
-    round4(count as f64 / total as f64)
-}
-
-/// Rounds to four decimal places, the precision used throughout the JSON output.
-fn round4(value: f64) -> f64 {
-    (value * 1e4).round() / 1e4
+    count as f64 / total as f64
 }
 
 #[derive(Serialize)]
@@ -223,6 +316,39 @@ mod tests {
         assert!(out.contains("Punctuation:  1"));
         assert!(out.contains("Word length:  mean 3.0, min 3, max 3, p25 3, p50 3, p75 3"));
         assert!(out.contains("1. the (2,"));
+    }
+
+    #[test]
+    fn json_floats_use_fixed_four_decimals() {
+        // The C and C++ ports print %.4f; serde's default shortest-round-trip
+        // form would emit "3.0" here and break byte-for-byte JSON parity.
+        let out = render_json(&sample());
+        assert!(out.contains("\"mean\": 3.0000"), "{out}");
+    }
+
+    #[test]
+    fn json_floats_round_half_to_even() {
+        // 5/32 is exactly 0.15625, a halfway case. printf("%.4f") rounds half to
+        // even and yields 0.1562; rounding half away from zero (as an f64::round
+        // pre-pass would) yields 0.1563 and diverges from the other two ports.
+        let stats = TextStats {
+            char_count: 32,
+            top_chars: vec![CharFreq { ch: 't', count: 5 }],
+            ..Default::default()
+        };
+        let out = render_json(&stats);
+        assert!(out.contains("\"frequency\": 0.1562"), "{out}");
+    }
+
+    #[test]
+    fn json_array_elements_are_expanded() {
+        // Each ranked entry occupies its own block; the C and C++ ports match
+        // this layout exactly.
+        let out = render_json(&sample());
+        assert!(
+            out.contains("  \"top_words\": [\n    {\n      \"word\": \"the\",\n"),
+            "{out}"
+        );
     }
 
     #[test]

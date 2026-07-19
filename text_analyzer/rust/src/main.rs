@@ -27,7 +27,10 @@ const STDIN_LABEL: &str = "<stdin>";
                   - top N most frequent words (case-insensitive)\n  \
                   - top N most frequent non-space characters\n\n\
                   Multiple files are analyzed as a single concatenated stream. \
-                  Reads stdin when no file is given or when the file is '-'."
+                  Reads stdin when no file is given or when the file is '-'.\n\n\
+                  Input is treated as ASCII bytes: characters are counted as \
+                  bytes, not Unicode codepoints, and any non-ASCII byte \
+                  separates words."
 )]
 struct Cli {
     /// Number of top words/chars to report.

@@ -1,5 +1,12 @@
 //! Core analysis: stream one or more readers byte by byte and compute text
 //! statistics.
+//!
+//! Text handling is deliberately ASCII-only, which is what keeps this port
+//! byte-for-byte identical to the C and C++ ones. [`TextStats::char_count`]
+//! counts bytes, not Unicode codepoints, and a word is a maximal run of ASCII
+//! letters `[A-Za-z]`. Any non-ASCII byte counts as a character, separates
+//! words, and is counted as neither a digit nor a punctuation mark — so "café"
+//! is one word (`caf`) and five characters.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead};
@@ -401,6 +408,19 @@ mod tests {
         let stats = analyze_str("a\n   ", &Config::default());
         assert_eq!(stats.line_count, 1);
         assert_eq!(stats.blank_line_count, 0);
+    }
+
+    #[test]
+    fn non_ascii_bytes_separate_words() {
+        // Input is processed as bytes: the two bytes of UTF-8 'é' each count as
+        // a character, neither is a letter, digit, nor punctuation, and together
+        // they end the word.
+        let stats = analyze_str("caf\u{e9} x\n", &Config::default());
+        assert_eq!(stats.char_count, 8);
+        assert_eq!(stats.word_count, 2);
+        assert_eq!(stats.digit_count, 0);
+        assert_eq!(stats.punct_count, 0);
+        assert_eq!(stats.top_words[0].word, "caf");
     }
 
     #[test]

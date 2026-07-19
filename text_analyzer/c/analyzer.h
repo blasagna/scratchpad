@@ -12,6 +12,18 @@
  */
 #define MAX_WORD_BUF 256
 
+/*
+ * Text handling: input is processed as bytes, in the "C" locale (no port calls
+ * setlocale), so isalpha/isdigit/ispunct classification is ASCII-only. That is
+ * what keeps this port byte-for-byte identical to the C++ and Rust ones.
+ *
+ * Consequences: char_count counts bytes, not Unicode codepoints, and a word is
+ * a maximal run of ASCII letters [A-Za-z]. Any non-ASCII byte counts as a
+ * character, separates words, and is counted as neither a digit nor a
+ * punctuation mark. So "cafe" spelled with U+00E9 is one word ("caf") and five
+ * characters.
+ */
+
 /* All possible byte values (0-255), used to size the character frequency
  * table. */
 #define CHAR_TABLE_SIZE (UCHAR_MAX + 1)

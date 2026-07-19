@@ -64,22 +64,27 @@ best_time() {
   printf '%d.%03d' $((best / 1000)) $((best % 1000))
 }
 
+# All three ports must produce identical output in both formats, not just text.
 check_parity() {
   local failed=0
   for i in "${!CORPUS_FILES[@]}"; do
-    local corpus="${CORPUS_FILES[$i]}" reference="" name bin
-    while IFS='|' read -r name bin; do
-      local out
-      out="$("${bin}" "${corpus}")"
-      if [[ -z "${reference}" ]]; then
-        reference="${out}"
-      elif [[ "${out}" != "${reference}" ]]; then
-        echo "PARITY FAILURE: ${name} differs on ${corpus}" >&2
-        diff <(echo "${reference}") <(echo "${out}") >&2 || true
-        failed=1
-      fi
-    done < <(binaries)
-    echo "parity ok: ${CORPUS_NAMES[$i]}" >&2
+    local corpus="${CORPUS_FILES[$i]}"
+    for format in text json; do
+      local reference="" name bin flags=()
+      [[ "${format}" == "json" ]] && flags=(--json)
+      while IFS='|' read -r name bin; do
+        local out
+        out="$("${bin}" "${flags[@]}" "${corpus}")"
+        if [[ -z "${reference}" ]]; then
+          reference="${out}"
+        elif [[ "${out}" != "${reference}" ]]; then
+          echo "PARITY FAILURE: ${name} differs on ${corpus} (${format})" >&2
+          diff <(echo "${reference}") <(echo "${out}") >&2 || true
+          failed=1
+        fi
+      done < <(binaries)
+      echo "parity ok: ${CORPUS_NAMES[$i]} (${format})" >&2
+    done
   done
   return "${failed}"
 }

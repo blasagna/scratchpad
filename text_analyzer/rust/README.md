@@ -4,6 +4,10 @@ Reads text and reports line, blank line, word, character, digit, and punctuation
 counts, the word length distribution, and the most frequent words and
 characters. A Rust port of the C text analyzer.
 
+Input is treated as ASCII bytes: characters are counted as bytes rather than
+Unicode codepoints, and any non-ASCII byte separates words. See the top-level
+README for the full contract.
+
 ## Build & run
 
 ```sh

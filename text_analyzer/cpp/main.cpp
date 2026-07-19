@@ -55,6 +55,10 @@ void print_help() {
                "Reads\n"
                "stdin when no file is given or when the file is '-'.\n"
                "\n"
+               "Input is treated as ASCII bytes: characters are counted as "
+               "bytes, not\n"
+               "Unicode codepoints, and any non-ASCII byte separates words.\n"
+               "\n"
                "Options:\n";
   std::cout
       << "  --top-n N           number of top words/chars to report (default: "

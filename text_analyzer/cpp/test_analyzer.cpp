@@ -187,4 +187,30 @@ TEST(AnalyzerTest, JsonOutput) {
   EXPECT_NE(out.find("\"blank_lines\": 0"), std::string::npos);
   EXPECT_NE(out.find("\"word_length\""), std::string::npos);
   EXPECT_NE(out.find("\"p50\": 3"), std::string::npos);
+  // Floats carry four decimals and ranked entries are expanded across lines;
+  // both are required for byte-identical JSON with the C and Rust ports.
+  EXPECT_NE(out.find("\"mean\": 3.0000"), std::string::npos);
+  EXPECT_NE(out.find("  \"top_words\": [\n    {\n      \"word\": \"the\",\n"),
+            std::string::npos);
+}
+
+TEST(AnalyzerTest, CharFrequencyTieBreak) {
+  // Equal counts rank ascending by character, so 'a' precedes 'b'.
+  const TextStats stats = analyze_str("ba\n");
+  ASSERT_GE(stats.top_chars.size(), 2u);
+  EXPECT_EQ(stats.top_chars[0].ch, 'a');
+  EXPECT_EQ(stats.top_chars[1].ch, 'b');
+}
+
+TEST(AnalyzerTest, NonAsciiBytesSeparateWords) {
+  // Input is processed as bytes: the two bytes of UTF-8 'é' each count as a
+  // character, neither is a letter, digit, nor punctuation, and together they
+  // end the word.
+  const TextStats stats = analyze_str("caf\xc3\xa9 x\n");
+  EXPECT_EQ(stats.char_count, 8);
+  EXPECT_EQ(stats.word_count, 2);
+  EXPECT_EQ(stats.digit_count, 0);
+  EXPECT_EQ(stats.punct_count, 0);
+  ASSERT_GE(stats.top_words.size(), 1u);
+  EXPECT_EQ(stats.top_words[0].word, "caf");
 }

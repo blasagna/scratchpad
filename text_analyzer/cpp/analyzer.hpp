@@ -1,12 +1,10 @@
 #ifndef TEXT_ANALYZER_CPP_ANALYZER_HPP
 #define TEXT_ANALYZER_CPP_ANALYZER_HPP
 
-#include <array>
-#include <climits>
 #include <istream>
+#include <memory>
 #include <ostream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace text_analyzer {
@@ -16,19 +14,11 @@ inline constexpr unsigned int kDefaultTopN = 5;
 inline constexpr unsigned int kDefaultMaxWordLen = 256;
 inline constexpr unsigned int kDefaultWordTableCap = 64;
 
-// Printable ASCII range excluding space: '!' (33) through '~' (126). These are
-// the only characters considered for the top-chars report.
-inline constexpr char kPrintableAsciiMin = '!';
-inline constexpr char kPrintableAsciiMax = '~';
-
-// All possible byte values (0-255), used to size the character frequency table.
-inline constexpr std::size_t kCharTableSize = UCHAR_MAX + 1;
-
-// Buckets in the word length histogram, indexed by length. Lengths at or above
-// the last index are clamped into it, so quantiles (but never the exactly
-// tracked count/sum/min/max) lose resolution for words longer than
-// kDefaultMaxWordLen characters.
-inline constexpr std::size_t kLengthHistBuckets = kDefaultMaxWordLen + 1;
+// Note on text handling: input is processed as bytes, in the "C" locale (no
+// port calls setlocale), so classification is ASCII-only. char_count counts
+// bytes rather than Unicode codepoints, and a word is a maximal run of ASCII
+// letters [A-Za-z]. Any non-ASCII byte counts as a character, separates words,
+// and is neither a digit nor a punctuation mark.
 
 struct WordFreq {
   std::string word;
@@ -91,6 +81,9 @@ struct TextStats {
 class Analyzer {
 public:
   explicit Analyzer(const AnalyzerConfig &config = {});
+  ~Analyzer();
+  Analyzer(Analyzer &&) noexcept;
+  Analyzer &operator=(Analyzer &&) noexcept;
 
   // Reads all bytes from in. The caller retains ownership of the stream.
   void feed(std::istream &in);
@@ -100,20 +93,8 @@ public:
   TextStats finish();
 
 private:
-  void flush_word();
-
-  AnalyzerConfig config_;
-  TextStats stats_;
-  std::array<long, kCharTableSize> char_counts_{};
-  std::unordered_map<std::string, long> word_counts_;
-  std::array<long, kLengthHistBuckets> length_hist_{};
-  long length_sum_ = 0;
-  long length_min_ = 0;
-  long length_max_ = 0;
-  std::string word_;      // spelling in progress, truncated
-  long cur_word_len_ = 0; // true length of the word in progress
-  bool in_word_ = false;
-  bool line_has_content_ = false;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 // analyze - reads all bytes from in and returns the computed statistics.
