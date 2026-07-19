@@ -1,0 +1,50 @@
+{
+  "lines": 2,
+  "blank_lines": 0,
+  "words": 8,
+  "characters": 24,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 2.0000,
+    "min": 2,
+    "max": 2,
+    "p25": 2,
+    "p50": 2,
+    "p75": 2
+  },
+  "top_words": [
+    {
+      "word": "aa",
+      "count": 2,
+      "frequency": 0.2500
+    },
+    {
+      "word": "bb",
+      "count": 2,
+      "frequency": 0.2500
+    },
+    {
+      "word": "cc",
+      "count": 2,
+      "frequency": 0.2500
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "a",
+      "count": 4,
+      "frequency": 0.1667
+    },
+    {
+      "char": "b",
+      "count": 4,
+      "frequency": 0.1667
+    },
+    {
+      "char": "c",
+      "count": 4,
+      "frequency": 0.1667
+    }
+  ]
+}

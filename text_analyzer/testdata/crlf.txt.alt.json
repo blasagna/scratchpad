@@ -1,0 +1,50 @@
+{
+  "lines": 3,
+  "blank_lines": 1,
+  "words": 3,
+  "characters": 21,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 4.6667,
+    "min": 4,
+    "max": 5,
+    "p25": 4,
+    "p50": 5,
+    "p75": 5
+  },
+  "top_words": [
+    {
+      "word": "alph",
+      "count": 1,
+      "frequency": 0.3333
+    },
+    {
+      "word": "beta",
+      "count": 1,
+      "frequency": 0.3333
+    },
+    {
+      "word": "gamm",
+      "count": 1,
+      "frequency": 0.3333
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "a",
+      "count": 5,
+      "frequency": 0.2381
+    },
+    {
+      "char": "m",
+      "count": 2,
+      "frequency": 0.0952
+    },
+    {
+      "char": "b",
+      "count": 1,
+      "frequency": 0.0476
+    }
+  ]
+}

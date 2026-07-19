@@ -113,20 +113,38 @@ the 50-distinct one — same bytes, same word count.
 
 ### Testing
 
-1. **Cross-port golden tests.** The premise of this project is one program
-   written three times, but parity is currently maintained by eyeball — a
-   tie-break bug in C's word ranking survived until someone happened to diff the
-   outputs. `bench/run.sh --check` now diffs all three ports over the benchmark
-   corpora, which is a start, but it is not wired into `bazel test` and covers
-   only two inputs. Promoting it to a real golden-file suite over a corpus of
-   edge cases is still the test that best matches the design goal.
+1. ~~**Cross-port golden tests.**~~ (done) Parity was previously maintained by
+   eyeball — a tie-break bug in C's word ranking survived until someone happened
+   to diff the outputs.
+
+   `testdata/` now holds 13 hand-reviewed edge cases (empty input, blank lines,
+   CRLF, count ties, truncation, JSON escapes, non-ASCII and binary bytes,
+   quantile boundaries, halfway rounding), each with expected text and JSON under
+   two configs — defaults and a fixed alternate (`top_n=3, max_word_len=5`).
+
+   Bazel cannot build the Cargo binary, so rather than shelling out to all three
+   ports, **each port compares its own rendering against the same committed
+   goldens** — which enforces parity transitively while letting each test run in
+   its native runner (`//text_analyzer/{c,cpp}:test_golden` under `bazel test`,
+   `tests/golden.rs` under `cargo test`). `bench/run.sh --check` still does a
+   direct three-way diff and now covers JSON as well as text.
+
+   Regenerate with `testdata/regenerate.sh`, which verifies all three ports agree
+   *before* writing anything, so a single-port bug cannot be baked into the
+   expected output. `testdata/make_inputs.sh` builds the inputs from `printf`
+   escapes, keeping the binary and no-trailing-newline cases reviewable.
 1. **CLI-level integration tests.** No port covers argument parsing, stdin, `-`,
    multiple files, exit codes, or error messages. Currently the largest untested
-   surface.
-1. **Property tests** (e.g. proptest in Rust): feeding input in N random chunks
-   equals feeding it whole; `blank_lines <= lines`; `min <= mean <= max`; top-N
-   counts sum to at most `word_count`. The chunk-invariance property directly
-   guards the accumulator refactor.
+   surface — and now the only open testing item.
+1. ~~**Property tests**~~ (done) `rust/tests/property.rs`, using proptest over
+   the public API. Eight properties: chunk invariance (feeding N random chunks
+   equals feeding the whole, which directly guards the multi-file accumulator),
+   `analyze` agreeing with the accumulator, `char_count`/`line_count` matching
+   the raw bytes, `blank_lines <= lines`, word-length stats ordered and
+   internally consistent, rankings bounded and sorted with the documented
+   tie-break, `render_json` always parsing, and `render_text` reporting its
+   totals. Inputs come from a text-weighted byte generator plus unrestricted
+   bytes, with configs spanning the degenerate-but-defined settings.
 
 ### Features
 
@@ -140,6 +158,18 @@ the 50-distinct one — same bytes, same word count.
 1. **Sentence counting and readability scores** (Flesch-Kincaid). Needs sentence
    segmentation, which is genuinely interesting given the tokenizer currently
    treats `.` as a plain separator.
+
+## Testing
+
+```sh
+bazel test //text_analyzer/...          # C and C++ unit + golden tests
+cd text_analyzer/rust && cargo test     # Rust unit + golden + property tests
+./text_analyzer/bench/run.sh --check    # direct three-way diff, text and JSON
+```
+
+The golden corpus in `testdata/` is the main guard on the three-port parity
+property; see the *Testing* TODO section above for how it is laid out and
+regenerated.
 
 ## Implementations
 

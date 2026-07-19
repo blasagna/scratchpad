@@ -1,0 +1,18 @@
+Lines:        4
+Blank lines:  2
+Words:        6
+Characters:   32
+Digits:       2
+Punctuation:  2
+
+Word length:  mean 2.8, min 2, max 3, p25 3, p50 3, p75 3
+
+Top words:
+  1. the (2, 33.3%)
+  2. cat (1, 16.7%)
+  3. mat (1, 16.7%)
+
+Top characters:
+  1. 't' (5, 15.6%)
+  2. 'a' (3, 9.4%)
+  3. 'e' (2, 6.2%)

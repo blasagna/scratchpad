@@ -1,0 +1,50 @@
+{
+  "lines": 2,
+  "blank_lines": 0,
+  "words": 4,
+  "characters": 333,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 82.2500,
+    "min": 5,
+    "max": 301,
+    "p25": 5,
+    "p50": 10,
+    "p75": 13
+  },
+  "top_words": [
+    {
+      "word": "also",
+      "count": 1,
+      "frequency": 0.2500
+    },
+    {
+      "word": "shor",
+      "count": 1,
+      "frequency": 0.2500
+    },
+    {
+      "word": "trun",
+      "count": 1,
+      "frequency": 0.2500
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "y",
+      "count": 300,
+      "frequency": 0.9009
+    },
+    {
+      "char": "t",
+      "count": 5,
+      "frequency": 0.0150
+    },
+    {
+      "char": "a",
+      "count": 3,
+      "frequency": 0.0090
+    }
+  ]
+}

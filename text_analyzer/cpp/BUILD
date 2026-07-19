@@ -20,3 +20,13 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "test_golden",
+    srcs = ["test_golden.cpp"],
+    data = ["//text_analyzer/testdata:golden"],
+    deps = [
+        ":analyzer",
+        "@googletest//:gtest_main",
+    ],
+)

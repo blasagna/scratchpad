@@ -1,0 +1,18 @@
+{
+  "lines": 0,
+  "blank_lines": 0,
+  "words": 0,
+  "characters": 0,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 0.0000,
+    "min": 0,
+    "max": 0,
+    "p25": 0,
+    "p50": 0,
+    "p75": 0
+  },
+  "top_words": [],
+  "top_characters": []
+}

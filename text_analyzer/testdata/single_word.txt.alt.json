@@ -1,0 +1,40 @@
+{
+  "lines": 0,
+  "blank_lines": 0,
+  "words": 1,
+  "characters": 4,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 4.0000,
+    "min": 4,
+    "max": 4,
+    "p25": 4,
+    "p50": 4,
+    "p75": 4
+  },
+  "top_words": [
+    {
+      "word": "solo",
+      "count": 1,
+      "frequency": 1.0000
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "o",
+      "count": 2,
+      "frequency": 0.5000
+    },
+    {
+      "char": "l",
+      "count": 1,
+      "frequency": 0.2500
+    },
+    {
+      "char": "s",
+      "count": 1,
+      "frequency": 0.2500
+    }
+  ]
+}

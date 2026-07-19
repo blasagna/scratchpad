@@ -1,0 +1,70 @@
+{
+  "lines": 1,
+  "blank_lines": 0,
+  "words": 6,
+  "characters": 13,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 1.0000,
+    "min": 1,
+    "max": 1,
+    "p25": 1,
+    "p50": 1,
+    "p75": 1
+  },
+  "top_words": [
+    {
+      "word": "a",
+      "count": 1,
+      "frequency": 0.1667
+    },
+    {
+      "word": "b",
+      "count": 1,
+      "frequency": 0.1667
+    },
+    {
+      "word": "c",
+      "count": 1,
+      "frequency": 0.1667
+    },
+    {
+      "word": "d",
+      "count": 1,
+      "frequency": 0.1667
+    },
+    {
+      "word": "e",
+      "count": 1,
+      "frequency": 0.1667
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "a",
+      "count": 1,
+      "frequency": 0.0769
+    },
+    {
+      "char": "b",
+      "count": 1,
+      "frequency": 0.0769
+    },
+    {
+      "char": "c",
+      "count": 1,
+      "frequency": 0.0769
+    },
+    {
+      "char": "d",
+      "count": 1,
+      "frequency": 0.0769
+    },
+    {
+      "char": "e",
+      "count": 1,
+      "frequency": 0.0769
+    }
+  ]
+}

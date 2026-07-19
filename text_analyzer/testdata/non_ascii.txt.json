@@ -1,0 +1,70 @@
+{
+  "lines": 1,
+  "blank_lines": 0,
+  "words": 5,
+  "characters": 21,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 2.4000,
+    "min": 1,
+    "max": 4,
+    "p25": 2,
+    "p50": 2,
+    "p75": 3
+  },
+  "top_words": [
+    {
+      "word": "caf",
+      "count": 1,
+      "frequency": 0.2000
+    },
+    {
+      "word": "e",
+      "count": 1,
+      "frequency": 0.2000
+    },
+    {
+      "word": "na",
+      "count": 1,
+      "frequency": 0.2000
+    },
+    {
+      "word": "stra",
+      "count": 1,
+      "frequency": 0.2000
+    },
+    {
+      "word": "ve",
+      "count": 1,
+      "frequency": 0.2000
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "a",
+      "count": 3,
+      "frequency": 0.1429
+    },
+    {
+      "char": "e",
+      "count": 2,
+      "frequency": 0.0952
+    },
+    {
+      "char": "c",
+      "count": 1,
+      "frequency": 0.0476
+    },
+    {
+      "char": "f",
+      "count": 1,
+      "frequency": 0.0476
+    },
+    {
+      "char": "n",
+      "count": 1,
+      "frequency": 0.0476
+    }
+  ]
+}

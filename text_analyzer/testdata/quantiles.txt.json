@@ -1,0 +1,70 @@
+{
+  "lines": 1,
+  "blank_lines": 0,
+  "words": 8,
+  "characters": 44,
+  "digits": 0,
+  "punctuation": 0,
+  "word_length": {
+    "mean": 4.5000,
+    "min": 1,
+    "max": 8,
+    "p25": 2,
+    "p50": 4,
+    "p75": 6
+  },
+  "top_words": [
+    {
+      "word": "a",
+      "count": 1,
+      "frequency": 0.1250
+    },
+    {
+      "word": "bb",
+      "count": 1,
+      "frequency": 0.1250
+    },
+    {
+      "word": "ccc",
+      "count": 1,
+      "frequency": 0.1250
+    },
+    {
+      "word": "dddd",
+      "count": 1,
+      "frequency": 0.1250
+    },
+    {
+      "word": "eeeee",
+      "count": 1,
+      "frequency": 0.1250
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "h",
+      "count": 8,
+      "frequency": 0.1818
+    },
+    {
+      "char": "g",
+      "count": 7,
+      "frequency": 0.1591
+    },
+    {
+      "char": "f",
+      "count": 6,
+      "frequency": 0.1364
+    },
+    {
+      "char": "e",
+      "count": 5,
+      "frequency": 0.1136
+    },
+    {
+      "char": "d",
+      "count": 4,
+      "frequency": 0.0909
+    }
+  ]
+}

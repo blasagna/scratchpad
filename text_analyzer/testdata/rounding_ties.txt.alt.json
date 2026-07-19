@@ -1,0 +1,50 @@
+{
+  "lines": 4,
+  "blank_lines": 2,
+  "words": 6,
+  "characters": 32,
+  "digits": 2,
+  "punctuation": 2,
+  "word_length": {
+    "mean": 2.8333,
+    "min": 2,
+    "max": 3,
+    "p25": 3,
+    "p50": 3,
+    "p75": 3
+  },
+  "top_words": [
+    {
+      "word": "the",
+      "count": 2,
+      "frequency": 0.3333
+    },
+    {
+      "word": "cat",
+      "count": 1,
+      "frequency": 0.1667
+    },
+    {
+      "word": "mat",
+      "count": 1,
+      "frequency": 0.1667
+    }
+  ],
+  "top_characters": [
+    {
+      "char": "t",
+      "count": 5,
+      "frequency": 0.1562
+    },
+    {
+      "char": "a",
+      "count": 3,
+      "frequency": 0.0938
+    },
+    {
+      "char": "e",
+      "count": 2,
+      "frequency": 0.0625
+    }
+  ]
+}
