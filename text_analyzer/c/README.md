@@ -58,8 +58,9 @@ path, and correct `(unsigned char)` casts before `char_counts` indexing and
    returned 0 for equal counts and `qsort` isn't stable, so equal-frequency
    words came out in an arbitrary, run-dependent order. `cmp_word_entry_desc`
    now breaks ties with `strcmp`, matching the C++ and Rust ports — which
-   matters more since the hash table's slot order is arbitrary. Top-chars was
-   already deterministic (inner scan is ascending ASCII).
+   matters more since the hash table's slot order is arbitrary. Top-chars is
+   likewise deterministic: `cmp_char_freq_desc` breaks count ties ascending by
+   character.
 
 ### Design notes (not bugs)
 
@@ -68,7 +69,7 @@ path, and correct `(unsigned char)` casts before `char_counts` indexing and
    distinct words versus 0.030s at 50, on identical input size and word count.
    `WordTable` is now an open-addressed hash table (FNV-1a, linear probing,
    power-of-two capacity, doubling at 70% load) over words interned into a bump
-   allocator. Same corpus now runs in 0.021s. See `bench/run.sh`.
+   allocator. Same corpus now runs in 0.021s. See `../bench/run.sh`.
 
    Two details worth knowing:
    - Table entries hold a `const char *` into the arena rather than an inline
@@ -84,22 +85,21 @@ path, and correct `(unsigned char)` casts before `char_counts` indexing and
    choice, but differs from `wc -l`-style tools that count a final
    unterminated line. Confirm it's the intended behavior.
 
-6. **The top-chars algorithm is correct but roundabout.** It sorts all 256
-   counts, then for each rank rescans the 94 printable slots for a matching
-   value, using `-1` sentinels to dedupe. It works (including ties and
-   skipping non-printables), but it's O(256·94) and a bit subtle. Sorting an
-   index array over just the printable range, or a small partial selection
-   over `char_counts[33..126]`, would be simpler to reason about.
+6. ~~**The top-chars algorithm is correct but roundabout.**~~ (fixed). It used
+   to sort all 256 counts, then for each rank rescan the 94 printable slots for
+   a matching value, using `-1` sentinels to dedupe — O(256·94) and a bit
+   subtle. `analyzer_finish` now collects only the printable characters that
+   actually occurred into a small `CharFreq` array and `qsort`s that with
+   `cmp_char_freq_desc`, which is both simpler and cheaper.
 
 ### Minor
 
-- After a successful `analyze_file`, `main` could also check `ferror(f)`; moot
-  once item 1 is in place.
 - `CharFreq.ch` is `char` — fine because only `'!'..'~'` are stored, but if the
   char set ever widened to bytes ≥ 128 this would go negative and break
   `print_json_char`'s comparisons. The current range constraint keeps it safe;
   worth a one-line comment on the struct.
 
 Nothing here is a crash or memory bug — allocation failure paths all free
-correctly. Item 1 (read-error detection) is the one to fix; the rest are
-polish.
+correctly. The correctness and performance items (1–4, 6) have since been
+fixed; what remains (item 5, and the minor notes below) is polish and a
+behavior confirmation.
