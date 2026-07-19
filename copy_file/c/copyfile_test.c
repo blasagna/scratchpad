@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 extern "C" {
 #include "copyfile.h"
@@ -111,4 +112,68 @@ TEST(CopyPathTest, OverwritesExistingDestination) {
 
   EXPECT_EQ(copy_path(src.c_str(), dst.c_str()), COPY_OK);
   EXPECT_EQ(read_file(dst), std::string("new")); /* truncated, not appended */
+}
+
+TEST(CopyPathTest, DirectoryDestinationCopiesBasenameInside) {
+  std::string dir = tmp_path("destdir");
+  ASSERT_EQ(mkdir(dir.c_str(), 0755) == 0 || errno == EEXIST, true);
+  std::string src = tmp_path("into_dir_src.txt");
+  write_file(src, "payload\n", 8);
+
+  EXPECT_EQ(copy_path(src.c_str(), dir.c_str()), COPY_OK);
+  /* The source's base name lands inside the directory. */
+  EXPECT_EQ(read_file(dir + "/into_dir_src.txt"), std::string("payload\n"));
+}
+
+/* Wraps a char* returned by the path helpers: copies it out and frees it. */
+static std::string take(char *p) {
+  std::string s = p ? p : "";
+  free(p);
+  return s;
+}
+
+TEST(ExpandTildeTest, NoTildeReturnsCopy) {
+  EXPECT_EQ(take(copy_expand_tilde("/abs/path.txt")), "/abs/path.txt");
+  EXPECT_EQ(take(copy_expand_tilde("rel/path.txt")), "rel/path.txt");
+}
+
+TEST(ExpandTildeTest, BareTildeUsesHome) {
+  ASSERT_EQ(setenv("HOME", "/home/testuser", 1), 0);
+  EXPECT_EQ(take(copy_expand_tilde("~")), "/home/testuser");
+}
+
+TEST(ExpandTildeTest, TildeSlashExpandsToHome) {
+  ASSERT_EQ(setenv("HOME", "/home/testuser", 1), 0);
+  EXPECT_EQ(take(copy_expand_tilde("~/sub/f.txt")), "/home/testuser/sub/f.txt");
+}
+
+TEST(ExpandTildeTest, TildeOnlyExpandsAtStart) {
+  ASSERT_EQ(setenv("HOME", "/home/testuser", 1), 0);
+  EXPECT_EQ(take(copy_expand_tilde("a/~/b")), "a/~/b");
+}
+
+TEST(ExpandTildeTest, UnknownUserLeftUnchanged) {
+  /* No such user, so the path can't be resolved and is returned verbatim. */
+  EXPECT_EQ(take(copy_expand_tilde("~no_such_user_xyz123/f.txt")),
+            "~no_such_user_xyz123/f.txt");
+}
+
+TEST(ResolveDestTest, NonDirectoryReturnsCopy) {
+  std::string dst = tmp_path("plain_dst.txt"); /* does not exist */
+  EXPECT_EQ(take(copy_resolve_dest(dst.c_str(), "/a/b/src.txt")), dst);
+}
+
+TEST(ResolveDestTest, ExistingDirectoryAppendsBasename) {
+  std::string dir = tmp_path("resolve_dir");
+  ASSERT_EQ(mkdir(dir.c_str(), 0755) == 0 || errno == EEXIST, true);
+  EXPECT_EQ(take(copy_resolve_dest(dir.c_str(), "/a/b/src.txt")),
+            dir + "/src.txt");
+}
+
+TEST(ResolveDestTest, TrailingSlashIsNotDoubled) {
+  std::string dir = tmp_path("resolve_dir_slash");
+  ASSERT_EQ(mkdir(dir.c_str(), 0755) == 0 || errno == EEXIST, true);
+  std::string with_slash = dir + "/";
+  EXPECT_EQ(take(copy_resolve_dest(with_slash.c_str(), "src.txt")),
+            dir + "/src.txt");
 }
