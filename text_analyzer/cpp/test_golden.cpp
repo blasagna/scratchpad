@@ -1,9 +1,9 @@
 // Golden tests: render every case in testdata/ and compare against the
 // committed expected output.
 //
-// The C and Rust ports run the same corpus against the same golden files, so all
-// three agreeing with the goldens means all three agree with each other. That is
-// the project's central invariant, and this is what enforces it.
+// The C and Rust ports run the same corpus against the same golden files, so
+// all three agreeing with the goldens means all three agree with each other.
+// That is the project's central invariant, and this is what enforces it.
 //
 // Regenerate the goldens with testdata/regenerate.sh after an intentional
 // behavior change.

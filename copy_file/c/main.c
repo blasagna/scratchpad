@@ -21,9 +21,8 @@ int main(int argc, char *argv[]) {
      * path. Fall back to the raw argument if resolution can't be reproduced. */
     char *src = copy_expand_tilde(src_path);
     char *dst_expanded = copy_expand_tilde(dst_path);
-    char *final = (src && dst_expanded)
-                      ? copy_resolve_dest(dst_expanded, src)
-                      : NULL;
+    char *final =
+        (src && dst_expanded) ? copy_resolve_dest(dst_expanded, src) : NULL;
     printf("copied '%s' to '%s'\n", src_path, final ? final : dst_path);
     free(src);
     free(dst_expanded);
@@ -31,17 +30,17 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  /* A memory failure isn't tied to a particular file. */
-  if (result == COPY_ERR_NOMEM) {
+  /* These failures have no meaningful errno and aren't tied to one file. */
+  if (result == COPY_ERR_NOMEM || result == COPY_ERR_SAME_FILE) {
     fprintf(stderr, "copy_file: %s\n", copy_result_str(result));
     return 1;
   }
 
   /* Errors naming the destination point at dst_path; everything else is about
    * the source. errno is still the value the failing libc call left. */
-  const char *file =
-      (result == COPY_ERR_OPEN_DST || result == COPY_ERR_WRITE) ? dst_path
-                                                                : src_path;
+  const char *file = (result == COPY_ERR_OPEN_DST || result == COPY_ERR_WRITE)
+                         ? dst_path
+                         : src_path;
   fprintf(stderr, "copy_file: %s: %s: %s\n", copy_result_str(result), file,
           strerror(errno));
   return 1;

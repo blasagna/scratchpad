@@ -114,6 +114,15 @@ TEST(CopyPathTest, OverwritesExistingDestination) {
   EXPECT_EQ(read_file(dst), std::string("new")); /* truncated, not appended */
 }
 
+TEST(CopyPathTest, SameFileIsRefusedWithoutDataLoss) {
+  std::string file = tmp_path("same_file.txt");
+  write_file(file, "keep me", 7);
+
+  /* Copying a file onto itself must not truncate it to empty. */
+  EXPECT_EQ(copy_path(file.c_str(), file.c_str()), COPY_ERR_SAME_FILE);
+  EXPECT_EQ(read_file(file), std::string("keep me"));
+}
+
 TEST(CopyPathTest, DirectoryDestinationCopiesBasenameInside) {
   std::string dir = tmp_path("destdir");
   ASSERT_EQ(mkdir(dir.c_str(), 0755) == 0 || errno == EEXIST, true);

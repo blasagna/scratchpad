@@ -48,9 +48,9 @@ long quantile(const std::array<long, kLengthHistBuckets> &hist, long count,
 
 // Returns the mean word length, or 0.0 when no words were seen.
 double word_length_mean(const WordLengthStats &wl) {
-  return wl.count > 0 ? static_cast<double>(wl.sum) /
-                            static_cast<double>(wl.count)
-                      : 0.0;
+  return wl.count > 0
+             ? static_cast<double>(wl.sum) / static_cast<double>(wl.count)
+             : 0.0;
 }
 
 // Writes c as the contents of a JSON string, escaping the two characters that
@@ -142,8 +142,8 @@ void Analyzer::Impl::flush_word() {
     length_max_ = len;
   if (length_min_ == 0 || len < length_min_)
     length_min_ = len;
-  const auto bucket = std::min(static_cast<std::size_t>(len),
-                               length_hist_.size() - 1);
+  const auto bucket =
+      std::min(static_cast<std::size_t>(len), length_hist_.size() - 1);
   length_hist_[bucket]++;
 
   word_.clear();

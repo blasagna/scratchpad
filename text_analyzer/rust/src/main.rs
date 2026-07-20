@@ -67,7 +67,9 @@ fn main() -> ExitCode {
     let result = if cli.files.is_empty() {
         feed_stdin(&mut accum)
     } else {
-        cli.files.iter().try_for_each(|path| feed_path(&mut accum, path))
+        cli.files
+            .iter()
+            .try_for_each(|path| feed_path(&mut accum, path))
     };
     if let Err((label, err)) = result {
         eprintln!("{label}: {err}");

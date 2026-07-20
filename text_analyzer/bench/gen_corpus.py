@@ -14,12 +14,21 @@ WORDS_PER_LINE = 12
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--words", type=int, default=400_000,
-                        help="total words to emit (default: 400000)")
-    parser.add_argument("--distinct", type=int, default=40_000,
-                        help="size of the vocabulary (default: 40000)")
-    parser.add_argument("--seed", type=int, default=7,
-                        help="RNG seed, for reproducibility (default: 7)")
+    parser.add_argument(
+        "--words",
+        type=int,
+        default=400_000,
+        help="total words to emit (default: 400000)",
+    )
+    parser.add_argument(
+        "--distinct",
+        type=int,
+        default=40_000,
+        help="size of the vocabulary (default: 40000)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=7, help="RNG seed, for reproducibility (default: 7)"
+    )
     parser.add_argument("--out", required=True, help="output file path")
     args = parser.parse_args()
 

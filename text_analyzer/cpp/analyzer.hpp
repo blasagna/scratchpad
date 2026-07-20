@@ -122,7 +122,8 @@ void print_stats(std::ostream &os, const TextStats &stats);
 
 // print_stats_json - writes stats to os as a single JSON object with the
 // counts, a word_length object, and top_words and top_characters arrays. Each
-// ranked entry carries its count and a frequency expressed as a ratio in [0, 1].
+// ranked entry carries its count and a frequency expressed as a ratio in [0,
+// 1].
 void print_stats_json(std::ostream &os, const TextStats &stats);
 
 } // namespace text_analyzer

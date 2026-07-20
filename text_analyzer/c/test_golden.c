@@ -23,73 +23,74 @@ extern "C" {
 
 namespace {
 
-/* Must stay in sync with regenerate.sh's ALT_FLAGS and the other two ports. */
-AnalyzerConfig alt_config() {
-  AnalyzerConfig config = analyzer_config_default();
-  config.top_n = 3;
-  config.max_word_len = 5;
-  return config;
-}
-
-/*
- * Bazel guarantees TEST_SRCDIR and TEST_WORKSPACE for tests; using them avoids
- * depending on the runner's working directory. Falls back to a source-relative
- * path so the binary can also be run directly.
- */
-std::string testdata_dir() {
-  const char *srcdir = std::getenv("TEST_SRCDIR");
-  const char *workspace = std::getenv("TEST_WORKSPACE");
-  if (srcdir && workspace) {
-    return std::string(srcdir) + "/" + workspace + "/text_analyzer/testdata";
+  /* Must stay in sync with regenerate.sh's ALT_FLAGS and the other two ports.
+   */
+  AnalyzerConfig alt_config() {
+    AnalyzerConfig config = analyzer_config_default();
+    config.top_n = 3;
+    config.max_word_len = 5;
+    return config;
   }
-  return "text_analyzer/testdata";
-}
 
-std::string read_file(const std::string &path) {
-  std::ifstream in(path, std::ios::binary);
-  EXPECT_TRUE(in.good()) << "cannot open " << path;
-  std::ostringstream buf;
-  buf << in.rdbuf();
-  return buf.str();
-}
-
-std::vector<std::string> read_cases() {
-  std::vector<std::string> cases;
-  std::ifstream in(testdata_dir() + "/cases.txt");
-  EXPECT_TRUE(in.good()) << "cannot open cases.txt in " << testdata_dir();
-  std::string line;
-  while (std::getline(in, line)) {
-    if (!line.empty())
-      cases.push_back(line);
+  /*
+   * Bazel guarantees TEST_SRCDIR and TEST_WORKSPACE for tests; using them
+   * avoids depending on the runner's working directory. Falls back to a
+   * source-relative path so the binary can also be run directly.
+   */
+  std::string testdata_dir() {
+    const char *srcdir = std::getenv("TEST_SRCDIR");
+    const char *workspace = std::getenv("TEST_WORKSPACE");
+    if (srcdir && workspace) {
+      return std::string(srcdir) + "/" + workspace + "/text_analyzer/testdata";
+    }
+    return "text_analyzer/testdata";
   }
-  return cases;
-}
 
-/* Renders one input with the given config, as text or JSON. */
-std::string render(const std::string &input_path, const AnalyzerConfig *config,
-                   bool json) {
-  FILE *f = fopen(input_path.c_str(), "r");
-  EXPECT_NE(f, nullptr) << "cannot open " << input_path;
-  if (!f)
-    return "";
-
-  TextStats stats;
-  const int rc = analyze_file(f, config, &stats);
-  fclose(f);
-  EXPECT_EQ(rc, 0) << "analyze failed for " << input_path;
-  if (rc != 0)
-    return "";
-
-  testing::internal::CaptureStdout();
-  if (json) {
-    print_stats_json(&stats);
-  } else {
-    print_stats(&stats);
+  std::string read_file(const std::string &path) {
+    std::ifstream in(path, std::ios::binary);
+    EXPECT_TRUE(in.good()) << "cannot open " << path;
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    return buf.str();
   }
-  const std::string out = testing::internal::GetCapturedStdout();
-  text_stats_free(&stats);
-  return out;
-}
+
+  std::vector<std::string> read_cases() {
+    std::vector<std::string> cases;
+    std::ifstream in(testdata_dir() + "/cases.txt");
+    EXPECT_TRUE(in.good()) << "cannot open cases.txt in " << testdata_dir();
+    std::string line;
+    while (std::getline(in, line)) {
+      if (!line.empty())
+        cases.push_back(line);
+    }
+    return cases;
+  }
+
+  /* Renders one input with the given config, as text or JSON. */
+  std::string render(const std::string &input_path,
+                     const AnalyzerConfig *config, bool json) {
+    FILE *f = fopen(input_path.c_str(), "r");
+    EXPECT_NE(f, nullptr) << "cannot open " << input_path;
+    if (!f)
+      return "";
+
+    TextStats stats;
+    const int rc = analyze_file(f, config, &stats);
+    fclose(f);
+    EXPECT_EQ(rc, 0) << "analyze failed for " << input_path;
+    if (rc != 0)
+      return "";
+
+    testing::internal::CaptureStdout();
+    if (json) {
+      print_stats_json(&stats);
+    } else {
+      print_stats(&stats);
+    }
+    const std::string out = testing::internal::GetCapturedStdout();
+    text_stats_free(&stats);
+    return out;
+  }
 
 } // namespace
 

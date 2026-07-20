@@ -157,8 +157,8 @@ typedef struct {
  * analyzer_init - prepares a to accumulate statistics.
  *
  * Input:  a      - pointer to an Analyzer that will be fully overwritten.
- *         config - runtime options; pass NULL to use sane defaults. Out-of-range
- *                  fields are replaced with their defaults.
+ *         config - runtime options; pass NULL to use sane defaults.
+ * Out-of-range fields are replaced with their defaults.
  *
  * Output: Returns 0 on success, -1 on allocation failure or if a is NULL.
  *         On success the caller must eventually call analyzer_free(a).

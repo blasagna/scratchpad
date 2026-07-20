@@ -12,7 +12,8 @@
 static const int PRINTABLE_ASCII_MIN = '!';
 static const int PRINTABLE_ASCII_MAX = '~';
 
-/* Width of the label column in the text summary, sized for the longest label. */
+/* Width of the label column in the text summary, sized for the longest label.
+ */
 #define LABEL_WIDTH 13
 
 /* Bytes read per fread() call. Reading in blocks rather than one getc() at a
@@ -120,8 +121,7 @@ static void word_table_free(WordTable *t) {
  * is never full when this is called, so the probe always terminates.
  */
 static WordEntry *word_table_lookup(WordEntry *slots, size_t capacity,
-                                    const char *word,
-                                    unsigned long long hash) {
+                                    const char *word, unsigned long long hash) {
   size_t i = (size_t)hash & (capacity - 1);
   while (slots[i].word && strcmp(slots[i].word, word) != 0) {
     i = (i + 1) & (capacity - 1);

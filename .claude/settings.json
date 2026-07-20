@@ -53,5 +53,19 @@
       "Bash(timeout 30 cargo search proptest --limit 3)",
       "Bash(git check-ignore *)"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && pixi run fmt >/dev/null 2>&1 || true",
+            "statusMessage": "Formatting with pixi run fmt",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
   }
 }

@@ -215,7 +215,10 @@ impl Accum {
 
     /// Records the accumulated word and its length, then resets word state.
     fn flush_word(&mut self) {
-        *self.words.entry(std::mem::take(&mut self.word)).or_insert(0) += 1;
+        *self
+            .words
+            .entry(std::mem::take(&mut self.word))
+            .or_insert(0) += 1;
         self.stats.word_count += 1;
 
         let len = self.cur_word_len;

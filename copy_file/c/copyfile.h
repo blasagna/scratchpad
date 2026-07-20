@@ -11,11 +11,12 @@
  */
 typedef enum {
   COPY_OK = 0,
-  COPY_ERR_OPEN_SRC, /* opening the source for reading failed */
-  COPY_ERR_OPEN_DST, /* opening/creating the destination for writing failed */
-  COPY_ERR_READ,     /* a read error occurred on the source */
-  COPY_ERR_WRITE,    /* a write or flush error occurred on the destination */
-  COPY_ERR_NOMEM,    /* out of memory while resolving a path */
+  COPY_ERR_OPEN_SRC,  /* opening the source for reading failed */
+  COPY_ERR_OPEN_DST,  /* opening/creating the destination for writing failed */
+  COPY_ERR_READ,      /* a read error occurred on the source */
+  COPY_ERR_WRITE,     /* a write or flush error occurred on the destination */
+  COPY_ERR_NOMEM,     /* out of memory while resolving a path */
+  COPY_ERR_SAME_FILE, /* source and destination are the same file */
 } CopyResult;
 
 /*
@@ -34,12 +35,13 @@ CopyResult copy_stream(FILE *src, FILE *dst);
 /*
  * copy_path - copies the contents of src_path to dst_path.
  *
- * Both paths are first passed through copy_expand_tilde. The destination is then
- * passed through copy_resolve_dest, so naming an existing directory copies the
- * source into it. The source is opened for reading, the resolved destination is
- * opened (created or truncated) for writing, all bytes are copied, and both
- * files are closed. A failing close on the destination is reported as
- * COPY_ERR_WRITE, since it may signal buffered data that never reached disk.
+ * Both paths are first passed through copy_expand_tilde. The destination is
+ * then passed through copy_resolve_dest, so naming an existing directory copies
+ * the source into it. The source is opened for reading, the resolved
+ * destination is opened (created or truncated) for writing, all bytes are
+ * copied, and both files are closed. A failing close on the destination is
+ * reported as COPY_ERR_WRITE, since it may signal buffered data that never
+ * reached disk.
  *
  * Input:  src_path - path to read from.
  *         dst_path - path to create or overwrite (or an existing directory).

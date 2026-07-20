@@ -14,9 +14,8 @@ namespace {
 
 using text_analyzer::AnalyzerConfig;
 
-constexpr std::string_view kUsage =
-    "usage: text_analyzer [options] [file...]\n"
-    "       text_analyzer -h | --help\n";
+constexpr std::string_view kUsage = "usage: text_analyzer [options] [file...]\n"
+                                    "       text_analyzer -h | --help\n";
 
 // Argument that means "read stdin", and the label used for it in errors.
 constexpr std::string_view kStdinArg = "-";
@@ -24,8 +23,8 @@ constexpr std::string_view kStdinLabel = "<stdin>";
 
 // The integer options, each paired with the config field it sets. Listing them
 // once keeps the "--flag N" and "--flag=N" paths in sync.
-constexpr std::array<std::pair<std::string_view, unsigned int AnalyzerConfig::*>,
-                     3>
+constexpr std::array<
+    std::pair<std::string_view, unsigned int AnalyzerConfig::*>, 3>
     kIntFlags = {{
         {"--top-n", &AnalyzerConfig::top_n},
         {"--max-word-len", &AnalyzerConfig::max_word_len},

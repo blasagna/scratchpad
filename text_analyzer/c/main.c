@@ -25,7 +25,8 @@ static void print_help(void) {
   printf("  - top N most frequent words (case-insensitive)\n");
   printf("  - top N most frequent non-space characters\n");
   printf("\n");
-  printf("Multiple files are analyzed as a single concatenated stream. Reads\n");
+  printf(
+      "Multiple files are analyzed as a single concatenated stream. Reads\n");
   printf("stdin when no file is given or when the file is '-'.\n");
   printf("\n");
   printf("Input is treated as ASCII bytes: characters are counted as bytes, "

@@ -13,7 +13,14 @@ class TestExclusiveTime(unittest.TestCase):
         self.assertEqual(
             exclusive_time(
                 1,
-                ["0:start:0", "0:start:2", "0:end:5", "0:start:6", "0:end:6", "0:end:7"],
+                [
+                    "0:start:0",
+                    "0:start:2",
+                    "0:end:5",
+                    "0:start:6",
+                    "0:end:6",
+                    "0:end:7",
+                ],
             ),
             [8],
         )
@@ -22,7 +29,14 @@ class TestExclusiveTime(unittest.TestCase):
         self.assertEqual(
             exclusive_time(
                 2,
-                ["0:start:0", "0:start:2", "0:end:5", "1:start:6", "1:end:6", "0:end:7"],
+                [
+                    "0:start:0",
+                    "0:start:2",
+                    "0:end:5",
+                    "1:start:6",
+                    "1:end:6",
+                    "0:end:7",
+                ],
             ),
             [7, 1],
         )

@@ -111,6 +111,17 @@ static CopyResult copy_resolved(const char *src_path, const char *dst_path) {
   if (!src)
     return COPY_ERR_OPEN_SRC;
 
+  /* Refuse to copy a file onto itself: opening the destination with "wb" would
+   * truncate it first, destroying the source before a single byte is read.
+   * Compare device+inode so hard links and "./x" vs "x" are caught too. A dst
+   * that does not exist yet simply fails the stat and is not the same file. */
+  struct stat src_st, dst_st;
+  if (fstat(fileno(src), &src_st) == 0 && stat(dst_path, &dst_st) == 0 &&
+      src_st.st_dev == dst_st.st_dev && src_st.st_ino == dst_st.st_ino) {
+    fclose(src);
+    return COPY_ERR_SAME_FILE;
+  }
+
   FILE *dst = fopen(dst_path, "wb");
   if (!dst) {
     int saved = errno;
@@ -173,6 +184,8 @@ const char *copy_result_str(CopyResult r) {
     return "error writing destination file";
   case COPY_ERR_NOMEM:
     return "out of memory";
+  case COPY_ERR_SAME_FILE:
+    return "source and destination are the same file";
   }
   return "unknown error";
 }
