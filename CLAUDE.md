@@ -4,9 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Personal scratchpad for learning exercises:
-- `c_little_book/` — C programming exercises built with Bazel + GoogleTest
-- `leetcode/` — LeetCode solutions in Python, each problem in its own pixi workspace
+Personal scratchpad for learning exercises — small programs implemented across
+several languages to practice tools and patterns. Each top-level directory is a
+self-contained area with its own nested `CLAUDE.md` (loaded on demand when you
+work in that subtree) and usually a `README.md` with the full narrative.
+
+## Areas
+
+| Area | What | Details |
+|------|------|---------|
+| `c_little_book/` | C exercises from the little book of C (Bazel) | [`c_little_book/CLAUDE.md`](c_little_book/CLAUDE.md) |
+| `algo_little_book/` | Algorithm/data-structure exercises in Python (pixi) | [`algo_little_book/CLAUDE.md`](algo_little_book/CLAUDE.md) |
+| `leetcode/` | LeetCode solutions in Python, one pixi workspace per problem | [`leetcode/CLAUDE.md`](leetcode/CLAUDE.md) |
+| `copy_file/` | A `cp`-like file copier, ported to C / C++ / Rust | [`copy_file/CLAUDE.md`](copy_file/CLAUDE.md) |
+| `text_analyzer/` | A text-stats CLI, ported to C / C++ / Rust with cross-port parity | [`text_analyzer/CLAUDE.md`](text_analyzer/CLAUDE.md) |
+| `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -17,59 +29,64 @@ Personal scratchpad for learning exercises:
 | Python   | pixi        |
 | Rust     | cargo       |
 
-## C and C++ with Bazel
+## Commands
 
-Build and run a binary:
+Bazel (C and C++):
 ```sh
 bazel build //c_little_book/hello_world:hello
 bazel run //c_little_book/hello_world:hello
-```
-
-Run tests for a target:
-```sh
 bazel test //c_little_book/recursion:test_math
+bazel test //...                    # all Bazel tests
 ```
 
-Run all Bazel tests:
-```sh
-bazel test //...
-```
-
-Build flags: strict mode (warnings as errors) is the default via `.bazelrc`. Override with `--config=permissive` if needed during iteration.
-
-**C tests with GoogleTest**: GoogleTest is a C++ library, so C test files wrap headers in `extern "C" { ... }` and BUILD targets add `copts = ["-x", "c++"]` to compile the test file as C++. Pure C++ targets don't need this.
-
-Typical BUILD rules to use:
-- `cc_binary` — executables
-- `cc_library` — shared code (`srcs` + `hdrs`)
-- `cc_test` — test binaries (link `@googletest//:gtest_main`)
-
-New C/C++ packages need a `BUILD` file; no changes to `MODULE.bazel` are needed for standard C/C++ targets since `rules_cc` and `googletest` are already declared.
-
-## Python with pixi
-
-Each project (e.g. each LeetCode problem) is an independent pixi workspace in its own directory. Work from within that directory:
-
+pixi (Python) — run from within a project directory. Task names vary per project
+(see the area docs); LeetCode problems expose `test` and `main`:
 ```sh
 cd leetcode/array_shuffle
 pixi run test     # runs unittest
 pixi run main     # runs solution.py directly
 ```
 
-Tests use Python's built-in `unittest` module. New problems should follow the same pattern: `solution.py`, `test_solution.py`, and a `pixi.toml` with `test` and `main` tasks defined under `[tasks]`.
-
-Initialize a new pixi workspace:
+cargo (Rust) — the Rust crates form a single workspace (root `Cargo.toml`, members
+`text_analyzer/rust`, `morse_trainer`, `copy_file/rust`; shared `target/` at the
+repo root):
 ```sh
-pixi init <directory>
+cargo test                    # all workspace members
+cargo test -p morse_trainer   # a single member
+cd copy_file/rust && cargo test   # or work from within the member
 ```
 
-## Rust with cargo
+Formatting is repo-wide via `pixi run fmt` (ruff + clang-format + cargo fmt) and
+runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
 
-Each Rust project lives in its own directory with a standard `Cargo.toml`. New projects should use the 2024 edition (`edition = "2024"` in `Cargo.toml`). Use cargo directly from within that directory:
+## Repo-wide conventions
 
-```sh
-cargo build
-cargo run
-cargo test                   # run all tests
-cargo test <test_name>       # run a single test by name
-```
+**Bazel builds are strict by default** (`.bazelrc`): `-Wall -Werror -Wextra
+-pedantic`, and C++ compiles with `-std=c++20`. During iteration, opt out with
+`--config=permissive` (warnings still shown, not fatal). The default build is
+`fastbuild` (`-O0`); use `--config=opt` for any timing measurement.
+
+**C tests with GoogleTest**: GoogleTest is a C++ library, so C test files wrap the
+headers under test in `extern "C" { ... }` and their `cc_test` target adds
+`copts = ["-x", "c++"]` to compile the C test file as C++. Pure C++ targets don't
+need this.
+
+**Typical BUILD rules**: `cc_binary` (executables), `cc_library` (shared code:
+`srcs` + `hdrs`), `cc_test` (link `@googletest//:gtest_main`). A new C/C++ package
+needs its own `BUILD`; no `MODULE.bazel` change is needed for standard targets
+since `rules_cc` and `googletest` are already declared.
+
+**New pixi problems** follow the same pattern: `solution.py`, `test_solution.py`,
+and a `pixi.toml` with `test` and `main` tasks (`pixi init <directory>` to start).
+Tests use Python's built-in `unittest`.
+
+**New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
+`members` list in the root `Cargo.toml`.
+
+## Skills
+
+Two skills cover the `text_analyzer` maintenance workflows (their descriptions load
+on demand):
+- **text-analyzer-bench** — benchmark and parity-check the three ports.
+- **text-analyzer-goldens** — regenerate the golden test outputs after an
+  intentional behavior change.
