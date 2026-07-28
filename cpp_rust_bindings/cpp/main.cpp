@@ -66,7 +66,15 @@ int main(int argc, char **argv) {
     if (arg == "--names") {
       want_names = true;
     } else if (arg.starts_with("--")) {
-      std::cerr << "exprkit: unknown option: " << arg << '\n' << kUsage;
+      // Note this catches a bare "--" too. clap, in the Rust CLI, treats "--"
+      // as an end-of-options separator instead; that is one of the two places
+      // the two CLIs deliberately differ (the other is --help text). Both are
+      // argument-parser conventions rather than exprkit behavior.
+      // A hint rather than the usage block: the Rust CLI gets its help text
+      // from clap and could not reproduce kUsage byte for byte, and keeping
+      // every non-help stream identical is worth more than the extra lines.
+      std::cerr << "exprkit: unknown option: " << arg << '\n'
+                << "Try 'exprkit --help' for more information.\n";
       return kExitUsage;
     } else {
       expressions.push_back(arg);

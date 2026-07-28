@@ -27,7 +27,9 @@
 // `Result` in a try/catch for std::exception and hands what() to Rust, and
 // ExprError derives from std::runtime_error. Note that this holds for *any*
 // std::exception, so a std::bad_alloc from deep inside the library also arrives
-// as an Err rather than crossing the boundary and aborting.
+// as an Err rather than crossing the boundary and aborting -- but only for the
+// functions Rust declares `Result`. That is every one of them; see the bridge
+// module in lib.rs for why the uniformity is deliberate.
 namespace exprkit::bridge {
 
 double evaluate(rust::Str text);

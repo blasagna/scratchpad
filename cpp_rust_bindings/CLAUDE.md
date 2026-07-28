@@ -15,10 +15,10 @@ than reference counting, two build systems rather than one.
 ## Commands
 
 ```sh
-bazel test //cpp_rust_bindings/...            # the logic lives here (26 cases)
+bazel test //cpp_rust_bindings/...            # the logic lives here (31 cases)
 bazel run -- //cpp_rust_bindings/cpp:exprkit_cli '2 ^ 10'
 
-cargo test -p exprkit                         # the seam (24 tests, incl. doctests)
+cargo test -p exprkit                         # the seam (33 tests, incl. doctests)
 cargo run -q -p exprkit -- '2 ^ 10'
 ```
 
@@ -30,18 +30,38 @@ cargo run -q -p exprkit -- '2 ^ 10'
   GoogleTest; `rust/src/shim.{hpp,cpp}` only converts types, and has no logic of
   its own. This is the same rule as `statkit`'s "core must never depend on
   pyo3".
-- **Every fallible C++ function is declared `-> Result<T>` in the bridge.** That
+- **Every bridge function is declared `-> Result<T>`, without exception.** That
   declaration is what makes cxx generate the try/catch. Without it a `throw`
-  unwinds into Rust frames that cannot handle it and the process aborts. There
-  is no partial credit here — a new binding that can throw and is not `Result`
-  is a latent crash.
+  unwinds into Rust frames that cannot handle it and the process aborts. This
+  includes functions with no arithmetic error to report — `format_value`,
+  `names`, `new_evaluator`, `clear`, `has` all allocate, and `std::bad_alloc` is
+  a `throw` like any other. Where the public signature stays infallible, the
+  wrapper funnels through `expect_no_throw`, converting an abort into a panic.
+  There is no partial credit here; a new binding that is not `Result` is a
+  latent crash.
+- **`Evaluator::eval` is strongly exception-safe.** Assignments are buffered and
+  applied only after the whole input parses, so `x = 1 2` defines nothing. Tests
+  that only use inputs failing *before* the assignment (`y = 1 / 0`) pass
+  vacuously — cover the after case or the guarantee is untested.
+- **The parser is depth-capped at 256 recursion levels.** A stack overflow
+  cannot be caught and so cannot become an `Err`; it is the one failure mode
+  that would defeat the whole design. Any new recursive path in the parser needs
+  a `DepthGuard`.
 - **The two CLIs print byte-identical output** (results, error messages, exit
   codes `0`/`1`/`2`). This is structural, not conventional: both call
   `exprkit::format_value`, the C++ formatter, so there is no second
   implementation to keep in sync. **Do not "simplify" the Rust CLI by formatting
   floats in Rust** — `tests/evaluate.rs::the_two_clis_share_one_formatter` is
-  the tripwire. `--help` text does differ, and should; each argument parser
-  words its own.
+  the tripwire. Three documented exceptions, all argument-parsing or encoding
+  conventions rather than exprkit behavior: `--help` text, a bare `--` (clap
+  separator vs. unknown option), and non-UTF-8 input (spelled `'�'` rather than
+  the raw byte). Nothing else may drift.
+- **The Rust CLI's option handling is not just `#[derive(Parser)]`.**
+  `allow_hyphen_values` is required so `-2 ^ 2` is arithmetic, but it also makes
+  clap ignore options after the first positional; `split_options` restores the
+  C++'s position-independent scan. Do not delete either half. Likewise, stdin is
+  read with `from_utf8_lossy`, not `BufRead::lines()`, which fails a whole run
+  on one stray byte.
 - **Test the logic in C++, the seam in Rust.** `cpp/test_exprkit.cpp` owns
   precedence, parsing, and the error taxonomy. The Rust tests deliberately do
   not re-check arithmetic; they check what only they can — bit-for-bit floats,

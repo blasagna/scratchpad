@@ -75,13 +75,36 @@ fn a_failed_call_leaves_the_environment_untouched() {
     assert!(evaluator.eval("y = 1 / 0").is_err());
     assert!(evaluator.eval("z = nope").is_err());
 
+    // These two fail only *after* the assignment's value is computed, so they
+    // are what actually exercises the deferral in the C++ Parser rather than
+    // passing because the parse died early.
+    assert!(evaluator.eval("w = 1 2").is_err());
+    assert!(evaluator.eval("p = q = 1 2").is_err());
+
     // A C++ exception unwound through the binding without corrupting the
     // object it was thrown from, which is the property that matters after an
     // Err: the Evaluator is still usable.
-    assert!(!evaluator.has("y"));
-    assert!(!evaluator.has("z"));
+    for name in ["y", "z", "w", "p", "q"] {
+        assert!(!evaluator.has(name), "`{name}` should not be defined");
+    }
     assert_eq!(evaluator.get("x").unwrap(), 1.0);
     assert_eq!(evaluator.eval("x + 1").unwrap(), 2.0);
+}
+
+#[test]
+fn deeply_nested_input_is_an_err_not_a_crash() {
+    // Without the depth cap in the C++ parser this overflows the stack, which
+    // is an abort no `Result` can intercept -- the one failure mode that would
+    // defeat the whole "every error arrives as an Err" premise. Reachable from
+    // the library API, not just the CLI, so it belongs in the crate's tests.
+    assert!(evaluate(&("(".repeat(100_000) + "1")).is_err());
+    assert!(evaluate(&("-".repeat(100_000) + "1")).is_err());
+
+    let mut evaluator = Evaluator::new();
+    assert!(evaluator.eval(&("a=".repeat(100_000) + "1")).is_err());
+
+    // Still usable afterwards, and ordinary nesting still works.
+    assert_eq!(evaluator.eval("((((1 + 2))))").unwrap(), 3.0);
 }
 
 #[test]

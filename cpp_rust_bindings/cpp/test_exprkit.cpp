@@ -222,4 +222,64 @@ TEST(EvaluatorTest, KeepsTheEnvironmentIntactAfterAFailedEval) {
   EXPECT_DOUBLE_EQ(evaluator.get("x"), 1.0);
 }
 
+// The case above fails *before* reaching the assignment, so it would pass even
+// if assignments were applied eagerly. These fail *after* the value is in hand,
+// which is the only way to actually exercise the deferral in Parser::parse.
+TEST(EvaluatorTest, DoesNotAssignWhenTrailingInputFollows) {
+  Evaluator evaluator;
+  EXPECT_THROW(evaluator.eval("y = 1 2"), ExprError);
+  EXPECT_FALSE(evaluator.has("y"));
+}
+
+TEST(EvaluatorTest, DoesNotAssignAnyNameOfAFailedChain) {
+  Evaluator evaluator;
+  EXPECT_THROW(evaluator.eval("a = b = 1 2"), ExprError);
+  EXPECT_FALSE(evaluator.has("a"));
+  EXPECT_FALSE(evaluator.has("b"));
+}
+
+TEST(EvaluatorTest, LeavesAnExistingBindingAloneWhenReassignmentFails) {
+  Evaluator evaluator;
+  evaluator.eval("x = 1");
+  EXPECT_THROW(evaluator.eval("x = 99 )"), ExprError);
+  EXPECT_DOUBLE_EQ(evaluator.get("x"), 1.0);
+}
+
+// Recursive descent recurses once per nesting level, so without a depth limit
+// these are a stack overflow -- which cannot be caught and takes the process
+// with it. Each case covers a different recursive path.
+TEST(Evaluate, RejectsDeeplyNestedInputInsteadOfOverflowing) {
+  EXPECT_THROW(exprkit::evaluate(std::string(100000, '(') + "1"), ExprError);
+  EXPECT_THROW(exprkit::evaluate(std::string(100000, '-') + "1"), ExprError);
+  EXPECT_THROW(exprkit::evaluate("sqrt(" + std::string(100000, '(')),
+               ExprError);
+
+  // The exponent of `^` is a unary, which is how 2^2^2^... recurses.
+  std::string powers = "2";
+  for (int i = 0; i < 100000; i++) {
+    powers += "^2";
+  }
+  EXPECT_THROW(exprkit::evaluate(powers), ExprError);
+
+  // Assignment chaining recurses through parse_program, not parse_unary.
+  std::string chain;
+  for (int i = 0; i < 100000; i++) {
+    chain += "a=";
+  }
+  Evaluator evaluator;
+  EXPECT_THROW(evaluator.eval(chain + "1"), ExprError);
+}
+
+TEST(Evaluate, AcceptsNestingWellBeyondAnythingReasonable) {
+  // The guard counts parser recursion levels, not parentheses -- a paren costs
+  // one, plus a couple of fixed levels for the enclosing program -- so the
+  // exact paren cap is a derived number not worth pinning. What is worth
+  // pinning is a floor: 200 levels must keep working, so the limit cannot be
+  // quietly tightened to where it would reject a real expression.
+  EXPECT_DOUBLE_EQ(
+      exprkit::evaluate(std::string(200, '(') + "7" + std::string(200, ')')),
+      7.0);
+  EXPECT_DOUBLE_EQ(exprkit::evaluate(std::string(200, '-') + "7"), 7.0);
+}
+
 } // namespace

@@ -45,20 +45,28 @@ mod ffi {
         /// Declaring the return type as `Result<T>` is what makes cxx generate
         /// the try/catch. Without it a thrown `ExprError` would unwind into
         /// Rust frames that are not prepared for it, and the process aborts.
+        ///
+        /// *Every* function here is `Result`, including the ones that cannot
+        /// fail as arithmetic. `format_value` builds a `std::string`, `names`
+        /// builds a vector, `new_evaluator` and `clear` insert into a map --
+        /// all of which can throw `std::bad_alloc`, and a throw that reaches
+        /// this boundary uncaught is an abort. Deciding case by case which C++
+        /// can allocate is exactly the reasoning that rots the first time the
+        /// library changes, so the rule here is uniform and needs no thought.
         fn evaluate(text: &str) -> Result<f64>;
-        fn format_value(value: f64) -> String;
+        fn format_value(value: f64) -> Result<String>;
 
-        fn new_evaluator() -> UniquePtr<Evaluator>;
+        fn new_evaluator() -> Result<UniquePtr<Evaluator>>;
 
         /// `Pin<&mut Evaluator>` is how cxx spells a `C++&` to a type that may
         /// not be moved. A plain `&mut` would let safe Rust `mem::swap` two
         /// C++ objects, which is unsound for any type whose address matters.
         fn eval(evaluator: Pin<&mut Evaluator>, text: &str) -> Result<f64>;
-        fn has(evaluator: &Evaluator, name: &str) -> bool;
+        fn has(evaluator: &Evaluator, name: &str) -> Result<bool>;
         fn get(evaluator: &Evaluator, name: &str) -> Result<f64>;
         fn set(evaluator: Pin<&mut Evaluator>, name: &str, value: f64) -> Result<()>;
-        fn names(evaluator: &Evaluator) -> Vec<String>;
-        fn clear(evaluator: Pin<&mut Evaluator>);
+        fn names(evaluator: &Evaluator) -> Result<Vec<String>>;
+        fn clear(evaluator: Pin<&mut Evaluator>) -> Result<()>;
     }
 }
 
@@ -100,6 +108,21 @@ impl From<cxx::Exception> for ExprError {
 /// Shorthand for the result type every fallible call here returns.
 pub type Result<T> = std::result::Result<T, ExprError>;
 
+/// Unwraps a bridge call whose only failure mode is allocation.
+///
+/// These operations have no arithmetic error to report, so widening their
+/// public signatures to `Result` would put a branch in every caller for a case
+/// that ends the process anyway. Panicking instead keeps the API honest, and
+/// the exchange is still worth making: an uncaught C++ exception crossing
+/// `extern "C"` is an abort, while a Rust panic is a defined, unwindable
+/// outcome. The bridge declaration is what buys that, not this function.
+fn expect_no_throw<T>(result: std::result::Result<T, cxx::Exception>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => panic!("exprkit: C++ threw where it should not: {}", err.what()),
+    }
+}
+
 /// Evaluates one expression in a scratch environment.
 ///
 /// The constants `pi` and `e` are in scope; an assignment is accepted but
@@ -134,7 +157,7 @@ pub fn evaluate(text: &str) -> Result<f64> {
 /// assert_eq!(exprkit::format_value(0.1 + 0.2), "0.30000000000000004");
 /// ```
 pub fn format_value(value: f64) -> String {
-    ffi::format_value(value)
+    expect_no_throw(ffi::format_value(value))
 }
 
 /// A calculator with a persistent set of named variables.
@@ -157,7 +180,7 @@ impl Evaluator {
     /// Creates an evaluator holding the constants `pi` and `e`.
     pub fn new() -> Self {
         Evaluator {
-            inner: ffi::new_evaluator(),
+            inner: expect_no_throw(ffi::new_evaluator()),
         }
     }
 
@@ -175,7 +198,7 @@ impl Evaluator {
 
     /// Reports whether `name` is currently defined.
     pub fn has(&self, name: &str) -> bool {
-        ffi::has(&self.inner, name)
+        expect_no_throw(ffi::has(&self.inner, name))
     }
 
     /// Returns the value bound to `name`.
@@ -199,12 +222,12 @@ impl Evaluator {
 
     /// Returns every defined name, sorted.
     pub fn names(&self) -> Vec<String> {
-        ffi::names(&self.inner)
+        expect_no_throw(ffi::names(&self.inner))
     }
 
     /// Forgets every variable and restores the `pi` and `e` constants.
     pub fn clear(&mut self) {
-        ffi::clear(self.inner.pin_mut());
+        expect_no_throw(ffi::clear(self.inner.pin_mut()));
     }
 }
 

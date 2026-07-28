@@ -69,8 +69,14 @@ public:
   //
   // The recognized functions are sqrt, abs, floor, ceil, ln, exp, sin, and cos.
   //
-  // Throws ExprError on a syntax error, an unknown name, division by zero, or
-  // an intermediate result that is not finite.
+  // Throws ExprError on a syntax error, an unknown name, division by zero, an
+  // intermediate result that is not finite, or nesting more than about 250
+  // levels deep (a cap that exists so deep input is an error rather than a
+  // stack overflow, which no amount of care on the caller's part can catch).
+  //
+  // Strongly exception-safe: a throw leaves the environment exactly as it was,
+  // including when the input assigns before it fails ("x = 1 2" defines
+  // nothing). Assignments are applied only once the whole input has parsed.
   double eval(std::string_view text);
 
   // has - reports whether name is currently defined.

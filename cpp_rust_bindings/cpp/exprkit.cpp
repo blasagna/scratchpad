@@ -6,11 +6,47 @@
 #include <format>
 #include <numbers>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 namespace exprkit {
 namespace {
 
 using Variables = std::map<std::string, double, std::less<>>;
+
+// How deeply expressions may nest before the parser gives up.
+//
+// Recursive descent uses one set of stack frames per nesting level, so without
+// a cap an input like "((((...1" is a stack overflow -- and a stack overflow is
+// not an exception. It cannot be caught, it cannot become a Result, and it
+// takes the process down through whichever language is on the stack. That would
+// be a hole straight through this project's central claim, so the limit is
+// deliberately far below anything the stack could not absorb rather than tuned
+// to the largest value that happens to survive.
+constexpr int kMaxDepth = 256;
+
+// Increments a depth counter for as long as it is alive.
+//
+// The check runs before the increment, so the counter stays accurate when the
+// throw unwinds -- a Parser is single-use, but a counter that only ever leaks
+// upward is the kind of thing that becomes wrong later.
+class DepthGuard {
+public:
+  explicit DepthGuard(int &depth) : depth_(depth) {
+    if (depth_ >= kMaxDepth) {
+      throw ExprError("expression nests too deeply");
+    }
+    depth_++;
+  }
+
+  ~DepthGuard() { depth_--; }
+
+  DepthGuard(const DepthGuard &) = delete;
+  DepthGuard &operator=(const DepthGuard &) = delete;
+
+private:
+  int &depth_;
+};
 
 bool is_ident_start(char c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
@@ -76,6 +112,12 @@ public:
       : text_(text), variables_(variables) {}
 
   // parse - evaluates the whole input and insists all of it was consumed.
+  //
+  // Assignments are applied here, at the very end, and not before: a failure
+  // anywhere -- including trailing input found after the assignment's value was
+  // computed -- must leave the environment exactly as it was. Callers rely on
+  // that, and an Evaluator that half-applied a failed line would be worse than
+  // one that rejected it outright.
   double parse() {
     double value = parse_program();
     skip_space();
@@ -83,11 +125,16 @@ public:
       throw ExprError(
           std::format("unexpected trailing input: '{}'", text_.substr(pos_)));
     }
+
+    for (const auto &assignment : pending_) {
+      variables_[assignment.first] = assignment.second;
+    }
     return value;
   }
 
 private:
   double parse_program() {
+    DepthGuard guard(depth_);
     skip_space();
     // An assignment is only recognizable one token in, so try it and rewind if
     // the "=" does not materialize. `x` and `x = 1` share their first token.
@@ -98,7 +145,11 @@ private:
       if (eat('=')) {
         // Recursing rather than calling parse_expr makes `x = y = 1` chain.
         double value = parse_program();
-        variables_[std::string(name)] = value;
+        // Recorded, not applied. See parse(). Nothing later in this input can
+        // read the name back -- assignments are a prefix of the grammar, and
+        // the right-hand side was evaluated before this line -- so deferring
+        // changes no result, only when the environment is touched.
+        pending_.emplace_back(std::string(name), value);
         return value;
       }
     }
@@ -136,7 +187,12 @@ private:
     }
   }
 
+  // Every operand -- a parenthesized group, a function argument, a stacked
+  // sign, the right side of a `^` -- reaches the parser through here, so one
+  // guard at this point bounds every recursive path except the assignment
+  // chaining in parse_program, which carries its own.
   double parse_unary() {
+    DepthGuard guard(depth_);
     skip_space();
     if (eat('-')) {
       return -parse_unary();
@@ -261,6 +317,11 @@ private:
   std::string_view text_;
   Variables &variables_;
   std::size_t pos_ = 0;
+  int depth_ = 0;
+  // Assignments awaiting a successful parse; see parse(). Ordered inner-to-
+  // outer for a chain like `a = b = 1`, which does not matter -- they all carry
+  // the same value -- but is worth knowing if that ever stops being true.
+  std::vector<std::pair<std::string, double>> pending_;
 };
 
 } // namespace
