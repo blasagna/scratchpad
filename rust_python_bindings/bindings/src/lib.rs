@@ -18,8 +18,12 @@ use statkit_core as core;
 // Errors: one Rust enum -> one Python exception type
 // ---------------------------------------------------------------------------
 
+// The first argument is stringified into the exception's `__module__`, so it has
+// to be the *fully qualified* module path, not the bare crate/module name. Get it
+// wrong and tracebacks name a module that does not exist and pickle -- and with
+// it multiprocessing -- cannot round-trip the exception.
 create_exception!(
-    _core,
+    statkit._core,
     StatError,
     PyException,
     "Raised when a statistic cannot be computed from the given input."

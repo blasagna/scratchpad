@@ -23,10 +23,12 @@ printf '1 2 3\n' | pixi run cli --zscores
 - **`core/` must never depend on pyo3.** Logic goes there and is tested with
   `cargo test`; `bindings/` only converts values and errors, and has no tests of
   its own.
-- **The two CLIs print byte-identical output.** `format_summary`/`format_zscores`
-  exist in both `core/src/main.rs` and `python/statkit/cli.py`; change one and you
-  change the other. Exit codes are `0` / `1` runtime error / `2` usage error, as
-  elsewhere in this repo.
+- **The two CLIs print byte-identical output on success.** `format_summary`/
+  `format_zscores` exist in both `core/src/main.rs` and `python/statkit/cli.py`;
+  change one and you change the other. `StatError` messages match too, since both
+  come from Rust; OS-error wording differs (each runtime words its own) and that
+  is fine. Exit codes are `0` / `1` runtime error / `2` usage error, as elsewhere
+  in this repo.
 - **Three names must agree**: `[lib] name` in `bindings/Cargo.toml`, the
   `#[pymodule]` function name, and the last component of `module-name` in
   `pyproject.toml`. All are `_core`.

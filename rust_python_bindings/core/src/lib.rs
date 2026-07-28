@@ -33,6 +33,9 @@ pub enum StatError {
     NotFinite(f64),
     /// Every value is identical, so the spread is zero and z-scores are undefined.
     Constant(f64),
+    /// Every value was finite, but a statistic computed from them was not:
+    /// summing values near `f64::MAX` overflows to infinity.
+    Overflow,
     /// A token in the input text was not a number.
     Parse { token: String },
 }
@@ -48,6 +51,7 @@ impl fmt::Display for StatError {
                     "all values are {value}, so the standard deviation is zero"
                 )
             }
+            StatError::Overflow => write!(f, "the values are too large to summarize"),
             StatError::Parse { token } => write!(f, "not a number: '{token}'"),
         }
     }
@@ -59,8 +63,9 @@ impl std::error::Error for StatError {}
 ///
 /// # Errors
 ///
-/// Returns [`StatError::Empty`] for an empty slice and [`StatError::NotFinite`]
-/// if any value is NaN or infinite.
+/// Returns [`StatError::Empty`] for an empty slice, [`StatError::NotFinite`] if
+/// any value is NaN or infinite, and [`StatError::Overflow`] if the values are
+/// finite but a statistic derived from them is not.
 pub fn summarize(values: &[f64]) -> Result<Summary, StatError> {
     check(values)?;
 
@@ -86,6 +91,14 @@ pub fn summarize(values: &[f64]) -> Result<Summary, StatError> {
         let sum_sq = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>();
         (sum_sq / (n - 1.0)).sqrt()
     };
+
+    // Checking the inputs is not enough: a sum of finite values can still
+    // overflow to infinity, and every statistic derived from it would then be
+    // infinite or NaN. Reject that here rather than hand back a poisoned
+    // `Summary` -- `zscores` in particular would go on to divide by it.
+    if !mean.is_finite() || !median.is_finite() || !stddev.is_finite() {
+        return Err(StatError::Overflow);
+    }
 
     Ok(Summary {
         count,
@@ -203,6 +216,14 @@ mod tests {
             summarize(&[f64::NAN]),
             Err(StatError::NotFinite(_))
         ));
+    }
+
+    #[test]
+    fn summarize_rejects_finite_input_whose_statistics_overflow() {
+        // The inputs pass `check`, but their sum is +inf.
+        assert_eq!(summarize(&[1e308, 1e308]), Err(StatError::Overflow));
+        // Here the mean is 0.0; it is the sum of squares that overflows.
+        assert_eq!(summarize(&[1e200, -1e200]), Err(StatError::Overflow));
     }
 
     #[test]

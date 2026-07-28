@@ -43,7 +43,9 @@ def main(argv: list[str] | None = None) -> int:
             output = format_zscores(zscores(values))
         else:
             output = format_summary(summarize(values))
-    except (StatError, OSError) as err:
+    # UnicodeDecodeError is a ValueError, not an OSError, so a non-UTF-8 file
+    # would traceback rather than report cleanly if it were left out.
+    except (StatError, OSError, UnicodeDecodeError) as err:
         print(f"statkit: {err}", file=sys.stderr)
         return 1
 

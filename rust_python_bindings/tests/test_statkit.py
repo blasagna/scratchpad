@@ -8,6 +8,7 @@ types, that Rust errors arrive as Python exceptions, and that the CLI is wired u
 
 import doctest
 import io
+import pickle
 import subprocess
 import sys
 import tempfile
@@ -94,6 +95,20 @@ class TestErrors(unittest.TestCase):
         with self.assertRaises(statkit.StatError):
             statkit.zscores([2.0, 2.0, 2.0])
 
+    def test_overflowing_input_is_rejected_rather_than_returning_inf(self):
+        with self.assertRaises(statkit.StatError):
+            statkit.summarize([1e308, 1e308])
+        with self.assertRaises(statkit.StatError):
+            statkit.zscores([1e200, -1e200])
+
+    def test_exception_is_fully_qualified_and_picklable(self):
+        # `create_exception!` stringifies its first argument into __module__;
+        # a bare `_core` there would name a module Python cannot import, and
+        # pickle (hence multiprocessing) would refuse the exception.
+        self.assertEqual(statkit.StatError.__module__, "statkit._core")
+        restored = pickle.loads(pickle.dumps(statkit.StatError("boom")))
+        self.assertIsInstance(restored, statkit.StatError)
+
     def test_unparsable_token_is_named(self):
         with self.assertRaises(statkit.StatError) as caught:
             statkit.parse_values("1 two 3")
@@ -144,6 +159,15 @@ class TestCli(unittest.TestCase):
             code, output = self._run([str(path)])
         self.assertEqual(code, 0)
         self.assertIn("mean    6.000000\n", output)
+
+    def test_undecodable_file_reports_cleanly(self):
+        """A UnicodeDecodeError is a ValueError, so it needs catching explicitly."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "binary.dat"
+            path.write_bytes(b"\x80\xff")
+            code, output = self._run([str(path)])
+        self.assertEqual(code, 1)
+        self.assertEqual(output, "")
 
     def test_reports_errors_and_exits_nonzero(self):
         code, output = self._run([], stdin="")
