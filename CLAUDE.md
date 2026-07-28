@@ -19,6 +19,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `copy_file/` | A `cp`-like file copier, ported to C / C++ / Rust | [`copy_file/CLAUDE.md`](copy_file/CLAUDE.md) |
 | `text_analyzer/` | A text-stats CLI, ported to C / C++ / Rust with cross-port parity | [`text_analyzer/CLAUDE.md`](text_analyzer/CLAUDE.md) |
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
+| `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -28,6 +29,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | C++      | Bazel       |
 | Python   | pixi        |
 | Rust     | cargo       |
+| Rust → Python extension | maturin (driven by a pixi task) |
 
 ## Commands
 
@@ -48,8 +50,8 @@ pixi run main     # runs solution.py directly
 ```
 
 cargo (Rust) — the Rust crates form a single workspace (root `Cargo.toml`, members
-`text_analyzer/rust`, `morse_trainer`, `copy_file/rust`; shared `target/` at the
-repo root):
+`text_analyzer/rust`, `morse_trainer`, `copy_file/rust`,
+`rust_python_bindings/{core,bindings}`; shared `target/` at the repo root):
 ```sh
 cargo test                    # all workspace members
 cargo test -p morse_trainer   # a single member

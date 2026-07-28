@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.14,<2"]
+build-backend = "maturin"
+
+[project]
+name = "statkit"
+version = "0.1.0"
+description = "Descriptive statistics, computed in Rust"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+# Installs a `statkit-py` command; the Rust CLI is plain `statkit`, so both can
+# live on PATH at once and be compared.
+[project.scripts]
+statkit-py = "statkit.cli:main"
+
+[tool.maturin]
+# The extension crate, not the core one. Everything else in the workspace is
+# invisible to the wheel.
+manifest-path = "bindings/Cargo.toml"
+# A "mixed" project: hand-written Python lives under python/, and the compiled
+# module is dropped in beside it as python/statkit/_core.*.so at build time.
+python-source = "python"
+module-name = "statkit._core"

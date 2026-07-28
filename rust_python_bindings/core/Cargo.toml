@@ -1,0 +1,15 @@
+[package]
+name = "statkit_core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "statkit_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "statkit"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
