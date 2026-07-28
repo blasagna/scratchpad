@@ -1,3 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["text_analyzer/rust", "morse_trainer", "copy_file/rust"]
+members = [
+    "text_analyzer/rust",
+    "morse_trainer",
+    "copy_file/rust",
+    "rust_python_bindings/core",
+    "rust_python_bindings/bindings",
+]

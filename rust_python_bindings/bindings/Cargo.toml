@@ -1,0 +1,24 @@
+[package]
+name = "statkit_py"
+version = "0.1.0"
+edition = "2024"
+
+# The library name must match the last component of `module-name` in
+# ../pyproject.toml (`statkit._core`): CPython looks for an init function named
+# after the module, and maturin derives the file name from this.
+#
+# `cdylib` is the only crate type an extension module needs. There is no `rlib`
+# here because nothing in Rust links against this crate -- it exists solely to be
+# loaded by CPython.
+[lib]
+name = "_core"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+statkit_core = { path = "../core" }
+
+# `extension-module` tells pyo3 not to link libpython: the symbols are resolved by
+# the interpreter that dlopen()s us. `abi3-py311` builds against the stable ABI,
+# so one compiled artifact works on CPython 3.11 and every later version.
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py311"] }
