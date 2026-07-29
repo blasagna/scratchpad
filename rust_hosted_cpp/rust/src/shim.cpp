@@ -3,6 +3,12 @@
 #include <string>
 #include <string_view>
 
+// The definition of the shared struct shim.hpp only forward-declares. It is
+// needed here and not there because these are the definitions -- the ones that
+// actually construct a CacheStats -- and keeping it out of the header is what
+// stops shim.hpp and this generated header from depending on each other.
+#include "lrukit/src/lib.rs.h"
+
 namespace lrukit::bridge {
 namespace {
 

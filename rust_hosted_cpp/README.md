@@ -178,9 +178,9 @@ C++ test binary and that rule leaves the library untested, so it is replaced by:
 |---|---|---|
 | `rust/tests/cache.rs` | eviction order, promotion, counters | the suite that would have been GoogleTest — 20 tests against the public API |
 | `rust/src/lib.rs` `mod tests` | the seam: out-parameters, NULs, throw sites, ownership | needs `ffi` internals, so it cannot be an integration test |
-| `rust/src/main.rs` `mod tests` | command parsing and output | the CLI is a program, not a library |
+| `rust/src/main.rs` `mod tests` | command parsing, script handling, output | the CLI is a program, not a library |
 
-`cargo test -p lrukit` runs all 50 (including 5 doctests). Nothing else runs, and
+`cargo test -p lrukit` runs all 54 (including 5 doctests). Nothing else runs, and
 that is the point to internalize: **a behavior not asserted in `rust/` is not
 asserted anywhere.**
 
@@ -219,19 +219,26 @@ LRUKIT_PERMISSIVE=1 cargo build -p lrukit    # C++ warnings stay warnings
 
 Exit codes follow the rest of the repo: `0` success, `1` a failure the program
 was asked to attempt (a zero capacity), `2` a request that never made sense (an
-unknown command). A cache miss is neither — it prints `(miss)` and the run
-continues.
+unknown command, or a script line that is not UTF-8 — keys are data, and a byte
+sequence that is not the key the caller meant is refused rather than patched up
+with U+FFFD). A cache miss is neither — it prints `(miss)` and the run continues.
 
 `bazel test //...` does not build anything in this directory. That is not an
 oversight.
 
 ## Gotchas
 
-- **`shim.hpp` and the generated header include each other.** `shim.hpp` needs
-  `lrukit/src/lib.rs.h` for the shared `CacheStats`; that header includes
-  `shim.hpp` back, because the bridge declares `include!("shim.hpp")`. Both are
-  guarded, so it resolves — but drop the guard from `shim.hpp` and the error will
-  point somewhere else entirely.
+- **`shim.hpp` must not include the generated header.** `lrukit/src/lib.rs.h`
+  includes `shim.hpp`, because the bridge declares `include!("shim.hpp")`.
+  Including it back makes the two mutually dependent, and guards do not rescue a
+  cycle — they only decide which half loses, so a TU that reaches the generated
+  header first sees `CacheStats` undefined. `shim.hpp` forward-declares the
+  struct and `shim.cpp` includes the header for the definitions.
+- **`Cache` is move-only.** Its map holds iterators into its own list, so a
+  member-wise copy would leave the copy pointing into the original's nodes. The
+  copy operations are deleted, the moves defaulted, and three `static_assert`s
+  in `lrukit.cpp` keep it that way — the only compile-time C++ checks the area
+  has.
 - **`build.rs` must list every C++ input** in its `rerun-if-changed` loop.
   Printing any `rerun-if-changed` disables cargo's default directory watching,
   and `../cpp` is outside the crate regardless. Add a `.cpp`, forget this, and

@@ -3,10 +3,24 @@
 #include <format>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace lrukit {
+
+// The only assertions in this file, and the only ones anywhere that a C++
+// compiler checks: there is no GoogleTest target here, so a property that must
+// hold at compile time has nowhere else to live. Copying a Cache would leave
+// its map pointing into another object's list; moving one is fine. Both are
+// stated in the header, and a static_assert is what keeps them true after
+// someone adds a member that quietly re-enables the copy.
+static_assert(!std::is_copy_constructible_v<Cache>,
+              "copying a Cache would share list nodes between two indexes");
+static_assert(!std::is_copy_assignable_v<Cache>);
+static_assert(std::is_move_constructible_v<Cache>,
+              "std::list transfers its nodes, so the map's iterators survive");
+
 namespace {
 
 // check_key - rejects the one key every operation refuses.

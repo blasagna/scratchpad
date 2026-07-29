@@ -16,7 +16,7 @@ that compiles this C++, and Rust is the only thing that tests it.
 ## Commands
 
 ```sh
-cargo test -p lrukit        # the whole suite: 50 tests (13 seam, 12 CLI, 20 logic, 5 doctests)
+cargo test -p lrukit        # the whole suite: 54 tests (13 seam, 16 CLI, 20 logic, 5 doctests)
 cargo run -q -p lrukit -- --capacity 2 'put a 1' 'put b 2' 'get a' 'put c 3' keys stats
 printf 'put x 1\nget x\nstats\n' | cargo run -q -p lrukit -- --capacity 4
 
@@ -68,6 +68,11 @@ area.
   `&mut`, which is unsound for a C++ object whose address matters — and `Cache`
   is such an object twice over, since its `std::map` holds iterators into its own
   `std::list`.
+- **The CLI refuses a script line that is not UTF-8**, rather than converting it
+  lossily. A stray byte inside a key would become U+FFFD, so `put k\xffey` and
+  `put k\xfeey` would silently become the same entry and the cache would serve a
+  value for a key nobody typed. A key is data; `from_utf8_lossy` is the wrong
+  tool for data. `a_script_line_that_is_not_utf8_is_refused` is the tripwire.
 - **No error message may contain a key or a value.** `what()` crosses as a C
   string, so an embedded NUL would truncate the message and non-UTF-8 bytes
   would arrive lossily. Arguments cross as `rust::Str`, a pointer/length pair,
@@ -80,18 +85,45 @@ area.
   one-line change in the C++ that no type checker would object to;
   `a_contains_does_not_promote_the_entry_it_found` is the guard.
 
-## Gotcha: shim.hpp and the generated header include each other
+## Gotcha: shim.hpp must not include the generated header
 
-`shim.hpp` includes `lrukit/src/lib.rs.h` to see the shared `CacheStats`, and
-that generated header includes `shim.hpp` right back, because the bridge module
-declares `include!("shim.hpp")`. The cycle is real and harmless: both files are
-`#include`-guarded, whichever is reached first wins, and `CacheStats` is defined
-before the declarations that need it either way. If you ever drop the guard from
-`shim.hpp`, this is what breaks, and the error will point somewhere else.
+The generated `lrukit/src/lib.rs.h` includes `shim.hpp`, because the bridge
+module declares `include!("shim.hpp")`. If `shim.hpp` includes it back to see
+the shared `CacheStats`, the two become mutually dependent, and header guards do
+not rescue a cycle — they only decide which half loses. A translation unit that
+reaches the generated header first enters it, comes to `shim.hpp`, finds the
+include back already suppressed, and hits `CacheStats stats(const Cache &);`
+with `CacheStats` undefined:
+
+```
+shim.hpp:65:1: error: 'CacheStats' does not name a type
+```
+
+So `shim.hpp` forward-declares `struct CacheStats;` instead, which is enough to
+*declare* functions returning it by value, and `shim.cpp` includes the generated
+header for the definitions. **Do not "simplify" that back into an include in the
+header.** It builds either way today, because `shim.cpp` is the only translation
+unit and includes `shim.hpp` first; the failure waits for the second `.cpp` file
+and then points somewhere unhelpful.
 
 The include path for the generated header is `<crate name>/<path to the bridge
 module>.h` — `lrukit/src/lib.rs.h` — and cxx-build puts its directory on the
 include path automatically, so `build.rs` needs no entry for it.
+
+## Gotcha: `Cache` is move-only, and the static_asserts are the only C++ test
+
+`index_` holds iterators into `entries_`. A member-wise copy would give the new
+object a fresh `std::list` while its map still pointed into the original's, so
+the copy read freed memory as soon as the source died — `std::list`'s node
+stability is what makes `splice` cheap, not something that survives copying the
+container. The copy operations are therefore `= delete`d and the moves
+explicitly `= default`ed (declaring the copies would otherwise suppress the
+moves, and moving a list transfers the nodes, so the iterators stay valid).
+
+Three `static_assert`s at the top of `lrukit.cpp` pin this. They are the only
+assertions in the area a C++ compiler checks — with no GoogleTest target, a
+property that holds at compile time has nowhere else to live, and a new member
+that quietly re-enables the copy would otherwise be caught by nothing.
 
 ## Gotcha: an absent value crosses as two things, not one
 

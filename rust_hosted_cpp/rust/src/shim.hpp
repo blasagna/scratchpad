@@ -7,17 +7,26 @@
 #include "lrukit.hpp"
 #include "rust/cxx.h"
 
-// The generated header for the #[cxx::bridge] module in lib.rs. It is what
-// defines lrukit::bridge::CacheStats, the shared struct this file returns by
-// value, and cxx-build puts its directory on the include path.
+// CacheStats is the cxx *shared* struct declared in lib.rs. Its definition is
+// generated into "lrukit/src/lib.rs.h", and this file deliberately does not
+// include that header.
 //
-// The include looks circular -- lib.rs.h contains an #include "shim.hpp" of its
-// own, generated from the bridge's include! -- and it is. It works because both
-// headers are guarded: whichever is reached first wins, the other's re-entry
-// expands to nothing, and CacheStats is defined before the declarations below
-// that need it. This is the ordinary way to use a shared struct from C++; the
-// only rule is that both files stay guarded.
-#include "lrukit/src/lib.rs.h"
+// The reason is that the generated header includes *this* one, because the
+// bridge module declares include!("shim.hpp"). Including it back would make the
+// two mutually dependent, and header guards do not rescue a cycle -- they only
+// decide which half loses. A translation unit that reached the generated header
+// first would enter it, come here, find the include of the generated header
+// already suppressed, and hit the declarations below with CacheStats still
+// undefined. That is a confusing error a long way from its cause, and it waits
+// for the second .cpp file rather than failing now.
+//
+// A forward declaration breaks the cycle instead. Declaring a function that
+// returns an incomplete type by value is legal; only the definitions need the
+// full struct, and shim.cpp includes the generated header to get it. So this
+// header stays includable from anywhere, in any order.
+namespace lrukit::bridge {
+struct CacheStats;
+}
 
 // The binding layer: the only code in this project that knows both languages
 // exist. It is the C++ counterpart of the `#[cxx::bridge]` module in lib.rs.

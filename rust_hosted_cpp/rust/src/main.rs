@@ -186,7 +186,8 @@ fn main() -> ExitCode {
     let mut out = stdout.lock();
 
     if args.commands.is_empty() {
-        return run_stdin(&mut cache, &mut out);
+        let stdin = io::stdin();
+        return run_script(&mut cache, &mut stdin.lock(), &mut out);
     }
 
     for line in &args.commands {
@@ -205,10 +206,11 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Reads commands from stdin, one per line, until EOF or the first failure.
-fn run_stdin(cache: &mut Cache, out: &mut impl Write) -> ExitCode {
-    let stdin = io::stdin();
-    let mut reader = stdin.lock();
+/// Reads commands one per line until EOF or the first failure.
+///
+/// Takes the reader rather than locking stdin itself so the whole loop --
+/// line numbering, encoding, and the exit codes -- is testable.
+fn run_script(cache: &mut Cache, reader: &mut impl BufRead, out: &mut impl Write) -> ExitCode {
     let mut buffer = Vec::new();
     let mut number = 0usize;
 
@@ -224,11 +226,20 @@ fn run_stdin(cache: &mut Cache, out: &mut impl Write) -> ExitCode {
         }
         number += 1;
 
-        // read_until plus from_utf8_lossy rather than BufRead::lines(): a line
-        // with one stray byte becomes U+FFFD and fails as an unknown command,
-        // where lines() would abandon the whole run on it.
-        let line = String::from_utf8_lossy(&buffer);
-        let line = line.trim_end_matches(['\n', '\r']);
+        // read_until plus an explicit from_utf8, rather than BufRead::lines():
+        // lines() reports a bad byte as an io::Error with no line number, and
+        // from_utf8_lossy would be worse than either -- a stray byte inside a
+        // key silently becomes U+FFFD, so two different keys collapse into one
+        // and the cache quietly serves the wrong entry. A key is data; the only
+        // safe thing to do with bytes that are not the key the caller meant is
+        // to refuse them.
+        let line = match str::from_utf8(&buffer) {
+            Ok(line) => line.trim_end_matches(['\n', '\r']),
+            Err(_) => {
+                eprintln!("lrukit: line {number}: not valid UTF-8");
+                return ExitCode::from(EXIT_USAGE);
+            }
+        };
         if is_blank_or_comment(line) {
             continue;
         }
@@ -251,6 +262,14 @@ fn run_stdin(cache: &mut Cache, out: &mut impl Write) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs a script through `run_script`, returning its exit code and stdout.
+    fn script(capacity: usize, input: &[u8]) -> (ExitCode, String) {
+        let mut cache = Cache::new(capacity).expect("capacity is valid");
+        let mut out = Vec::new();
+        let code = run_script(&mut cache, &mut &input[..], &mut out);
+        (code, String::from_utf8(out).expect("output is UTF-8"))
+    }
 
     fn output_of(capacity: usize, lines: &[&str]) -> String {
         let mut cache = Cache::new(capacity).expect("capacity is valid");
@@ -367,6 +386,47 @@ mod tests {
             output_of(2, &["put a 1", "get a", "get z", "stats"]),
             "stored a\n1\n(miss)\nhits=1 misses=1 evictions=0 size=1/2 hit_rate=0.500\n"
         );
+    }
+
+    #[test]
+    fn a_script_runs_every_line_and_skips_the_rest() {
+        let (code, out) = script(4, b"put a 1\n# a note\n\n   \nget a\nlen\n");
+
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::SUCCESS));
+        assert_eq!(out, "stored a\n1\n1\n");
+    }
+
+    #[test]
+    fn a_script_line_that_is_not_utf8_is_refused() {
+        // Not lossily converted. A stray byte inside a key would otherwise
+        // become U+FFFD, so `put k\xffey` and `put k\xfeey` would silently
+        // become the same entry -- a cache serving the wrong value for a key
+        // nobody typed.
+        let (code, out) = script(4, b"put a 1\nput k\xffey value\nput b 2\n");
+
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_USAGE))
+        );
+        assert_eq!(out, "stored a\n", "the run stops at the bad line");
+    }
+
+    #[test]
+    fn a_script_stops_at_the_first_bad_command() {
+        let (code, out) = script(4, b"put a 1\nfrobnicate\nput b 2\n");
+
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_USAGE))
+        );
+        assert_eq!(out, "stored a\n");
+    }
+
+    #[test]
+    fn a_script_needs_no_trailing_newline() {
+        let (_, out) = script(4, b"put a 1\nget a");
+
+        assert_eq!(out, "stored a\n1\n");
     }
 
     #[test]

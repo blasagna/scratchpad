@@ -76,10 +76,26 @@ public:
   // at the point the mistake was made.
   explicit Cache(std::size_t capacity);
 
-  // Cache owns list nodes that its map points into, so the compiler-generated
-  // copy would be correct only by accident of std::list's node stability. It is
-  // left in place (both members copy soundly) and simply never exercised by the
-  // bindings, which hold the object behind a unique_ptr.
+  // Not copyable. index_ holds iterators into entries_, and a member-wise copy
+  // would give the new object a fresh list while its map still pointed into the
+  // *original* one -- so the copy would read freed memory the moment the source
+  // died, and erase() on it would be undefined even while both were alive.
+  // std::list's node stability is what makes splice() cheap; it is not a
+  // property that survives copying the container.
+  //
+  // A correct copy would have to rebuild index_ from the new list. Nothing here
+  // needs one, so the operation is deleted rather than written: the bindings
+  // hold the object behind a unique_ptr and never copy it, and a C++ caller who
+  // tries gets a compile error instead of the segfault this used to be.
+  Cache(const Cache &) = delete;
+  Cache &operator=(const Cache &) = delete;
+
+  // Moving is sound and stays available, because moving a std::list transfers
+  // the nodes themselves: every iterator the map holds stays valid and simply
+  // belongs to the destination afterwards. Declaring the copy operations above
+  // would otherwise suppress these entirely.
+  Cache(Cache &&) = default;
+  Cache &operator=(Cache &&) = default;
 
   std::size_t capacity() const;
   std::size_t size() const;
