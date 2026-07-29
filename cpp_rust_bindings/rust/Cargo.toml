@@ -1,0 +1,22 @@
+[package]
+name = "exprkit"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "exprkit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "exprkit"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+cxx = "1"
+
+# cxx-build reads the #[cxx::bridge] module out of src/lib.rs, generates the C++
+# side of the FFI, and compiles it together with the C++ sources named in
+# build.rs. It is a build dependency only: nothing links against it at runtime.
+[build-dependencies]
+cxx-build = "1"
