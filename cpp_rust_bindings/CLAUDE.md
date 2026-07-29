@@ -12,6 +12,12 @@ which exports Rust *to* a higher-level language. Same layering discipline,
 different hazards: exceptions rather than error returns, object lifetime rather
 than reference counting, two build systems rather than one.
 
+[`../rust_hosted_cpp`](../rust_hosted_cpp) is the same seam with the second
+ecosystem removed — a C++ library with no build file, no test binary, and no CLI
+of its own. Compare the two before adding a `BUILD` to a new C++ library: the
+duplication documented below is the price of the C++ side staying independently
+buildable, and it is a price worth naming out loud rather than paying by reflex.
+
 ## Commands
 
 ```sh

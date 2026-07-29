@@ -1,0 +1,25 @@
+[package]
+name = "lrukit"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "lrukit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lrukit"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+cxx = "1"
+
+# cxx-build reads the #[cxx::bridge] module out of src/lib.rs, generates the C++
+# side of the FFI, and compiles it together with the C++ sources named in
+# build.rs. It is a build dependency only: nothing links against it at runtime.
+#
+# In this area it is also the *entire* build system for ../cpp -- there is no
+# BUILD file, no CMakeLists.txt, and no second way to compile that library.
+[build-dependencies]
+cxx-build = "1"

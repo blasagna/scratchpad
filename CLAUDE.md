@@ -21,6 +21,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
+| `rust_hosted_cpp/` | A C++ library with no build system of its own, built/tested/run entirely from Rust | [`rust_hosted_cpp/CLAUDE.md`](rust_hosted_cpp/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -32,6 +33,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | Rust     | cargo       |
 | Rust → Python extension | maturin (driven by a pixi task) |
 | C++ → Rust extension | cargo (a `build.rs` compiles the C++ a second time) |
+| C++ with no build of its own | cargo (`build.rs` is the only build config, and sets the standard and warnings too) |
 
 ## Commands
 
@@ -53,7 +55,8 @@ pixi run main     # runs solution.py directly
 
 cargo (Rust) — the Rust crates form a single workspace (root `Cargo.toml`, members
 `text_analyzer/rust`, `morse_trainer`, `copy_file/rust`, `cpp_rust_bindings/rust`,
-`rust_python_bindings/{core,bindings}`; shared `target/` at the repo root):
+`rust_hosted_cpp/rust`, `rust_python_bindings/{core,bindings}`; shared `target/` at
+the repo root):
 ```sh
 cargo test                    # all workspace members
 cargo test -p morse_trainer   # a single member
