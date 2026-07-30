@@ -99,9 +99,41 @@ here and covered by `check_parity.sh`.
 | Message containing a newline | Written verbatim, so the entry spans physical lines. Not escaped and not split — escaping would need a matching unescaper on the reading side, and splitting would silently multiply the user's entry count. |
 | Empty message argument | Logged, so the line ends with a trailing delimiter. Fields are unconditional; only `--no-*` removes them. |
 | Embedded NUL and non-ASCII bytes | Preserved. |
-| Non-UTF-8 **argv** | Rust rejects it (exit 2, via clap); C and C++ pass the bytes through. A documented divergence, like `copy_file`'s `~user`. Stdin is byte-transparent in all three. |
 | `-` as a logfile or message | Never special; it names a file called `-`. |
 | Both a write and a close error | Reported as the write error, which names the earlier and more specific stage. |
+
+### Known divergences
+
+The rows above are guaranteed. These are **not**: each is a place where the three
+ports disagree, inherited from `getopt_long`, the hand-rolled C++ loop, and clap
+having different ideas about the same spelling. None is covered by
+`check_parity.sh` — which is exactly why they survived — so treat the intersection
+of the three as the supported surface and prefer the plain `--option value` form.
+
+| Case | C | C++ | Rust |
+|---|---|---|---|
+| Non-UTF-8 **argv** | passes bytes through | passes bytes through | exit 2 (clap) |
+| `--level=error`, `-lerror` (attached value) | accepted | **exit 2** | accepted |
+| `-d=` (empty attached value) | delimiter is `=` | **exit 2** | delimiter is empty |
+| `--level error --level debug` (repeated option) | last wins | last wins | **exit 2** |
+| `--lev`, `--no-time` (abbreviated long option) | accepted | **exit 2** | **exit 2** |
+
+Why each stands:
+
+- **Non-UTF-8 argv** — clap hands arguments over as `String`. Getting the bytes
+  through would mean taking `OsString` everywhere for a case that barely arises;
+  stdin, the far likelier source of odd bytes, is byte-transparent in all three.
+  The same kind of deliberate gap as `copy_file`'s `~user`.
+- **Attached values** — `getopt_long` and clap both accept them; the C++ port
+  matches option tokens exactly, so it does not. `-d=` differs between C and Rust
+  besides, because clap strips a leading `=` after a short flag and getopt does
+  not.
+- **Repeated options** — clap 4's default action errors on a second occurrence,
+  where both C ports simply overwrite. `#[arg(overrides_with_self)]` would restore
+  last-wins if this ever matters.
+- **Abbreviations** — GNU `getopt_long` accepts any unambiguous prefix and offers
+  no switch to turn that off, so removing it would mean hand-checking every token
+  against the full option names before handing off.
 
 ### Exit codes
 

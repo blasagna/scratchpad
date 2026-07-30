@@ -35,15 +35,24 @@ cargo test -p simple_logger
   else, including a trailing lone backslash, is a usage error rather than a
   pass-through — that is what stops the accepted set from drifting between ports.
 - **Options permute**: `simple_logger log.txt --level error msg` works everywhere. The
-  C port gets this from `getopt_long`; the C++ port hand-rolls the same behavior
-  on purpose. `--` ends option parsing.
+  C port gets this from `getopt_long`; the C++ port hand-rolls permutation on
+  purpose. `--` ends option parsing. Permutation is the *only* part of
+  `getopt_long`'s behavior the C++ loop reproduces — attached values and
+  abbreviations are not, see the divergences below.
 - **stdin**: one entry per line; strip one `\n` then one `\r`; a blank line is an empty
   entry; a final line without a newline still logs; empty stdin writes nothing but
   still creates the file.
 - **Bytes are preserved** — embedded NULs, non-ASCII, newlines inside a message. This
   is why the primitives take `(const char *, size_t)` / `std::string_view` / `&[u8]`
-  rather than NUL-terminated strings. The one exception is **argv in the Rust port**,
+  rather than NUL-terminated strings. The exception is **argv in the Rust port**,
   which clap requires to be UTF-8 (exit 2); C and C++ pass those bytes through.
+- **The ports do not agree on every argument spelling.** Attached values
+  (`--level=error`, `-lerror`), a repeated option, and abbreviated long options
+  each behave differently in at least one port, and `check_parity.sh` does not
+  cover any of them — see the **Known divergences** table in
+  [`README.md`](README.md). The intersection is the supported surface: plain
+  `--option value`, given once. Do not add a shared-behavior claim about argument
+  parsing without a parity case to back it.
 - **Exit codes**: `2` usage, `1` operational, `0` success. Success is **silent** —
   unlike `copy_file`, nothing is printed on the happy path, which is also what lets the
   parity script assert stdout is empty everywhere.
