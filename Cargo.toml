@@ -4,6 +4,7 @@ members = [
     "text_analyzer/rust",
     "morse_trainer",
     "copy_file/rust",
+    "simple_logger/rust",
     "cpp_rust_bindings/rust",
     "rust_hosted_cpp/rust",
     "rust_python_bindings/core",

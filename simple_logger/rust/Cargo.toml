@@ -1,0 +1,15 @@
+[package]
+name = "simple_logger"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "simple_logger"
+path = "src/lib.rs"
+
+[[bin]]
+name = "simple_logger"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
