@@ -12,6 +12,13 @@ int sum_array(int arr[], size_t len) {
 
 size_t func_sizeof_array(int arr[]) {
   // demonstrate that sizeof is unexpected in a function scope when array is a
-  // parameter
+  // parameter: arr has decayed to an int *, so this measures the pointer
+  //
+  // -Wsizeof-array-argument diagnoses exactly this mistake, and the repo builds
+  // with -Werror, so it is suppressed for this one expression on purpose --
+  // getting the wrong answer here is the whole point of the exercise.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsizeof-array-argument"
   return sizeof(arr) / sizeof(arr[0]);
+#pragma GCC diagnostic pop
 }
