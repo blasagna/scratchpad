@@ -200,6 +200,13 @@ main() {
   run_case stdin_crlf - "${WORK}/crlf.in" @LOG@
   run_case stdin_empty - "${WORK}/empty.in" @LOG@
 
+  # An unreadable stdin must fail, not look like a clean end of input. A
+  # directory is the easiest reliably-unreadable stream. This case exists
+  # because C++ once exited 0 here: std::cin's stdio_sync_filebuf swallows the
+  # error without setting badbit, so write_lines' in.bad() check never saw it.
+  mkdir -p "${WORK}/unreadable_stdin"
+  run_case stdin_read_error - "${WORK}/unreadable_stdin" @LOG@
+
   # --- append semantics ---
   run_case append_twice - - @LOG@ "first run"
   run_case append_twice - - @LOG@ "second run"

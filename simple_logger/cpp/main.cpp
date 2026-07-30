@@ -1,5 +1,6 @@
 #include <cerrno>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -192,10 +193,22 @@ int main(int argc, char *argv[]) {
     return kExitFailure;
   }
 
-  const logger::LogResult result =
+  logger::LogResult result =
       messages.empty()
           ? logger::append_lines(path, fmt, *timestamp, std::cin)
           : logger::append_messages(path, fmt, *timestamp, messages);
+
+  // write_lines reports a read failure from badbit, which is correct for a
+  // real file or string stream but cannot see one on std::cin: that is backed
+  // by a stdio_sync_filebuf whose underflow() returns EOF on error without
+  // setting badbit, so a failed read is indistinguishable from a clean end of
+  // input at the iostream level. The FILE* underneath does record it, and it is
+  // the same flag the C port's ferror(in) checks. Without this the program
+  // would exit 0 on unreadable stdin, silently dropping the rest of the input.
+  if (result && messages.empty() && std::ferror(stdin))
+    result = {logger::LogStage::kRead,
+              std::error_code(errno, std::generic_category())};
+
   if (!result) {
     report(result, path);
     return kExitFailure;
