@@ -43,8 +43,12 @@ TEST(ExampleTest, SizeofOnAnArrayParameterMeasuresThePointer) {
   EXPECT_EQ(func_sizeof_array(four), pointer_sized);
   EXPECT_EQ(func_sizeof_array(two), pointer_sized);
 
-  // Same answer for both arrays, and it is not either real length -- which is
-  // why a length has to be passed separately, as sum_array does.
+  // Same answer for both arrays regardless of their real lengths -- which is
+  // why a length has to be passed separately, as sum_array does. Only `four` is
+  // checked against its true length: on LP64 `pointer_sized` is 2, which is
+  // coincidentally `two`'s real length, so the symmetric EXPECT_NE would be
+  // false here. That coincidence is a property of this platform, not a
+  // guarantee, so it is not asserted either way.
   EXPECT_EQ(func_sizeof_array(four), func_sizeof_array(two));
   EXPECT_NE(func_sizeof_array(four), sizeof(four) / sizeof(four[0]));
 }

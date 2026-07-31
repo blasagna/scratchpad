@@ -155,6 +155,20 @@ compare_case() {
 main() {
   build
 
+  # build() proves the build ran, not that it put the binaries where binaries()
+  # says. A wrong path there would make every port fail to exec identically:
+  # each exits 127, none creates a log file, so the diff is skipped and the
+  # stderr check is satisfied by the shell's own "No such file" — every case
+  # would report "parity ok ... empty log" while running nothing at all.
+  local port bin
+  while IFS='|' read -r port bin; do
+    if [[ ! -x "${bin}" ]]; then
+      echo "missing ${port} binary: ${bin}" >&2
+      echo "the build succeeded but did not produce it; fix binaries()" >&2
+      exit 1
+    fi
+  done < <(binaries)
+
   rm -rf "${WORK}"
   mkdir -p "${WORK}"
   if [[ "${KEEP}" == "0" ]]; then

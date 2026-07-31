@@ -26,25 +26,33 @@ agree on CRLF input).
 
 ### Dates come from `jiff`
 
-`format_timestamp` is `jiff::Timestamp::from_second(s)?.to_string()`. Rust's std has
-no civil-date support at all — `std::time` offers `Instant`, `SystemTime`, and
-`Duration`, and nothing that turns epoch seconds into a year, month, and day — so a
-crate is the idiomatic answer rather than hand-rolled arithmetic. This port used to
-carry Howard Hinnant's `civil_from_days` for exactly that reason; `jiff` does the same
-job in one line, and delegating it is what a Rust codebase would actually do.
+`format_timestamp` adds the epoch seconds to a `jiff::civil::DateTime` and appends a
+`Z`. Rust's std has no civil-date support at all — `std::time` offers `Instant`,
+`SystemTime`, and `Duration`, and nothing that turns epoch seconds into a year, month,
+and day — so a crate is the idiomatic answer rather than hand-rolled arithmetic. This
+port used to carry Howard Hinnant's `civil_from_days` for exactly that reason;
+delegating to `jiff` is what a Rust codebase would actually do.
 
-**The format lines up by luck, and the tests treat it as luck.** `Timestamp`'s
-`Display` omits the fractional part when it is zero, so a whole number of seconds
-renders as `YYYY-MM-DDTHH:MM:SSZ` — byte-for-byte what C and C++ assemble with
-`snprintf` and `std::format`. That is a property of `jiff`, not of anything in
-`lib.rs`, so `renders_a_whole_second_without_a_fractional_part` asserts it directly
-and the known-date vectors pin the rest. A `jiff` upgrade that changed `Display` would
-fail there rather than surfacing as a mystery diff in `check_parity.sh`.
+**Not `jiff::Timestamp`, which cannot do this job.** `Timestamp` reserves headroom for
+a timezone offset, so its ceiling is `9999-12-30T22:00:00Z` — *inside* the four-digit
+year range, not past it. The first version of this code used it and silently rejected
+the last 26 hours of year 9999, which C and C++ log without complaint. The civil types
+carry no offset and span the full range, which is why the boundaries are now asserted
+to the second in `accepts_exactly_the_four_digit_years_the_other_ports_do`.
 
-**Negative epoch seconds are supported, not rejected** — `jiff` handles them and so
-does glibc's `gmtime_r` in the other two ports, so parity holds with no guard on
-either side. A time `jiff` cannot represent returns `None`; its range stops just
-short of the year 10000, comfortably outside the four digits the other ports accept.
+**Two `jiff` properties make the output line up, and the tests treat them as `jiff`'s,
+not ours.** `DateTime`'s `Display` zero-pads the year to four digits and omits the
+fractional seconds when they are zero, so a whole number of seconds renders as
+`YYYY-MM-DDTHH:MM:SS` — byte-for-byte what C and C++ assemble with `snprintf` and
+`std::format`, once the `Z` is appended. `renders_a_whole_second_without_a_fractional_part`
+asserts both directly, so a `jiff` upgrade that changed `Display` fails there rather
+than surfacing as a mystery diff in `check_parity.sh`.
+
+**Negative epoch seconds are supported down to year 0000 and rejected below it.**
+`jiff` would happily render year -1 as `-000001-12-31T23:59:59`, which is neither the
+documented shape nor something the other ports accept, so `format_timestamp` guards
+`year < 0` explicitly. The upper end needs no guard: `checked_add` already refuses
+year 10000. Both ends match the C port's `year < 0 || year > 9999` exactly.
 
 The C and C++ ports keep doing the arithmetic by hand, since neither has an
 equivalent to reach for. That asymmetry is the point of the note in `lib.rs`.

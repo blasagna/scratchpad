@@ -5,10 +5,11 @@
 //! UTC ISO 8601 read once per run, and the separator follows every entry
 //! including the last so the next run appends onto a fresh line.
 //!
-//! Note: the timestamp comes from `jiff`, whose `Timestamp` renders exactly the
-//! `YYYY-MM-DDTHH:MM:SSZ` the other two ports build by hand from `gmtime_r`. The
-//! C and C++ ports have no equivalent to reach for, so they still do the civil
-//! date arithmetic themselves; only this port gets to delegate it.
+//! Note: the timestamp comes from `jiff::civil::DateTime`, which renders the
+//! same `YYYY-MM-DDTHH:MM:SS` the other two ports build by hand from `gmtime_r`.
+//! Deliberately not `jiff::Timestamp` — see [`format_timestamp`] for why that
+//! one cannot cover the range. The C and C++ ports have no equivalent to reach
+//! for, so they still do the civil date arithmetic themselves.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -176,19 +177,34 @@ impl std::error::Error for ClockError {}
 /// Renders epoch seconds as a UTC ISO 8601 timestamp, `YYYY-MM-DDTHH:MM:SSZ`.
 ///
 /// Always UTC, never local time, so the three ports agree without a timezone
-/// database. Negative values are valid. Returns `None` for a time `jiff` cannot
-/// represent, which is well outside the four-digit years the other two ports
-/// accept.
+/// database. Negative values are valid. Returns `None` outside the four-digit
+/// years 0000 through 9999, exactly where the C and C++ ports return
+/// `LOG_ERR_BAD_TIME`, since a wider year has no agreed rendering across them.
 ///
-/// A whole number of seconds is what makes this line up with the C and C++
-/// ports: `jiff` omits the fractional part when it is zero, so `Timestamp`'s
-/// `Display` is byte-for-byte the format they assemble with `snprintf` and
-/// `std::format`. The tests below pin that, since it is a property of `jiff`
-/// rather than of anything in this file.
+/// Built on `jiff::civil::DateTime` rather than `jiff::Timestamp`, which cannot
+/// do the job: `Timestamp` reserves headroom for a timezone offset, so its
+/// ceiling is 9999-12-30T22:00:00Z — *inside* the four-digit range, leaving the
+/// last 26 hours of year 9999 renderable by C and C++ but not by it. The civil
+/// types carry no offset and span the whole range.
+///
+/// Two properties of `jiff` make the output line up with the other ports, and
+/// both are asserted in the tests below rather than left implicit: `DateTime`'s
+/// `Display` zero-pads the year to four digits, and it omits the fractional
+/// seconds when they are zero. The trailing `Z` is ours to add, since a civil
+/// datetime has no zone to name.
 pub fn format_timestamp(epoch_seconds: i64) -> Option<String> {
-    jiff::Timestamp::from_second(epoch_seconds)
-        .ok()
-        .map(|timestamp| timestamp.to_string())
+    let epoch = jiff::civil::date(1970, 1, 1).at(0, 0, 0, 0);
+    let datetime = epoch
+        .checked_add(jiff::SignedDuration::from_secs(epoch_seconds))
+        .ok()?;
+
+    // checked_add already refuses year 10000 and beyond; a negative year is
+    // representable but renders as "-000001-...", which is neither the
+    // documented shape nor what C and C++ accept.
+    if datetime.year() < 0 {
+        return None;
+    }
+    Some(format!("{datetime}Z"))
 }
 
 /// Expands backslash escapes in a delimiter or separator.
@@ -478,21 +494,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_time_it_cannot_render() {
-        // 253402300800 is 10000-01-01T00:00:00Z, past both jiff's range and the
-        // four digits the C and C++ ports allow, so all three refuse it.
+    fn accepts_exactly_the_four_digit_years_the_other_ports_do() {
+        // Both boundaries, to the second, because this is where a date crate's
+        // own limits are most likely to disagree with gmtime_r. An earlier
+        // version built on jiff::Timestamp passed a lone 253402300800 vector
+        // while silently rejecting everything from 253402207201 up -- the last
+        // 26 hours of year 9999, which C and C++ log without complaint.
+        assert_eq!(
+            format_timestamp(-62_167_219_200).as_deref(),
+            Some("0000-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            format_timestamp(253_402_300_799).as_deref(),
+            Some("9999-12-31T23:59:59Z")
+        );
+        // One second past each end. 253402300800 is 10000-01-01T00:00:00Z.
+        assert_eq!(format_timestamp(-62_167_219_201), None);
         assert_eq!(format_timestamp(253_402_300_800), None);
     }
 
     #[test]
     fn renders_a_whole_second_without_a_fractional_part() {
-        // The load-bearing jiff property: Display omits ".000000000" when the
-        // fraction is zero. If it ever stopped doing that, every entry this port
-        // writes would diverge from C and C++, so it is asserted directly rather
-        // than left implicit in the vectors above.
+        // Two load-bearing jiff properties: DateTime's Display omits
+        // ".000000000" when the fraction is zero, and pads the year to four
+        // digits. If either stopped holding, every entry this port writes would
+        // diverge from C and C++, so both are asserted directly rather than left
+        // implicit in the vectors above.
         let rendered = format_timestamp(1_751_328_000).unwrap();
         assert!(!rendered.contains('.'), "unexpected fraction in {rendered}");
         assert_eq!(rendered.len(), 20);
+        assert!(
+            format_timestamp(-62_167_219_200)
+                .unwrap()
+                .starts_with("0000")
+        );
     }
 
     // --- levels ---

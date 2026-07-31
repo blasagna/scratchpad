@@ -28,12 +28,19 @@ cargo test -p simple_logger
   **once per run**, so every entry from one invocation shares it. Local time was
   considered and rejected: it would need a timezone database in all three ports for a
   log line nobody greps by hour.
+- **All three accept exactly the four-digit years 0000-9999** and report a bad time
+  outside them. The C port's `year < 0 || year > 9999` is the reference; the Rust port
+  reproduces both ends, and
+  `accepts_exactly_the_four_digit_years_the_other_ports_do` asserts them to the second.
 - **The Rust port gets its dates from `jiff`; C and C++ do the arithmetic by hand.**
-  `jiff::Timestamp`'s `Display` happens to be exactly `YYYY-MM-DDTHH:MM:SSZ` for a
-  whole number of seconds, which is what keeps the three in step. Treat that as a
-  property of `jiff` rather than a guarantee — `renders_a_whole_second_without_a_fractional_part`
-  in `rust/src/lib.rs` is what pins it, and it is the first test to check if a `jiff`
-  upgrade makes `check_parity.sh` go red.
+  Use `jiff::civil::DateTime`, **not `jiff::Timestamp`** — `Timestamp` reserves
+  headroom for a timezone offset, so it stops at `9999-12-30T22:00:00Z`, *inside* the
+  four-digit range, and silently loses the last 26 hours of year 9999 that the other
+  two ports render fine. That bug shipped once already.
+  `DateTime`'s `Display` zero-padding the year and omitting a zero fraction is what
+  keeps the three in step; treat both as properties of `jiff` rather than guarantees.
+  `renders_a_whole_second_without_a_fractional_part` in `rust/src/lib.rs` pins them,
+  and it is the first test to check if a `jiff` upgrade makes `check_parity.sh` go red.
 - **Levels** are lowercase on input, uppercase in the log (`[INFO]`).
 - **The separator follows every entry, including the last**, so the next run appends
   onto a fresh line.
