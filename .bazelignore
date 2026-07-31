@@ -1,0 +1,18 @@
+# Directories Bazel must not descend into when resolving a target pattern
+# like //... .
+#
+# These are the bazel-* convenience symlinks that get created in a directory
+# that is (or once was) a workspace root of its own. c_little_book/ used to be
+# a separate workspace; the marker is gone but its symlinks pointed at a stale
+# output base, and //... would recurse into it and fail during package loading
+# with an unresolvable @apple_support / local_config_cc error. Bazel skips
+# those symlinks automatically at the repo root, but not in a subdirectory.
+#
+# Entries must be exact paths relative to the workspace root -- .bazelignore
+# does not support wildcards (verified against Bazel 9.2.0: both */bazel-* and
+# **/bazel-* are silently ignored). So if another area ever sprouts its own
+# bazel-* symlinks, add its four paths here explicitly.
+c_little_book/bazel-bin
+c_little_book/bazel-c_little_book
+c_little_book/bazel-out
+c_little_book/bazel-testlogs
