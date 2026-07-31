@@ -24,25 +24,30 @@ UTF-8 survives, and the trailing `\r` is stripped deliberately rather than silen
 (`lines()` would strip it, `getline` in C would not — hand-stripping is why the ports
 agree on CRLF input).
 
-### No date dependency
+### Dates come from `jiff`
 
-Timestamps are computed in-crate rather than with `chrono` or `time`.
-`civil_from_days` is Howard Hinnant's `civil_from_days`, the inverse of
-`days_from_civil`: it shifts the epoch to 0000-03-01 so a leap day always lands at the
-end of a 400-year era, which removes every month-length and leap-year branch and fits
-in about ten lines. `format_timestamp` splits the day with `div_euclid`/`rem_euclid`
-rather than `/` and `%`, which truncate toward zero and would put a negative timestamp
-on the wrong day.
+`format_timestamp` is `jiff::Timestamp::from_second(s)?.to_string()`. Rust's std has
+no civil-date support at all — `std::time` offers `Instant`, `SystemTime`, and
+`Duration`, and nothing that turns epoch seconds into a year, month, and day — so a
+crate is the idiomatic answer rather than hand-rolled arithmetic. This port used to
+carry Howard Hinnant's `civil_from_days` for exactly that reason; `jiff` does the same
+job in one line, and delegating it is what a Rust codebase would actually do.
 
-**Negative epoch seconds are supported, not rejected** — Euclidean division makes it
-free, and glibc's `gmtime_r` handles them in the other two ports, so parity holds with
-no guard on either side. A year outside four digits has no agreed rendering across the
-ports and returns `None`.
+**The format lines up by luck, and the tests treat it as luck.** `Timestamp`'s
+`Display` omits the fractional part when it is zero, so a whole number of seconds
+renders as `YYYY-MM-DDTHH:MM:SSZ` — byte-for-byte what C and C++ assemble with
+`snprintf` and `std::format`. That is a property of `jiff`, not of anything in
+`lib.rs`, so `renders_a_whole_second_without_a_fractional_part` asserts it directly
+and the known-date vectors pin the rest. A `jiff` upgrade that changed `Display` would
+fail there rather than surfacing as a mystery diff in `check_parity.sh`.
 
-Known-date vectors pin the common cases, but the test that would actually catch an
-off-by-one in the era arithmetic is `walks_every_day_from_1970_to_2070_without_gaps`,
-which steps a century one day at a time against an independent `is_leap` /
-`days_in_month` oracle defined in the test module.
+**Negative epoch seconds are supported, not rejected** — `jiff` handles them and so
+does glibc's `gmtime_r` in the other two ports, so parity holds with no guard on
+either side. A time `jiff` cannot represent returns `None`; its range stops just
+short of the year 10000, comfortably outside the four digits the other ports accept.
+
+The C and C++ ports keep doing the arithmetic by hand, since neither has an
+equivalent to reach for. That asymmetry is the point of the note in `lib.rs`.
 
 ### Deliberate divergence
 

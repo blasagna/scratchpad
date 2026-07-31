@@ -5,10 +5,10 @@
 //! UTC ISO 8601 read once per run, and the separator follows every entry
 //! including the last so the next run appends onto a fresh line.
 //!
-//! Note: the timestamp is computed here rather than with a date crate. Turning
-//! epoch seconds into a civil date is [`civil_from_days`], about ten lines of
-//! integer arithmetic, and doing it in-crate keeps the Rust port dependency-free
-//! for time and pinned to the same answers as the other two ports' `gmtime_r`.
+//! Note: the timestamp comes from `jiff`, whose `Timestamp` renders exactly the
+//! `YYYY-MM-DDTHH:MM:SSZ` the other two ports build by hand from `gmtime_r`. The
+//! C and C++ ports have no equivalent to reach for, so they still do the civil
+//! date arithmetic themselves; only this port gets to delegate it.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -173,56 +173,22 @@ impl fmt::Display for ClockError {
 
 impl std::error::Error for ClockError {}
 
-/// Converts a day count since 1970-01-01 into a civil `(year, month, day)`.
-///
-/// Howard Hinnant's `civil_from_days`, the inverse of `days_from_civil`. It
-/// shifts the epoch to 0000-03-01 so a leap day always lands at the end of a
-/// 400-year era, which removes every month-length and leap-year branch. Valid
-/// across the whole range of `i64` days, negative included.
-pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468; // shift the epoch to 0000-03-01
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let day_of_era = z - era * 146_097; // [0, 146096]
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365; // [0, 399]
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100); // [0, 365]
-    let march_month = (5 * day_of_year + 2) / 153; // [0, 11], with March as 0
-    let day = (day_of_year - (153 * march_month + 2) / 5 + 1) as u32; // [1, 31]
-    let month = if march_month < 10 {
-        march_month + 3
-    } else {
-        march_month - 9
-    } as u32;
-
-    // January and February belong to the following civil year.
-    (year + i64::from(month <= 2), month, day)
-}
-
 /// Renders epoch seconds as a UTC ISO 8601 timestamp, `YYYY-MM-DDTHH:MM:SSZ`.
 ///
 /// Always UTC, never local time, so the three ports agree without a timezone
-/// database. Negative values are valid. Returns `None` for a year outside four
-/// digits, which has no agreed rendering across the ports.
+/// database. Negative values are valid. Returns `None` for a time `jiff` cannot
+/// represent, which is well outside the four-digit years the other two ports
+/// accept.
+///
+/// A whole number of seconds is what makes this line up with the C and C++
+/// ports: `jiff` omits the fractional part when it is zero, so `Timestamp`'s
+/// `Display` is byte-for-byte the format they assemble with `snprintf` and
+/// `std::format`. The tests below pin that, since it is a property of `jiff`
+/// rather than of anything in this file.
 pub fn format_timestamp(epoch_seconds: i64) -> Option<String> {
-    // Euclidean division, not `/` and `%`: those truncate toward zero and would
-    // put a negative timestamp on the wrong day.
-    let days = epoch_seconds.div_euclid(86_400);
-    let seconds_of_day = epoch_seconds.rem_euclid(86_400);
-
-    let (year, month, day) = civil_from_days(days);
-    if !(0..=9999).contains(&year) {
-        return None;
-    }
-
-    let (hour, minute, second) = (
-        seconds_of_day / 3600,
-        (seconds_of_day / 60) % 60,
-        seconds_of_day % 60,
-    );
-    Some(format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
-    ))
+    jiff::Timestamp::from_second(epoch_seconds)
+        .ok()
+        .map(|timestamp| timestamp.to_string())
 }
 
 /// Expands backslash escapes in a delimiter or separator.
@@ -452,7 +418,14 @@ mod tests {
         String::from_utf8(out).unwrap()
     }
 
-    // --- format_timestamp / civil_from_days ---
+    // --- format_timestamp ---
+    //
+    // These vectors no longer test arithmetic in this file; they pin the format
+    // the three ports have to agree on, against whatever jiff renders. That is
+    // the reason to keep them: a jiff upgrade that changed Display, or a swap to
+    // another date crate, would break parity with C and C++ here rather than in
+    // check_parity.sh. The same vectors appear in c/test_logger.c and
+    // cpp/test_logger.cpp.
 
     #[test]
     fn epoch_zero_is_the_unix_epoch() {
@@ -505,46 +478,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_year_beyond_four_digits() {
-        // 253402300800 is 10000-01-01T00:00:00Z.
+    fn rejects_a_time_it_cannot_render() {
+        // 253402300800 is 10000-01-01T00:00:00Z, past both jiff's range and the
+        // four digits the C and C++ ports allow, so all three refuse it.
         assert_eq!(format_timestamp(253_402_300_800), None);
     }
 
     #[test]
-    fn walks_every_day_from_1970_to_2070_without_gaps() {
-        // The vectors above pin known dates; this pins the era arithmetic
-        // itself, checked against an independent leap-year oracle.
-        fn is_leap(year: i64) -> bool {
-            (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-        }
-        fn days_in_month(year: i64, month: u32) -> u32 {
-            match month {
-                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-                4 | 6 | 9 | 11 => 30,
-                2 if is_leap(year) => 29,
-                2 => 28,
-                other => panic!("month out of range: {other}"),
-            }
-        }
-
-        let (mut year, mut month, mut day) = (1970, 1, 1);
-        for days in 0..36_525 {
-            assert_eq!(
-                civil_from_days(days),
-                (year, month, day),
-                "day {days} since the epoch"
-            );
-
-            day += 1;
-            if day > days_in_month(year, month) {
-                day = 1;
-                month += 1;
-            }
-            if month > 12 {
-                month = 1;
-                year += 1;
-            }
-        }
+    fn renders_a_whole_second_without_a_fractional_part() {
+        // The load-bearing jiff property: Display omits ".000000000" when the
+        // fraction is zero. If it ever stopped doing that, every entry this port
+        // writes would diverge from C and C++, so it is asserted directly rather
+        // than left implicit in the vectors above.
+        let rendered = format_timestamp(1_751_328_000).unwrap();
+        assert!(!rendered.contains('.'), "unexpected fraction in {rendered}");
+        assert_eq!(rendered.len(), 20);
     }
 
     // --- levels ---

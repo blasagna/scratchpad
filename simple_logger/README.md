@@ -33,10 +33,10 @@ per line from stdin. The log file is opened for append and is created if missing
 ```
 
 - The **timestamp** is UTC ISO 8601 — `2026-07-30T18:22:05Z`. Always UTC: local time
-  would need a timezone database that Rust's std does not have, and adding a date
-  dependency to one port was not worth a friendlier log line. It is read **once per
-  run**, so every entry a single invocation writes shares it; otherwise a slow stdin
-  pipe would spread one run's entries across several seconds.
+  would need a timezone database in all three ports, which is a lot of machinery for a
+  log line nobody greps by hour. It is read **once per run**, so every entry a single
+  invocation writes shares it; otherwise a slow stdin pipe would spread one run's
+  entries across several seconds.
 - The **level** is given in lowercase (`debug`, `info`, `warning`, `error`) and
   written in uppercase (`[INFO]`). Uppercase is the syslog and log4j convention and
   makes `grep '\[ERROR\]'` unambiguous against ordinary prose.

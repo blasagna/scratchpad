@@ -26,8 +26,14 @@ cargo test -p simple_logger
   `--no-timestamp` / `--no-level` dropping a field *and its trailing delimiter*.
 - **Timestamps are UTC ISO 8601 only** (`2026-07-30T18:22:05Z`) and the clock is read
   **once per run**, so every entry from one invocation shares it. Local time was
-  considered and rejected: Rust's std has no timezone database, and a date dependency
-  in one port was not worth it.
+  considered and rejected: it would need a timezone database in all three ports for a
+  log line nobody greps by hour.
+- **The Rust port gets its dates from `jiff`; C and C++ do the arithmetic by hand.**
+  `jiff::Timestamp`'s `Display` happens to be exactly `YYYY-MM-DDTHH:MM:SSZ` for a
+  whole number of seconds, which is what keeps the three in step. Treat that as a
+  property of `jiff` rather than a guarantee — `renders_a_whole_second_without_a_fractional_part`
+  in `rust/src/lib.rs` is what pins it, and it is the first test to check if a `jiff`
+  upgrade makes `check_parity.sh` go red.
 - **Levels** are lowercase on input, uppercase in the log (`[INFO]`).
 - **The separator follows every entry, including the last**, so the next run appends
   onto a fresh line.
@@ -81,7 +87,7 @@ Two properties matter and are easy to break:
 - **`.gitignore` swallows `*.log`.** Every example path, fixture, and file the parity
   script creates uses `.txt` so a committed one does not silently vanish.
 - **Timestamp formatting is `snprintf`/`std::format`, not `strftime`.** glibc's `%Y`
-  does not zero-pad a year below 1000; the Rust port pads unconditionally. Spelling the
+  does not zero-pad a year below 1000; `jiff` pads unconditionally. Spelling the
   padding out in C and C++ is what keeps such dates in agreement.
 - **The fake-time value is validated by hand as `-?[0-9]+`.** `strtoll` would also take
   leading whitespace and Rust's `parse` would take a `+` sign; C++'s `from_chars`
