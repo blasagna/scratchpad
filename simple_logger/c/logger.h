@@ -55,6 +55,12 @@ typedef struct {
   const char *delimiter;
   const char *separator;
   LogLevel level;
+  /* The flags are int, not bool, because this header is compiled in two
+   * dialects. The C here is C17 (.bazelrc sets -std=c++20 as a cxxopt, which
+   * does not reach C), where bool needs <stdbool.h> and is _Bool; test_logger.c
+   * compiles the same header as C++ (-x c++), where bool is a distinct builtin.
+   * The extern "C" wrapper there fixes linkage, not layout, so the two would
+   * agree only by ABI accident. int is the same type in both. */
   int show_timestamp;
   int show_level;
 } LogFormat;
