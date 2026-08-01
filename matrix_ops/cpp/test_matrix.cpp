@@ -225,3 +225,13 @@ TEST(Describe, NamesEveryError) {
         << "error " << static_cast<int>(error);
   }
 }
+
+TEST(Scale, OnADefaultConstructedMatrixIsEmpty) {
+  // Matrix::create refuses a 0x0, so scale() has no result matrix to build.
+  // Unreachable from the CLI -- every matrix there comes from the parser --
+  // but the type permits it, and it used to dereference an empty optional.
+  const Matrix out = matrix_ops::scale(Matrix{}, 2.0);
+  EXPECT_TRUE(out.empty());
+  EXPECT_EQ(out.rows(), 0u);
+  EXPECT_EQ(out.cols(), 0u);
+}

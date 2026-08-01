@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -311,4 +313,34 @@ TEST(Write, WritesWhatRenderProduces) {
 
 TEST(FormatDefault, UsesTheDocumentedPrecision) {
   EXPECT_EQ(matrix_ops::Format{}.precision, matrix_ops::kDefaultPrecision);
+}
+
+TEST(Render, HandlesAWidthNoFixedBufferWouldHold) {
+  // "%.*f" of a value near DBL_MAX needs 309 digits before the point plus the
+  // precision after it. The C port's 512-byte buffer used to fail here and
+  // report it as an allocation failure.
+  std::optional<Matrix> m = Matrix::create(1, 1);
+  ASSERT_TRUE(m.has_value());
+  m->values()[0] = 1e300;
+  const std::string text = written(*m, 300);
+
+  // The rendering needs 602 bytes on the way through -- 301 digits, the point,
+  // and 300 zeros -- which is what overran the C port's fixed buffer. What
+  // comes out is shorter, because the trailing zeros are then trimmed: 301
+  // digits and a newline, with no '.' left for an integral value.
+  EXPECT_EQ(text.size(), 302u);
+  EXPECT_EQ(text.front(), '1');
+  EXPECT_EQ(text.back(), '\n');
+  EXPECT_EQ(text.find('.'), std::string::npos);
+}
+
+TEST(ReadStream, ReportsAReadFailureRatherThanEmptiness) {
+  // A stream whose read fails must be kRead (an operational error, exit 1),
+  // not kEmpty (a usage error, exit 2).
+  std::ifstream dir{"/tmp", std::ios::binary};
+  if (!dir.is_open())
+    GTEST_SKIP() << "cannot open a directory as a stream here";
+  const ParseResult result =
+      matrix_ops::read_stream(dir, kDimUnspecified, kDimUnspecified);
+  EXPECT_EQ(result.error, Error::kRead);
 }

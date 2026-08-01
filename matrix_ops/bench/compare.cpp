@@ -13,6 +13,11 @@
 #include <xtensor-blas/xlinalg.hpp>
 #include <xtensor/containers/xarray.hpp>
 
+// <array> and <algorithm> are for kSizes, std::ranges::copy, and std::max;
+// they arrive transitively through Eigen and xtensor, but naming them keeps a
+// dependency bump from breaking this target for no visible reason.
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -56,8 +61,7 @@ std::vector<double> random_values(std::size_t count, unsigned seed) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<double> dist(-1.0, 1.0);
   std::vector<double> values(count);
-  for (double &v : values)
-    v = dist(rng);
+  std::ranges::generate(values, [&] { return dist(rng); });
   return values;
 }
 

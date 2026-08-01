@@ -205,6 +205,36 @@ main() {
   run_case err_missing_value  - add --values "1" --values "2" --rows
   run_case err_missing_short  - add --values "1" --values "2" -r
 
+  # --- attached option values, and the numeric bounds around them ---
+  # Everything below was found by a code review, not by this script: the
+  # original cases only ever used the "--option value" spelling, so a whole
+  # class of divergence went uncovered.
+  run_case attached_long      - scale --scalar 1 --rows=2 --values "1 2 3 4"
+  run_case attached_short     - scale --scalar 1 -r2 --values "1 2 3 4"
+  run_case attached_both_dims - mul --rows=2 --cols=3 --values "1 2 3 4 5 6" \
+                                    -r3 -c2 --values "1 2 3 4 5 6"
+  run_case attached_values    - add --values="1 2 3" --values="4 5 6"
+  run_case attached_scalar    - scale --scalar=2.5 --values "1 2"
+  run_case attached_precision - scale --scalar 1 --precision=2 --values "0.125"
+  run_case attached_file      - scale --scalar 1 --file=@FIXTURE@/a2x3.txt
+  run_case err_value_on_flag  - add --help=x --values "1"
+  run_case err_unknown_clustered - add -zq --values "1" --values "2"
+
+  # --precision feeds a width argument in both ports; an unbounded one used to
+  # abort the C++ port outright and silently wrap at 2^32.
+  run_case err_precision_intmax - scale --scalar 1 --precision 2147483648 --values "1.5"
+  run_case err_precision_uintmax - scale --scalar 1 --precision 4294967296 --values "1.5"
+  run_case err_rows_huge      - scale --scalar 1 --rows 5000000000 --values "1 2 3 4"
+  run_case err_cols_huge      - scale --scalar 1 --cols 5000000000 --values "1 2 3 4"
+
+  # A wide render: 309 digits before the point plus 300 after, which overran a
+  # fixed buffer in the C port and was reported as "out of memory: Success".
+  run_case wide_precision     - scale --scalar 1e300 --precision 300 --values "1"
+  run_case max_precision      - scale --scalar 1 --precision 400 --values "0.1"
+
+  # Reading a directory: an operational failure (exit 1), not a usage error.
+  run_case err_read_directory - scale --scalar 1 --file /tmp
+
   compare
 
   if [[ "${KEEP}" == "1" ]]; then

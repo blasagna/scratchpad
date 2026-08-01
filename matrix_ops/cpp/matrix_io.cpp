@@ -214,9 +214,19 @@ ParseResult parse_text(std::string_view text, std::size_t want_rows,
 
 ParseResult read_stream(std::istream &in, std::size_t want_rows,
                         std::size_t want_cols) {
+  // errno is cleared first so the check below cannot pick up a stale value
+  // from an unrelated earlier call.
+  errno = 0;
   std::ostringstream buffer;
   buffer << in.rdbuf();
-  if (in.bad())
+
+  // badbit alone is not enough. A failed read through rdbuf() -- reading a
+  // directory is the easy way to see it -- surfaces as "no characters were
+  // inserted", which sets the *destination's* failbit and leaves `in` looking
+  // like a clean empty stream. Reporting that as kEmpty would turn an
+  // operational I/O failure (exit 1) into a usage error (exit 2), which is
+  // what the C port, checking ferror(), gets right.
+  if (in.bad() || (buffer.fail() && errno != 0))
     return {{}, Error::kRead};
 
   const std::string text = buffer.str();

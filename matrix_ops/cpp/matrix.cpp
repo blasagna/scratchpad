@@ -103,9 +103,14 @@ std::optional<Matrix> mul(const Matrix &a, const Matrix &b) {
 }
 
 Matrix scale(const Matrix &a, double scalar) {
-  // a came from create(), so its dimensions are already known good and this
-  // cannot fail -- which is why the signature returns a Matrix.
+  // A default-constructed Matrix is 0x0, which create() refuses. That cannot
+  // arrive from the CLI -- every matrix there comes from create() via the
+  // parser -- but the type permits it, so scaling an empty matrix yields an
+  // empty matrix rather than dereferencing an empty optional.
   std::optional<Matrix> result = Matrix::create(a.rows(), a.cols());
+  if (!result)
+    return Matrix{};
+
   const std::span<const double> in = a.values();
   const std::span<double> out = result->values();
   for (std::size_t i = 0; i < out.size(); i++)

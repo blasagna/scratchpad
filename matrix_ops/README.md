@@ -38,7 +38,24 @@ a product have different shapes. `add`, `sub`, and `mul` take two operands;
 | `-h, --help` | show help, exit `0` |
 
 The operation is the only positional argument and there must be exactly one;
-option parsing permutes, so it may appear anywhere.
+option parsing permutes, so it may appear anywhere. `--` ends option parsing,
+and a lone `-` is an ordinary argument. A value may be **attached or separate**:
+`--rows 2`, `--rows=2`, and `-r2` are all equivalent.
+
+#### Known divergence: abbreviated long options
+
+The C port gets its parsing from `getopt_long`, which accepts any *unambiguous
+prefix* of a long option — `--row` for `--rows`, `--val` for `--values`. The C++
+port's hand-rolled loop matches full names only and reports `error: unknown
+option '--row'`.
+
+This is deliberate: reproducing the abbreviation rule also means reproducing
+`getopt`'s ambiguity diagnostics (`option '--r' is ambiguous; possibilities:
+…`), which is more machinery than the feature earns. **The supported surface is
+the intersection — spell long options in full.** `check_parity.sh` only asserts
+that the ports agree, so it cannot pin a difference and has no case for this;
+the divergence lives here instead. Same treatment `simple_logger/README.md`
+gives its own argument-parsing divergences.
 
 ### Shape
 

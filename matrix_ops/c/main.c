@@ -292,11 +292,35 @@ int main(int argc, char *argv[]) {
       status = 2;
       break;
 
-    default:
-      fprintf(stderr, "error: unknown option '%s'\n", argv[optind - 1]);
+    default: {
+      /* getopt_long returns '?' for two different mistakes and does not label
+       * them, so they are told apart here.
+       *
+       * A long option given a value it does not take ("--help=x") leaves
+       * optopt set to that option's short equivalent, so the naive report
+       * would name '-h' for something the user spelled "--help". Recognizing
+       * the "--name=value" shape gives it a message that matches what was
+       * typed, and one the C++ port can produce too.
+       *
+       * Otherwise, for a short option optopt holds the offending character and
+       * argv[optind - 1] does not: in a cluster like "-zq" getopt has not
+       * finished with the argument yet, so optind still points at it and
+       * argv[optind - 1] names whatever came before. For an unrecognized long
+       * option glibc leaves optopt at 0, and there the whole argument is the
+       * right thing to print. */
+      const char *bad = argv[optind - 1];
+      const char *eq = strchr(bad, '=');
+      if (optopt != 0 && bad[0] == '-' && bad[1] == '-' && eq != NULL)
+        fprintf(stderr, "error: option '%.*s' does not take a value\n",
+                (int)(eq - bad), bad);
+      else if (optopt != 0)
+        fprintf(stderr, "error: unknown option '-%c'\n", optopt);
+      else
+        fprintf(stderr, "error: unknown option '%s'\n", bad);
       print_usage_error();
       status = 2;
       break;
+    }
     }
 
     if (status != 0)

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -114,21 +115,28 @@ void print_usage_error() {
                "       matrix_ops --help\n";
 }
 
-// Parses value as a positive integer (>= 1). Reports the problem against
-// opt_name and returns nullopt on failure, rejecting empty input, trailing
-// junk, and non-positive values.
-std::optional<std::size_t> parse_positive(std::string_view opt_name,
-                                          std::string_view value) {
+// Parses value as a positive integer in [1, INT_MAX]. Reports the problem
+// against opt_name and returns nullopt on failure, rejecting empty input,
+// trailing junk, and non-positive values.
+//
+// The INT_MAX ceiling is not cosmetic and is not just for parity with the C
+// port's strtol: --precision feeds std::format("{:.{}f}"), which throws
+// std::format_error for a negative width. Without the bound, a value above
+// INT_MAX narrowed to a negative int and aborted the process, and a value
+// above UINT_MAX wrapped to 0 and silently changed the output.
+std::optional<int> parse_positive(std::string_view opt_name,
+                                  std::string_view value) {
   unsigned long long n = 0;
   const char *first = value.data();
   const char *last = first + value.size();
   const auto [stop, ec] = std::from_chars(first, last, n);
-  if (ec != std::errc{} || stop != last || n < 1) {
+  if (ec != std::errc{} || stop != last || n < 1 ||
+      n > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
     std::cerr << "error: invalid value '" << value << "' for " << opt_name
               << " (expected a positive integer)\n";
     return std::nullopt;
   }
-  return static_cast<std::size_t>(n);
+  return static_cast<int>(n);
 }
 
 // Parses value as a finite double, applying the same rule the matrix values
@@ -194,9 +202,20 @@ int main(int argc, char *argv[]) {
   matrix_ops::Format fmt;
   std::optional<double> scalar;
 
-  // A hand-rolled loop rather than getopt_long, but it permutes the same way:
-  // an option is recognized wherever it appears, so the operation name may
-  // come before or after the operands in every port. "--" ends option parsing.
+  // A hand-rolled loop rather than getopt_long, but it reproduces the parts of
+  // getopt_long's behavior the C port gets for free, because the contract is
+  // byte-for-byte parity and check_parity.sh compares stderr too:
+  //
+  //   - it permutes, so an option is recognized wherever it appears and the
+  //     operation name may come before or after the operands;
+  //   - "--" ends option parsing, and a lone "-" is an ordinary argument;
+  //   - a value may be attached (--rows=2, -r2) or separate (--rows 2).
+  //
+  // Abbreviated long options (--row for --rows) are the one thing it does not
+  // reproduce: getopt_long accepts any unambiguous prefix, and matching its
+  // ambiguity diagnostics exactly costs more than the feature is worth. That
+  // is a known divergence, recorded in README.md; check_parity.sh only ever
+  // asserts agreement, so it cannot pin a difference and does not try.
   bool options_done = false;
   for (std::size_t i = 1; i < args.size(); i++) {
     const std::string_view arg = args[i];
@@ -211,41 +230,66 @@ int main(int argc, char *argv[]) {
       continue;
     }
 
-    const bool takes_value =
-        arg == "-r" || arg == "--rows" || arg == "-c" || arg == "--cols" ||
-        arg == "-v" || arg == "--values" || arg == "-f" || arg == "--file" ||
-        arg == "-k" || arg == "--scalar" || arg == "-p" || arg == "--precision";
+    // Split an attached value off the option name: "--rows=2" and "-r2" both
+    // carry their value in the same argv element, the way getopt_long accepts
+    // them in the C port.
+    std::string_view name = arg;
     std::string_view value;
-    if (takes_value) {
+    bool attached = false;
+    if (arg.starts_with("--")) {
+      if (const std::size_t eq = arg.find('='); eq != std::string_view::npos) {
+        name = arg.substr(0, eq);
+        value = arg.substr(eq + 1);
+        attached = true;
+      }
+    } else if (arg.size() > 2) {
+      name = arg.substr(0, 2);
+      value = arg.substr(2);
+      attached = true;
+    }
+
+    const bool takes_value =
+        name == "-r" || name == "--rows" || name == "-c" || name == "--cols" ||
+        name == "-v" || name == "--values" || name == "-f" ||
+        name == "--file" || name == "-k" || name == "--scalar" ||
+        name == "-p" || name == "--precision";
+
+    if (!takes_value && attached && name.starts_with("--")) {
+      std::cerr << "error: option '" << name << "' does not take a value\n";
+      print_usage_error();
+      return kExitUsage;
+    }
+    if (takes_value && !attached) {
       if (i + 1 >= args.size()) {
-        std::cerr << "error: option '" << arg << "' requires a value\n";
+        std::cerr << "error: option '" << name << "' requires a value\n";
         print_usage_error();
         return kExitUsage;
       }
       value = args[++i];
     }
 
-    if (arg == "-h" || arg == "--help") {
+    const std::string_view arg_ = name;
+    if (arg_ == "-h" || arg_ == "--help") {
       print_help();
       return 0;
-    } else if (arg == "-r" || arg == "--rows") {
-      const std::optional<std::size_t> n = parse_positive("--rows", value);
+    } else if (arg_ == "-r" || arg_ == "--rows") {
+      const std::optional<int> n = parse_positive("--rows", value);
       if (!n)
         return kExitUsage;
-      pending_rows = *n;
-    } else if (arg == "-c" || arg == "--cols") {
-      const std::optional<std::size_t> n = parse_positive("--cols", value);
+      pending_rows = static_cast<std::size_t>(*n);
+    } else if (arg_ == "-c" || arg_ == "--cols") {
+      const std::optional<int> n = parse_positive("--cols", value);
       if (!n)
         return kExitUsage;
-      pending_cols = *n;
-    } else if (arg == "-v" || arg == "--values" || arg == "-f" ||
-               arg == "--file") {
+      pending_cols = static_cast<std::size_t>(*n);
+    } else if (arg_ == "-v" || arg_ == "--values" || arg_ == "-f" ||
+               arg_ == "--file") {
       if (operands.size() == kMaxOperands) {
         std::cerr << "error: at most " << kMaxOperands
                   << " matrices may be given\n";
         return kExitUsage;
       }
-      const bool from_file = arg == "-f" || arg == "--file";
+      const bool from_file = arg_ == "-f" || arg_ == "--file";
       matrix_ops::ParseResult parsed =
           from_file ? load_file(value, pending_rows, pending_cols)
                     : matrix_ops::parse_text(value, pending_rows, pending_cols);
@@ -260,25 +304,24 @@ int main(int argc, char *argv[]) {
       // own or infers them.
       pending_rows = matrix_ops::kDimUnspecified;
       pending_cols = matrix_ops::kDimUnspecified;
-    } else if (arg == "-k" || arg == "--scalar") {
+    } else if (arg_ == "-k" || arg_ == "--scalar") {
       const std::optional<double> k = parse_scalar("--scalar", value);
       if (!k)
         return kExitUsage;
       scalar = *k;
-    } else if (arg == "-p" || arg == "--precision") {
+    } else if (arg_ == "-p" || arg_ == "--precision") {
       // Zero decimal places is meaningful -- it rounds to integers -- so this
       // is the one numeric option that is not required to be positive.
       if (value == "0") {
         fmt.precision = 0;
       } else {
-        const std::optional<std::size_t> n =
-            parse_positive("--precision", value);
+        const std::optional<int> n = parse_positive("--precision", value);
         if (!n)
           return kExitUsage;
-        fmt.precision = static_cast<int>(*n);
+        fmt.precision = *n;
       }
     } else {
-      std::cerr << "error: unknown option '" << arg << "'\n";
+      std::cerr << "error: unknown option '" << name << "'\n";
       print_usage_error();
       return kExitUsage;
     }
