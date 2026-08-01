@@ -205,8 +205,16 @@ int main(int argc, char *argv[]) {
       {NULL, 0, NULL, 0},
   };
 
+  /* Silence getopt's own diagnostics and report the two failures by hand.
+   * glibc's messages are prefixed with argv[0], which is the full path to the
+   * binary under bazel-bin, so they can never match the C++ port's wording --
+   * and a full build path in a user-facing error is worse than useless. The
+   * leading ':' in the option string is what keeps a missing value ( ':' )
+   * distinguishable from an unknown option ( '?' ) once opterr is off. */
+  opterr = 0;
+
   int opt;
-  while ((opt = getopt_long(argc, argv, "r:c:v:f:k:p:h", long_opts, NULL)) !=
+  while ((opt = getopt_long(argc, argv, ":r:c:v:f:k:p:h", long_opts, NULL)) !=
          -1) {
     int n;
     MatrixResult rc;
@@ -275,7 +283,17 @@ int main(int argc, char *argv[]) {
       print_help();
       goto cleanup;
 
+    case ':':
+      /* getopt has already advanced past the offending argument, so
+       * argv[optind - 1] is it, spelled the way the user typed it. */
+      fprintf(stderr, "error: option '%s' requires a value\n",
+              argv[optind - 1]);
+      print_usage_error();
+      status = 2;
+      break;
+
     default:
+      fprintf(stderr, "error: unknown option '%s'\n", argv[optind - 1]);
       print_usage_error();
       status = 2;
       break;
