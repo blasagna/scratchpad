@@ -5,6 +5,8 @@ members = [
     "morse_trainer",
     "copy_file/rust",
     "simple_logger/rust",
+    "matrix_ops/rust",
+    "matrix_ops/bench/rust",
     "cpp_rust_bindings/rust",
     "rust_hosted_cpp/rust",
     "rust_python_bindings/core",

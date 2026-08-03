@@ -1,24 +1,36 @@
 # matrix_ops
 
 A CLI that adds, subtracts, multiplies, and scales 2D matrices of real numbers,
-implemented twice with matching semantics: `c/` and `cpp/` (both Bazel). Rust
-follows. The full contract — CLI surface, shape rules, output format, exit
-codes — is in [`README.md`](README.md), along with a benchmark and adoption
-writeup comparing the ports against Eigen and xtensor. Each port has its own
-README with design notes ([c](c/README.md), [cpp](cpp/README.md)).
+implemented three times: `c/` and `cpp/` (both Bazel) with matching semantics
+down to the byte, and `rust/` (cargo) with the same behavior but its own
+command-line surface. The full contract — CLI surface, shape rules, output
+format, exit codes — is in [`README.md`](README.md), along with benchmarks and
+adoption writeups comparing the ports against Eigen, xtensor, faer, and
+nalgebra. Each port has its own README with design notes ([c](c/README.md),
+[cpp](cpp/README.md), [rust](rust/README.md)).
 
 ## Commands
 
 ```sh
 bazel run  //matrix_ops/c:matrix_ops   -- <add|sub|mul|scale> [operand...]
 bazel run  //matrix_ops/cpp:matrix_ops -- <add|sub|mul|scale> [operand...]
+cargo run -p matrix_ops --                <add|sub|mul|scale> [operand...]
 
 bazel test //matrix_ops/c:all
 bazel test //matrix_ops/cpp:all
+cargo test -p matrix_ops
 
-./matrix_ops/check_parity.sh   # both ports, byte for byte, 86 cases
-./matrix_ops/bench/run.sh      # ours vs Eigen vs xtensor
+./matrix_ops/check_parity.sh     # C and C++ only, byte for byte, 86 cases
+./matrix_ops/bench/run.sh        # ours vs Eigen vs xtensor       (C++)
+./matrix_ops/bench/rust/run.sh   # ours vs faer vs nalgebra       (Rust)
 ```
+
+**`check_parity.sh` covers C and C++ only.** The Rust port uses clap, so its
+diagnostics and its `--help` cannot match the hand-written ones, and its
+dimensions pair with operands by index rather than by the order typed. Adding it
+to the script would mean exempting most of what the script checks. Its surface
+is pinned by `matrix_ops/rust/tests/cli.rs` instead, and the divergences are
+tabulated in [`README.md`](README.md#known-divergence-the-rust-port).
 
 ## Shared behavior (keep the ports in sync)
 
@@ -44,8 +56,15 @@ bazel test //matrix_ops/cpp:all
   `double`, `from_chars` rejects a leading `+` (the contract accepts `+3`) and
   reports `result_out_of_range` for underflow as well as overflow, so it cannot
   accept `1e-400` while refusing `1e400` the way the contract requires. The
-  reasoning is written up in [`cpp/README.md`](cpp/README.md). The Rust port
-  will have to make the same call about `parse::<f64>`.
+  reasoning is written up in [`cpp/README.md`](cpp/README.md).
+
+  **The Rust port answers the question this bullet used to leave open**: it uses
+  `parse::<f64>()` with an `is_finite()` guard. That lands every case right —
+  `+3`, `.5`, `4.`, `1e-400` → `0`, and `1e400`/`inf`/`nan` rejected — except
+  hex floats, which `strtod` accepts and `f64::from_str` does not. Rejecting
+  them is the one documented gap in the shared number set; hand-rolling hex
+  parsing carries a rounding-correctness burden that a syntax nobody types into
+  a matrix does not earn.
 - **Output is `printf("%.*f")` with trailing zeros trimmed, never `%g`.** `%g`
   counts significant digits rather than decimals and switches to scientific
   notation for large values, which reads badly in a column. A port reaching for
@@ -73,7 +92,16 @@ bazel test //matrix_ops/cpp:all
   is a zero the trimming removes, and uncapped it let one cell demand gigabytes
   — where C's `snprintf` overflowed the `int` it returns and reported an
   allocation failure while C++ went ahead and printed 6.3 GB worth.
-- **Out of memory is `matrix_ops: out of memory` and exit 1, not a crash.** The
+- **The Rust port pairs dimensions with operands by index, not by position.**
+  The Nth `--rows` describes the Nth operand wherever it appears, and inline
+  operands are ordered before file ones. Reconstructing C's typed order under
+  clap is possible — `ArgMatches::indices_of` draws from one counter shared by
+  every argument, so sorting on it recovers the command line — but it is a lot
+  of machinery for a rule that only bites in spellings C rejects anyway. Written
+  C's way, dimension before operand, all three ports agree.
+- **Out of memory is `matrix_ops: out of memory` and exit 1, not a crash** in C
+  and C++. The Rust port aborts instead; see the divergence table in
+  [`README.md`](README.md#known-divergence-the-rust-port). For C and C++: the
   C port returns `MATRIX_ERR_NOMEM`; the C++ one has to catch `std::bad_alloc`
   to match, which it does in `parse_text`, `read_stream`, and `write`, plus a
   backstop around `main`. Note `read_stream` cannot see the exception at all
@@ -138,6 +166,32 @@ bazel test //matrix_ops/cpp:all
   thread makes OpenBLAS's pthread pool inherit the affinity mask and collapse
   onto one core, so the two cannot be measured fairly in the same run. See the
   caveat in [`README.md`](README.md).
+
+- **faer and nalgebra are column-major; our `Matrix` is row-major.** Handing the
+  row-major buffer to a column-major constructor silently yields the transpose —
+  and the transpose still agrees elementwise on `add`, `sub`, and `scale`, so
+  three quarters of the correctness gate would pass while `mul` was wrong.
+  `bench/rust/src/lib.rs` builds faer's `Mat` with `from_fn(|i, j| …)` and
+  nalgebra's with `from_row_slice`, and every comparison goes through `(i, j)`
+  rather than through backing slices. `the_conversions_preserve_orientation…` in
+  `bench/rust/tests/agreement.rs` pins it.
+
+- **criterion needs a per-benchmark budget here, not a global one.** Costs span
+  five orders of magnitude, from a microsecond `scale` to the ~3-second naive
+  1024x1024 `mul`. criterion's default *linear* sampling runs 1, 2, 3, … N
+  iterations per sample — about 5000 at the default sample size — which is fine
+  at microseconds and absurd at seconds. `benches/compare.rs` switches anything
+  over a millisecond to `SamplingMode::Flat` with `sample_size(10)`, criterion's
+  minimum. Warm-up always runs at least one full iteration, so the floor for the
+  slowest benchmark is `11 * per_iter` however small `warm_up_time` is set.
+
+- **The Rust benchmark needs no thread-pool juggling, and that is a finding.**
+  nalgebra never threads (its f64 GEMM goes through `matrixmultiply` without the
+  `threading` feature) and faer's parallelism is one global call,
+  `faer::set_global_parallelism(Par::Seq | Par::rayon(n))`. So `bench/rust` has
+  three tables where `bench/` needs four and has to tell you which column to read
+  from each. Do not copy the `OMP_PROC_BIND` apparatus over; there is nothing
+  here for it to fix.
 
 - **Third-party headers need `--features=external_include_paths`**, set in
   `.bazelrc`. The repo's `-Werror -Wextra -pedantic` otherwise applies to Eigen,

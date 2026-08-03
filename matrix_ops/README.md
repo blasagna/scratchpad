@@ -12,9 +12,11 @@ Requirements:
 
 ## Contract
 
-The behavior all ports implement. `c/` and `cpp/` exist so far and are held to
-this byte-for-byte by `check_parity.sh` (86 cases, comparing stdout, stderr, and
-exit status). Rust follows.
+The behavior all ports implement. `c/` and `cpp/` are held to this byte-for-byte
+by `check_parity.sh` (86 cases, comparing stdout, stderr, and exit status).
+`rust/` implements the same operations, shape rules, and output format, but
+parses its command line with `clap` and is deliberately outside that script —
+see [Known divergence: the Rust port](#known-divergence-the-rust-port).
 
 ### CLI
 
@@ -72,6 +74,27 @@ that the ports agree, so it cannot pin a difference and has no case for this;
 the divergence lives here instead. Same treatment `simple_logger/README.md`
 gives its own argument-parsing divergences.
 
+#### Known divergence: the Rust port
+
+The C and C++ ports hand-write their option parsing so their diagnostics can
+agree byte for byte. The Rust port uses `clap` in the ordinary way instead, and
+accepts clap's behavior where it differs. It is not in `check_parity.sh`.
+
+| | C and C++ | Rust |
+|---|---|---|
+| usage diagnostics | `error: unknown option '--x'` | clap's wording |
+| `--help` | the hand-written text below | clap's rendering |
+| dimensions | bind to the *next* operand, in the order typed | the Nth `--rows` describes the Nth operand |
+| mixed operand sources | interleaved in the order typed | inline operands ordered before file ones |
+| hex floats (`0x1p3`) | accepted, via `strtod` | rejected |
+| out of memory | `matrix_ops: out of memory`, exit 1 | the process aborts |
+
+Everything below this section — the shape rules, the value set apart from hex
+floats, the output format, the exit codes — holds in all three. Written the way
+C requires, with each dimension before the operand it describes, the Rust port
+produces byte-identical output; the ordering divergence only shows in spellings
+C rejects outright. [`rust/README.md`](rust/README.md) has the reasoning.
+
 ### Shape
 
 Dimensions are optional and inferred by default:
@@ -96,6 +119,11 @@ A value is anything the platform's `strtod` accepts — sign, decimal point,
 exponent — **except** `nan`, `inf`, `infinity`, and anything that overflows to
 infinity, all of which are errors. A value that underflows to zero is accepted.
 An embedded NUL byte in a file is an error rather than a silent truncation.
+
+`strtod` also accepts C99 hex floats (`0x1p3`), which Rust's `f64::from_str`
+does not, so the Rust port rejects them. That is the one place the accepted
+number set is not identical across the three, and it is the cost of not
+hand-rolling a hex-float parser for a syntax nobody types into a matrix.
 
 ### Output
 
@@ -306,3 +334,105 @@ compiler flag outranks the entire library choice at this problem size. The
 repo's `--config=opt` deliberately does not set it, since `-march=native`
 produces binaries that do not run on other machines; `--config=native` is
 available for benchmarks.
+
+## Comparison against faer and nalgebra
+
+The Rust counterpart of the section above. Reproduce with `./bench/rust/run.sh`,
+which runs the agreement test first — a disagreement stops the run before any
+timing is printed — and then benchmarks the same four operations at the same
+sizes as `bench/compare.cpp`, so the two sets of tables describe the same work.
+
+Two differences in method, both worth knowing before comparing a number here
+against one above:
+
+- **These are criterion means, not best-of-5.** criterion's default sampling
+  runs 1, 2, 3, … N iterations per sample, which is fine at microseconds and
+  absurd for the ~3-second naive multiply, so anything over a millisecond uses
+  flat sampling at criterion's minimum sample size of 10.
+- **faer and nalgebra are both column-major**, where Eigen was pinned to
+  row-major to match. Converting per element rather than reinterpreting the
+  buffer is what keeps this honest; see the note in `CLAUDE.md`.
+
+**1024x1024 `mul`**, on the same Ryzen 7 9700X:
+
+| build | ours | faer | nalgebra |
+|---|---|---|---|
+| baseline ISA, 1 thread | 2993 ms | 13.95 ms | 15.93 ms |
+| `-C target-cpu=native`, 1 thread | 2554 ms | **13.94 ms** | 16.23 ms |
+| `-C target-cpu=native`, 16 threads | 2581 ms | **4.28 ms** | 16.27 ms |
+
+### The instruction-set lever does not exist here
+
+This is the sharpest contrast with the C++ results. There, the single biggest
+finding was that one compiler flag was worth 3.2x to Eigen — more than the
+library choice itself. In Rust that lever is simply absent:
+
+- faer: 13.95 → 13.94 ms. **No change at all.**
+- nalgebra: 15.93 → 16.23 ms. No change.
+- ours: 2993 → 2554 ms, about 1.17x — the only column the flag moves.
+
+Both libraries ship runtime-dispatched kernels and pick one by CPU feature
+detection, the way OpenBLAS does and the way header-only Eigen cannot. So the
+advice that closes the C++ section — *check your `-march` before reaching for a
+library* — inverts here: the flag helps only code you wrote yourself, and the
+libraries were already using AVX-512 before you asked.
+
+It also means faer at the **default** `--release` build (13.95 ms) is already
+faster than Eigen at `-march=native` (21.1 ms) and level with xtensor's OpenBLAS
+(16.6 ms). No flags, no system dependency, one `cargo add`.
+
+### Threading is a smaller win, and below 1024 it is a loss
+
+faer threads through rayon; nalgebra does not thread at all, which the flat
+nalgebra column across all three tables confirms rather than assumes.
+
+faer gets 3.3x from 16 threads (13.94 → 4.28 ms), against the 7.2x Eigen got
+from OpenMP. But the more useful finding is at the small end, where threading
+actively hurts:
+
+| `mul` | 1 thread | 16 threads | |
+|---|---|---|---|
+| 64x64 | 0.004 ms | 0.527 ms | **132x worse** |
+| 256x256 | 0.223 ms | 0.592 ms | 2.7x worse |
+| 1024x1024 | 13.94 ms | 4.28 ms | 3.3x better |
+
+Below roughly 1024x1024 the pool dispatch costs more than the work. faer
+defaults to threading, so a program doing many small multiplies gets the bad
+end of this without asking for it — `faer::set_global_parallelism(Par::Seq)` is
+worth reaching for well before the sizes where it stops mattering.
+
+### Our naive loop, across languages
+
+The same `i`/`j`/`k` triple loop, deliberately kept identical so the two
+benchmarks compare the same algorithm:
+
+| | baseline ISA | native ISA |
+|---|---|---|
+| C++ (`bench/compare.cpp`) | 3067 ms | 3077 ms |
+| Rust (`bench/rust`) | 2993 ms | 2554 ms |
+
+Rust is 1.2x faster at native ISA, *with* bounds checks on every element access
+that the C++ version does not have. LLVM gets something out of AVX-512 here that
+GCC does not, despite the loop-carried dependency on `sum` that should defeat
+vectorization in both. Not a large enough gap to draw conclusions from, but it
+is the opposite of the direction the bounds checks would predict.
+
+### Would we use them?
+
+**faer: yes.** Fastest of everything measured on this page at the default build,
+hermetic, pure Rust, one `cargo add`, and the parallelism control is a single
+global call. The API needed no wrestling — `Mat::from_fn`, the arithmetic
+operators, and `Scale` compiled first try. Two cautions: it is pre-1.0 and has
+reorganized its API within recent minor versions, so pin it; and its default
+threading is a pessimization at small sizes.
+
+**nalgebra: yes, for anything that is not a large GEMM.** Never worse than 1.5x
+faer on the elementwise operations, the most familiar API of the three, and the
+only one here with no threading behavior to think about. At 1024x1024 `mul` it is
+only 1.16x behind faer single-threaded — but 3.8x behind once faer uses the
+machine, since nalgebra cannot. If large dense products are the workload, that
+is the whole decision; if they are not, the gap never shows up.
+
+**And our own implementation: no, same as in C++.** 183x behind faer at matched
+flags, 603x with threads on. The naive triple loop is worth keeping here because
+it is the thing being measured, not because anyone should ship it.

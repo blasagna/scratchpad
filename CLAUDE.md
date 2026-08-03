@@ -19,7 +19,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `copy_file/` | A `cp`-like file copier, ported to C / C++ / Rust | [`copy_file/CLAUDE.md`](copy_file/CLAUDE.md) |
 | `text_analyzer/` | A text-stats CLI, ported to C / C++ / Rust with cross-port parity | [`text_analyzer/CLAUDE.md`](text_analyzer/CLAUDE.md) |
 | `simple_logger/` | A timestamped log-appender CLI, ported to C / C++ / Rust | [`simple_logger/CLAUDE.md`](simple_logger/CLAUDE.md) |
-| `matrix_ops/` | A 2D matrix arithmetic CLI (C and C++; Rust to follow), benchmarked against Eigen and xtensor | [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md) |
+| `matrix_ops/` | A 2D matrix arithmetic CLI, ported to C / C++ / Rust, benchmarked against Eigen, xtensor, faer, and nalgebra | [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md) |
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
@@ -57,8 +57,9 @@ pixi run main     # runs solution.py directly
 
 cargo (Rust) — the Rust crates form a single workspace (root `Cargo.toml`, members
 `text_analyzer/rust`, `morse_trainer`, `copy_file/rust`, `simple_logger/rust`,
-`cpp_rust_bindings/rust`, `rust_hosted_cpp/rust`, `rust_python_bindings/{core,bindings}`;
-shared `target/` at the repo root):
+`matrix_ops/rust`, `matrix_ops/bench/rust`, `cpp_rust_bindings/rust`,
+`rust_hosted_cpp/rust`, `rust_python_bindings/{core,bindings}`; shared `target/`
+at the repo root):
 ```sh
 cargo test                    # all workspace members
 cargo test -p morse_trainer   # a single member
@@ -93,6 +94,11 @@ Bazel Central Registry. Two things are worth knowing before adding another:
 not apply to external headers, and `//matrix_ops/bench` is the only non-hermetic
 target here — it links a system OpenBLAS. See
 [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md).
+
+The Rust side has the same shape: the ports themselves depend only on `clap`,
+and the linear-algebra crates (`faer`, `nalgebra`) and `criterion` are confined
+to `matrix_ops/bench/rust`. Unlike the Bazel benchmark, that one is hermetic —
+both libraries are pure Rust, so there is no system BLAS to link.
 
 **New pixi problems** follow the same pattern: `solution.py`, `test_solution.py`,
 and a `pixi.toml` with `test` and `main` tasks (`pixi init <directory>` to start).

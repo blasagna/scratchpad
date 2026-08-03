@@ -1,0 +1,17 @@
+[package]
+name = "matrix_ops_bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+matrix_ops = { path = "../../rust" }
+faer = "0.24"
+nalgebra = "0.35"
+
+[dev-dependencies]
+criterion = "0.8"
+
+[[bench]]
+name = "compare"
+harness = false
