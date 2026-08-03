@@ -6,6 +6,14 @@ build --cxxopt=-std=c++20
 # Make strict warning behavior the default for all builds
 build --config=strict
 
+# Include third-party headers with -isystem rather than -I, so the -Werror
+# above applies to our code and not to Eigen, xtensor, or the FLENS tree
+# vendored inside xtensor-blas. Without this, //matrix_ops/bench cannot build
+# at all: those headers are not warning-clean under -Wall -Wextra -pedantic,
+# and weakening the warning config repo-wide to accommodate them would be the
+# wrong trade.
+build --features=external_include_paths
+
 # Config 'strict': Treat all warnings as errors
 build:strict --copt=-Wall --copt=-Werror --copt=-Wextra --copt=-pedantic
 
@@ -15,3 +23,14 @@ build:permissive --copt=-Wno-error
 # Config 'opt': Optimized build, for benchmarking. The default build is
 # fastbuild (-O0), so timings taken without this are not meaningful.
 build:opt --compilation_mode=opt
+
+# Config 'native': Compile for this machine's actual instruction set.
+#
+# NOT implied by 'opt', which builds for baseline x86-64 -- SSE2, two doubles
+# per vector, no FMA. That baseline is the right default for anything shipped,
+# but it makes a benchmark against a hand-tuned library meaningless: OpenBLAS
+# selects an AVX-512 kernel at runtime via CPUID no matter what flags we pass,
+# so comparing it against a library WE compiled decides the result on flags
+# rather than on the libraries. Eigen's 1024x1024 GEMM is 3.3x faster with this
+# than without. Binaries built this way are not portable off this machine.
+build:native --copt=-march=native

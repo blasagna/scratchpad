@@ -284,14 +284,27 @@ done:;
 }
 
 /*
- * Renders one element into buf, trimming trailing zeros so an integral value
- * prints as an integer. Returns the length written, or -1 if it did not fit.
+ * Renders one element into a newly malloc'd string the caller must free,
+ * trimming trailing zeros so an integral value prints as an integer. Stores
+ * the length in *len_out. Returns NULL on allocation failure.
+ *
+ * The buffer is sized by asking snprintf how much room the rendering needs
+ * rather than by guessing. A fixed buffer has to cover the worst case, which
+ * is not 512 bytes: "%.*f" of a value near DBL_MAX needs 309 digits before the
+ * point plus whatever --precision asks for after it, so `--scalar 1e300
+ * --precision 300` wants ~611. The fixed buffer used to make that legitimate
+ * render fail, and fail as MATRIX_ERR_NOMEM with an unrelated errno, printing
+ * "out of memory: Success".
  */
-static int format_element(char *buf, size_t buf_size, double value,
-                          int precision) {
-  int n = snprintf(buf, buf_size, "%.*f", precision, value);
-  if (n < 0 || (size_t)n >= buf_size)
-    return -1;
+static char *format_element(double value, int precision, int *len_out) {
+  int n = snprintf(NULL, 0, "%.*f", precision, value);
+  if (n < 0)
+    return NULL;
+
+  char *buf = malloc((size_t)n + 1);
+  if (!buf)
+    return NULL;
+  snprintf(buf, (size_t)n + 1, "%.*f", precision, value);
 
   /* Only a rendering that actually has a fraction can be trimmed; with
    * precision 0 there is no '.' and the digits are all significant. */
@@ -312,7 +325,9 @@ static int format_element(char *buf, size_t buf_size, double value,
     buf[1] = '\0';
     n = 1;
   }
-  return n;
+
+  *len_out = n;
+  return buf;
 }
 
 MatrixResult matrix_write(FILE *out, const Matrix *m, const MatrixFormat *fmt) {
@@ -328,23 +343,12 @@ MatrixResult matrix_write(FILE *out, const Matrix *m, const MatrixFormat *fmt) {
   size_t width = 0;
 
   for (size_t i = 0; i < count; i++) {
-    /* "%.*f" on a large double can need several hundred digits before the
-     * decimal point, so the buffer is sized for the worst case rather than for
-     * a typical value: DBL_MAX is 309 digits, plus a sign, a point, the
-     * fraction, and the NUL. */
-    char buf[512];
-    int n = format_element(buf, sizeof(buf), m->data[i], fmt->precision);
-    if (n < 0) {
-      rc = MATRIX_ERR_NOMEM;
-      goto done;
-    }
-
-    cells[i] = malloc((size_t)n + 1);
+    int n = 0;
+    cells[i] = format_element(m->data[i], fmt->precision, &n);
     if (!cells[i]) {
       rc = MATRIX_ERR_NOMEM;
       goto done;
     }
-    memcpy(cells[i], buf, (size_t)n + 1);
     if ((size_t)n > width)
       width = (size_t)n;
   }

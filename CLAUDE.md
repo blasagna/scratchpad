@@ -19,7 +19,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `copy_file/` | A `cp`-like file copier, ported to C / C++ / Rust | [`copy_file/CLAUDE.md`](copy_file/CLAUDE.md) |
 | `text_analyzer/` | A text-stats CLI, ported to C / C++ / Rust with cross-port parity | [`text_analyzer/CLAUDE.md`](text_analyzer/CLAUDE.md) |
 | `simple_logger/` | A timestamped log-appender CLI, ported to C / C++ / Rust | [`simple_logger/CLAUDE.md`](simple_logger/CLAUDE.md) |
-| `matrix_ops/` | A 2D matrix arithmetic CLI (C so far; C++ / Rust to follow) | [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md) |
+| `matrix_ops/` | A 2D matrix arithmetic CLI (C and C++; Rust to follow), benchmarked against Eigen and xtensor | [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md) |
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
@@ -84,6 +84,15 @@ need this.
 `srcs` + `hdrs`), `cc_test` (link `@googletest//:gtest_main`). A new C/C++ package
 needs its own `BUILD`; no `MODULE.bazel` change is needed for standard targets
 since `rules_cc` and `googletest` are already declared.
+
+**Third-party dependencies** are declared in `MODULE.bazel` and used by exactly
+one package, `//matrix_ops/bench` (Eigen and xtensor, for a comparison
+benchmark). `third_party/` holds BUILD overlays for archives that are not in the
+Bazel Central Registry. Two things are worth knowing before adding another:
+`.bazelrc` sets `--features=external_include_paths` so the repo's `-Werror` does
+not apply to external headers, and `//matrix_ops/bench` is the only non-hermetic
+target here — it links a system OpenBLAS. See
+[`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md).
 
 **New pixi problems** follow the same pattern: `solution.py`, `test_solution.py`,
 and a `pixi.toml` with `test` and `main` tasks (`pixi init <directory>` to start).

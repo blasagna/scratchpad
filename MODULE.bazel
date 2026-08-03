@@ -1,2 +1,24 @@
-bazel_dep(name = "rules_cc", version="0.2.17")
+# 0.2.17 rather than 0.2.14: the eigen/xtensor modules below pull a newer
+# rules_cc into the graph, and a lower direct version here only produces a
+# version-skew warning on every build.
+bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "googletest", version = "1.17.0")
+
+# Third-party linear algebra libraries, used ONLY by //matrix_ops/bench to
+# compare our hand-written implementation against. No port depends on these.
+bazel_dep(name = "eigen", version = "3.4.0.bcr.3")
+bazel_dep(name = "xtensor", version = "0.27.1")  # pulls xtl transitively
+
+# xtensor-blas is not in the Bazel Central Registry, so unlike the modules
+# above it needs an explicit archive and a BUILD file we maintain. It is what
+# supplies xt::linalg::dot -- the xtensor core package has no matrix multiply
+# at all, which is itself one of the findings in matrix_ops/README.md.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "xtensor_blas",
+    build_file = "//third_party:xtensor_blas.BUILD",
+    integrity = "sha256-NBH1bSQ7kqIv46JZvItBTYUasWe50wcAoXdsmQjgtZU=",
+    strip_prefix = "xtensor-blas-0.23.0",
+    urls = ["https://github.com/xtensor-stack/xtensor-blas/archive/refs/tags/0.23.0.tar.gz"],
+)

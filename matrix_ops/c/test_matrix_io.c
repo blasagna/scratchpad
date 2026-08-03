@@ -367,3 +367,29 @@ TEST(Write, NegativeValuesWidenTheColumn) {
 TEST(FormatDefault, UsesTheDocumentedPrecision) {
   EXPECT_EQ(matrix_format_default().precision, MATRIX_DEFAULT_PRECISION);
 }
+
+TEST(Write, RendersAtTheMaximumPrecision) {
+  /* The ceiling the CLI enforces has to be one this can actually render: the
+   * widest possible cell is 309 digits, a point, and MATRIX_MAX_PRECISION
+   * more. Every digit past ~1074 is a zero the trimming removes, which is what
+   * makes this a fine place to stop. */
+  Owned m;
+  ASSERT_EQ(matrix_create(1, 1, m.ptr()), MATRIX_OK);
+  m.get().data[0] = 0.5;
+  const std::string text = written(m.ptr(), MATRIX_MAX_PRECISION);
+  EXPECT_EQ(text, "0.5\n");
+}
+
+TEST(Write, HandlesAWidthNoFixedBufferWouldHold) {
+  /* "%.*f" of a value near DBL_MAX needs 309 digits before the point plus the
+   * precision after it. A 512-byte buffer used to fail here and report it as
+   * MATRIX_ERR_NOMEM, printing "out of memory: Success". */
+  Owned m;
+  ASSERT_EQ(matrix_create(1, 1, m.ptr()), MATRIX_OK);
+  m.get().data[0] = 1e300;
+  const std::string text = written(m.ptr(), 300);
+  EXPECT_EQ(text.size(), 302u);
+  EXPECT_EQ(text.front(), '1');
+  EXPECT_EQ(text.back(), '\n');
+  EXPECT_EQ(text.find('.'), std::string::npos);
+}

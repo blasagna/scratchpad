@@ -9,6 +9,17 @@
 #define MATRIX_DEFAULT_PRECISION 4
 
 /*
+ * The most decimal places a caller may ask for. A double's smallest subnormal
+ * is about 5e-324, so past ~1074 places every digit printed is a zero the
+ * trimming then removes; 1100 is that with room to spare. The cap is not
+ * cosmetic: "%.*f" of a large value needs 309 digits before the point plus the
+ * precision after it, so an uncapped precision lets one cell demand gigabytes
+ * (INT_MAX asked for 6.3 GB), and near INT_MAX the length itself overflows the
+ * int snprintf returns.
+ */
+#define MATRIX_MAX_PRECISION 1100
+
+/*
  * Sentinel for "the caller did not specify this dimension". Zero is free for
  * the job because matrix_create rejects a zero dimension anyway, so no real
  * matrix can have one.
