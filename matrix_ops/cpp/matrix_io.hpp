@@ -14,12 +14,22 @@ namespace matrix_ops {
 // contract, so it lives in the header rather than in the CLI.
 inline constexpr int kDefaultPrecision = 4;
 
+// The most decimal places a caller may ask for. A double's smallest subnormal
+// is about 5e-324, so past ~1074 places every digit printed is a zero the
+// trimming then removes; 1100 is that with room to spare. The cap is not
+// cosmetic: a rendering of a large value needs 309 digits before the point plus
+// the precision after it, so an uncapped precision lets one cell demand
+// gigabytes -- INT_MAX asked for 6.3 GB here, where the C port's snprintf
+// instead overflowed the int it returns and reported it as an allocation
+// failure. Neither is a useful answer, so both ports refuse the request.
+inline constexpr int kMaxPrecision = 1100;
+
 // "The caller did not specify this dimension". Zero is free for the job
 // because Matrix::create rejects a zero dimension anyway.
 inline constexpr std::size_t kDimUnspecified = 0;
 
 // Outcome of a parse: a matrix, or the reason there is not one. Shaped like
-// simple_logger's LogResult -- unlike add/sub/mul, parsing fails in six
+// simple_logger's LogResult -- unlike add/sub/mul, parsing fails in seven
 // distinct ways and the CLI has to name which.
 struct ParseResult {
   Matrix matrix;
@@ -59,6 +69,11 @@ ParseResult parse_text(std::string_view text, std::size_t want_rows,
 // requirement, the values have to be held in memory anyway. Reports kRead if
 // the stream failed, and kBadNumber for an embedded NUL, which would otherwise
 // truncate the text silently.
+//
+// Buffering the whole stream is also the one unbounded allocation on the input
+// side, so like parse_text this reports kNoMem rather than letting a bad_alloc
+// escape: the C port returns MATRIX_ERR_NOMEM here and the CLI contract calls
+// running out of memory an operational failure (exit 1), not a crash.
 ParseResult read_stream(std::istream &in, std::size_t want_rows,
                         std::size_t want_cols);
 
@@ -90,10 +105,12 @@ struct Format {
 // Returning a string rather than writing to a stream keeps this pure, which is
 // what lets most of the format tests be plain string comparisons -- the same
 // improvement simple_logger's C++ port made over its C sibling.
+// fmt.precision must be in [0, kMaxPrecision]; the CLI rejects anything else
+// before it gets here.
 std::string render(const Matrix &m, const Format &fmt);
 
-// render() written to a stream. Returns kOk or kWrite, with errno as the
-// failing call left it.
+// render() written to a stream. Returns kOk, kWrite with errno as the failing
+// call left it, or kNoMem if the rendering could not be allocated.
 Error write(std::ostream &out, const Matrix &m, const Format &fmt);
 
 } // namespace matrix_ops

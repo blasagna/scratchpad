@@ -45,9 +45,9 @@ build() {
 # mislabels which implementation it measured is worse than no benchmark.
 check_blas() {
   local symbols
-  symbols="$(nm -D --undefined-only "${BIN}" 2>/dev/null | grep -ciE 'cblas_|gemm' || true)"
+  symbols="$(nm -D --undefined-only "${BIN}" 2>/dev/null | grep -ci 'cblas_' || true)"
   if [[ "${symbols}" -eq 0 ]]; then
-    echo "ERROR: ${BIN} references no cblas/gemm symbols." >&2
+    echo "ERROR: ${BIN} references no cblas_* symbols." >&2
     echo "xtensor is running the FLENS generic fallback, not a real BLAS." >&2
     echo "See //third_party/xtensor_blas.BUILD -- HAVE_CBLAS must be a -D." >&2
     exit 1

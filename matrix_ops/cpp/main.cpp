@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -98,8 +99,9 @@ void print_help() {
          "  -k, --scalar X      the multiplier for 'scale'\n"
          "  -p, --precision N   decimal places in the output, trailing zeros "
          "trimmed\n"
-         "                      (default: "
-      << matrix_ops::kDefaultPrecision
+         "                      (0 to "
+      << matrix_ops::kMaxPrecision
+      << ", default: " << matrix_ops::kDefaultPrecision
       << ")\n"
          "  -h, --help          show this help\n"
          "\n"
@@ -115,28 +117,59 @@ void print_usage_error() {
                "       matrix_ops --help\n";
 }
 
+// Parses value as an unsigned decimal integer, accepting an optional leading
+// '+' and then digits, and nothing else.
+//
+// The spelling is written down rather than inherited, the same way the value
+// contract's number set is. '+3' is accepted because the contract accepts it
+// for matrix values; leading whitespace is not, even though the C port's
+// strtol would have skipped it, because ' 3' as an option value is a typo
+// rather than a request. The C port checks the identical shape by hand.
+std::optional<unsigned long long> parse_uint(std::string_view value) {
+  std::string_view digits = value;
+  if (digits.starts_with('+'))
+    digits.remove_prefix(1);
+
+  unsigned long long n = 0;
+  const char *first = digits.data();
+  const char *last = first + digits.size();
+  const auto [stop, ec] = std::from_chars(first, last, n);
+  if (ec != std::errc{} || stop != last)
+    return std::nullopt;
+  return n;
+}
+
 // Parses value as a positive integer in [1, INT_MAX]. Reports the problem
-// against opt_name and returns nullopt on failure, rejecting empty input,
-// trailing junk, and non-positive values.
+// against opt_name and returns nullopt on failure.
 //
 // The INT_MAX ceiling is not cosmetic and is not just for parity with the C
-// port's strtol: --precision feeds std::format("{:.{}f}"), which throws
-// std::format_error for a negative width. Without the bound, a value above
-// INT_MAX narrowed to a negative int and aborted the process, and a value
-// above UINT_MAX wrapped to 0 and silently changed the output.
+// port's strtol: a dimension becomes a std::size_t, and a value above INT_MAX
+// narrowed to a negative int before it got one.
 std::optional<int> parse_positive(std::string_view opt_name,
                                   std::string_view value) {
-  unsigned long long n = 0;
-  const char *first = value.data();
-  const char *last = first + value.size();
-  const auto [stop, ec] = std::from_chars(first, last, n);
-  if (ec != std::errc{} || stop != last || n < 1 ||
-      n > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
+  const std::optional<unsigned long long> n = parse_uint(value);
+  if (!n || *n < 1 ||
+      *n > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
     std::cerr << "error: invalid value '" << value << "' for " << opt_name
               << " (expected a positive integer)\n";
     return std::nullopt;
   }
-  return static_cast<int>(n);
+  return static_cast<int>(*n);
+}
+
+// Parses value as a precision: the same integer spelling, but zero is
+// meaningful here -- it rounds to integers -- and the ceiling is
+// kMaxPrecision rather than INT_MAX, since past that every digit is a zero the
+// trimming removes and the rendering alone would want gigabytes.
+std::optional<int> parse_precision(std::string_view value) {
+  const std::optional<unsigned long long> n = parse_uint(value);
+  if (!n || *n > static_cast<unsigned long long>(matrix_ops::kMaxPrecision)) {
+    std::cerr << "error: invalid value '" << value
+              << "' for --precision (expected 0 to "
+              << matrix_ops::kMaxPrecision << ")\n";
+    return std::nullopt;
+  }
+  return static_cast<int>(*n);
 }
 
 // Parses value as a finite double, applying the same rule the matrix values
@@ -175,6 +208,12 @@ matrix_ops::ParseResult load_file(std::string_view path, std::size_t rows,
 // Reports the failure of an operand named by `source` and returns the exit
 // code: an I/O failure is operational, a bad value or shape is the user's.
 int report_operand_error(Error error, std::string_view source) {
+  // Out of memory is about the machine rather than about this operand, so like
+  // the C port it is reported without naming one.
+  if (error == Error::kNoMem) {
+    std::cerr << "matrix_ops: " << matrix_ops::describe(error) << "\n";
+    return kExitFailure;
+  }
   if (error == Error::kRead) {
     std::cerr << "matrix_ops: " << source << ": "
               << std::error_code(errno, std::generic_category()).message()
@@ -186,11 +225,7 @@ int report_operand_error(Error error, std::string_view source) {
   return kExitUsage;
 }
 
-} // namespace
-
-int main(int argc, char *argv[]) {
-  const std::span<char *> args(argv, static_cast<std::size_t>(argc));
-
+int run(std::span<char *> args) {
   std::vector<Matrix> operands;
   std::vector<std::string_view> positionals;
 
@@ -254,11 +289,6 @@ int main(int argc, char *argv[]) {
         name == "--file" || name == "-k" || name == "--scalar" ||
         name == "-p" || name == "--precision";
 
-    if (!takes_value && attached && name.starts_with("--")) {
-      std::cerr << "error: option '" << name << "' does not take a value\n";
-      print_usage_error();
-      return kExitUsage;
-    }
     if (takes_value && !attached) {
       if (i + 1 >= args.size()) {
         std::cerr << "error: option '" << name << "' requires a value\n";
@@ -270,6 +300,17 @@ int main(int argc, char *argv[]) {
 
     const std::string_view arg_ = name;
     if (arg_ == "-h" || arg_ == "--help") {
+      // The only option that takes no value, so it is the only one that can be
+      // given one by mistake. The check lives here rather than beside the
+      // takes_value test above because "--bogus=1" is an *unknown* option, not
+      // a known one misused, and the two get different messages -- deciding
+      // this on the attached value alone described every unknown long option
+      // as one that does not take a value.
+      if (attached && name.starts_with("--")) {
+        std::cerr << "error: option '" << name << "' does not take a value\n";
+        print_usage_error();
+        return kExitUsage;
+      }
       print_help();
       return 0;
     } else if (arg_ == "-r" || arg_ == "--rows") {
@@ -310,18 +351,17 @@ int main(int argc, char *argv[]) {
         return kExitUsage;
       scalar = *k;
     } else if (arg_ == "-p" || arg_ == "--precision") {
-      // Zero decimal places is meaningful -- it rounds to integers -- so this
-      // is the one numeric option that is not required to be positive.
-      if (value == "0") {
-        fmt.precision = 0;
-      } else {
-        const std::optional<int> n = parse_positive("--precision", value);
-        if (!n)
-          return kExitUsage;
-        fmt.precision = *n;
-      }
+      const std::optional<int> n = parse_precision(value);
+      if (!n)
+        return kExitUsage;
+      fmt.precision = *n;
     } else {
-      std::cerr << "error: unknown option '" << name << "'\n";
+      // A long option is named with the whole argument, value and all
+      // ("--bogus=1"), which is what the C port prints from argv when
+      // getopt_long leaves optopt at 0. A short one is named by itself, since
+      // in a cluster like "-zq" only the offending character is unknown.
+      std::cerr << "error: unknown option '"
+                << (name.starts_with("--") ? arg : name) << "'\n";
       print_usage_error();
       return kExitUsage;
     }
@@ -407,4 +447,18 @@ int main(int argc, char *argv[]) {
     return kExitFailure;
   }
   return 0;
+}
+
+} // namespace
+
+int main(int argc, char *argv[]) try {
+  return run(std::span<char *>(argv, static_cast<std::size_t>(argc)));
+} catch (const std::bad_alloc &) {
+  // The backstop for the allocations run() does not funnel through matrix_io
+  // -- a result matrix, the operand vector -- which in the C port are
+  // MATRIX_ERR_NOMEM returns. Running out of memory is an operational failure
+  // with a message and exit 1 in the shared contract; without this it was an
+  // uncaught exception and a SIGABRT, which is neither.
+  std::cerr << "matrix_ops: " << matrix_ops::describe(Error::kNoMem) << "\n";
+  return kExitFailure;
 }

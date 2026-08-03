@@ -13,7 +13,7 @@ Requirements:
 ## Contract
 
 The behavior all ports implement. `c/` and `cpp/` exist so far and are held to
-this byte-for-byte by `check_parity.sh` (56 cases, comparing stdout, stderr, and
+this byte-for-byte by `check_parity.sh` (86 cases, comparing stdout, stderr, and
 exit status). Rust follows.
 
 ### CLI
@@ -34,13 +34,28 @@ a product have different shapes. `add`, `sub`, and `mul` take two operands;
 | `-r, --rows N` | rows for the next operand (optional, `N >= 1`) |
 | `-c, --cols N` | columns for the next operand (optional, `N >= 1`) |
 | `-k, --scalar X` | the multiplier for `scale`; a finite number |
-| `-p, --precision N` | decimal places in the output, `N >= 0` (default `4`) |
+| `-p, --precision N` | decimal places in the output, `0 <= N <= 1100` (default `4`) |
 | `-h, --help` | show help, exit `0` |
 
 The operation is the only positional argument and there must be exactly one;
 option parsing permutes, so it may appear anywhere. `--` ends option parsing,
 and a lone `-` is an ordinary argument. A value may be **attached or separate**:
 `--rows 2`, `--rows=2`, and `-r2` are all equivalent.
+
+The integer options (`--rows`, `--cols`, `--precision`) accept `+?[0-9]+` and
+nothing else. The spelling is pinned here rather than left to each language's
+integer parser, which is what the number set below does for values and for the
+same reason: `strtol` skips leading whitespace and `from_chars` rejects a
+leading `+`, so `--rows +2` and `--rows " 2"` each worked in exactly one port
+until this rule was written down. `+2` is accepted, matching the values
+contract; `" 2"` is not, since as an option value it is a typo rather than a
+request.
+
+`--precision` is bounded above as well. A double's smallest subnormal is about
+`5e-324`, so past ~1074 places every digit printed is a zero the trimming then
+removes, and the ceiling is set at `1100`. It is not only cosmetic: a rendering
+of a large value needs 309 digits before the point plus the precision after it,
+so an uncapped precision lets a single cell demand gigabytes.
 
 #### Known divergence: abbreviated long options
 
@@ -104,6 +119,12 @@ bad number, bad or ragged shape, dimensions with no operand to attach to), `1`
 operational error (a file that cannot be opened or read, a failed write, out of
 memory).
 
+Out of memory is an exit code and a message — `matrix_ops: out of memory` —
+rather than a crash, in every port. For the C++ one that means an allocation
+failure has to be caught rather than left to `std::terminate`, which is what
+`err_oom_file` and `err_oom_stdin` in `check_parity.sh` run both ports under a
+`ulimit -v` to check.
+
 ## Comparison against Eigen and xtensor
 
 Reproduce with `./bench/run.sh`, which builds optimized, checks that all three
@@ -141,7 +162,7 @@ and getting either wrong silently decides the winner:
 |---|---|---|---|---|
 | baseline ISA, 1 thread | 3067 ms | 66.8 ms | 16.6 ms | **4.0x** |
 | `-march=native`, 1 thread | 3077 ms | **21.1 ms** | 16.7 ms | **1.26x** |
-| `-march=native`, 16 threads | ~3200 ms | **2.93 ms** | ~2.1–3.5 ms | **~1.0x** |
+| `-march=native`, 16 threads | ~3200 ms | **2.93 ms** | 2.6–6.1 ms | **~1.0x** (0.9–2.1x run to run) |
 
 So the honest decomposition of the original "OpenBLAS is 4x Eigen":
 
@@ -152,14 +173,22 @@ So the honest decomposition of the original "OpenBLAS is 4x Eigen":
   per-CPU-tuned blocking and packing, versus Eigen's portable C++ templates.
   Real, but far smaller than the flags made it look.
 - **Threading is worth ~7x to each of them, and neither wins it.** With
-  `-fopenmp`, Eigen goes 21.1 → 2.93 ms; OpenBLAS lands in the same 2–3.5 ms
-  band. The apparent 5.7x OpenBLAS lead in the earlier version of this table was
-  entirely "we forgot to give Eigen any threads".
+  `-fopenmp`, Eigen goes 21.1 → 2.93 ms; OpenBLAS lands in the same band, 2.6 to
+  6.1 ms across five runs. That spread is wider than the difference between the
+  two libraries, which is the honest summary of this row — it says they are the
+  same speed and not much more. The apparent 5.7x OpenBLAS lead in the earlier
+  version of this table was entirely "we forgot to give Eigen any threads".
 
 Against our own implementation, Eigen is **146x** at matched ISA and **1100x**
 with threads.
 
 #### Caveat: the threaded numbers are the least trustworthy here
+
+How untrustworthy is measurable. Five runs of the 1024x1024 `mul`, same binary,
+same machine, nothing else changed: xtensor came in at 2.6, 3.6, 4.3, 4.6, and
+6.1 ms, and Eigen's column in that same unbound table — the one you are told to
+ignore — swung from 3.0 to 42.1 ms. The single-threaded tables repeat to within
+a few percent.
 
 Both libraries thread, and their pools do not compose inside one process:
 
@@ -254,8 +283,9 @@ Three findings that matter more than the timings if you are choosing a library:
 ### Would we use them?
 
 **Eigen: yes, easily.** One `bazel_dep`, no build friction, no system
-dependencies, warning-clean out of the box, and 46x on the operation that
-matters. Header-only and hermetic.
+dependencies, warning-clean out of the box, and 146x on the operation that
+matters — 46x if you leave `-march` alone, which is the same 3.2x flag story as
+everywhere else on this page. Header-only and hermetic.
 
 **xtensor: only if you specifically want its NumPy-shaped n-dimensional API.**
 At matched flags and one thread its lead is 1.26x, and with both libraries

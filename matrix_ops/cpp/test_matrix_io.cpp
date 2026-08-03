@@ -315,6 +315,17 @@ TEST(FormatDefault, UsesTheDocumentedPrecision) {
   EXPECT_EQ(matrix_ops::Format{}.precision, matrix_ops::kDefaultPrecision);
 }
 
+TEST(Render, RendersAtTheMaximumPrecision) {
+  // The ceiling the CLI enforces has to be one this can actually render: the
+  // widest possible cell is 309 digits, a point, and kMaxPrecision more. Every
+  // digit past ~1074 is a zero the trimming removes, which is what makes this
+  // a fine place to stop.
+  std::optional<Matrix> m = Matrix::create(1, 1);
+  ASSERT_TRUE(m.has_value());
+  m->values()[0] = 0.5;
+  EXPECT_EQ(written(*m, matrix_ops::kMaxPrecision), "0.5\n");
+}
+
 TEST(Render, HandlesAWidthNoFixedBufferWouldHold) {
   // "%.*f" of a value near DBL_MAX needs 309 digits before the point plus the
   // precision after it. The C port's 512-byte buffer used to fail here and

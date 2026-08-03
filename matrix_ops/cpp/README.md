@@ -3,12 +3,18 @@
 A CLI that adds, subtracts, multiplies, and scales 2D matrices of real numbers,
 written in C++20 with the same semantics as the C port. See the top-level
 `matrix_ops/README.md` for the full contract that both ports share, and
-`../check_parity.sh` for the 56 cases that hold them to it.
+`../check_parity.sh` for the 86 cases that hold them to it.
 
 ## Design
 
 Everything lives in `namespace matrix_ops`, with file-local helpers in an
-unnamed namespace. **No exceptions**: failures are returned as values.
+unnamed namespace. **Failures are returned as values, not thrown** — but the
+allocations underneath are still the standard library's, so `Error::kNoMem`
+exists to carry a `std::bad_alloc` back out as one of those values. It is
+caught where the C port returns `MATRIX_ERR_NOMEM`: in `parse_text`,
+`read_stream`, and `write` (function try-blocks), plus one backstop around
+`main` for the result matrix. Without it, running out of memory left the
+contract's exit-1-with-a-message as a `std::terminate` and a SIGABRT.
 
 The package keeps the C port's two libraries and its seams, with the return
 types adapted to what each operation can actually do wrong:
@@ -53,6 +59,13 @@ reject trailing junk, then reject the result with `std::isfinite`. Testing the
 *result* rather than `errno` is what keeps the underflow case accepted, since
 `strtod` sets `ERANGE` for that too.
 
+`from_chars` **is** still what parses `--rows`, `--cols`, and `--precision`,
+where the values are integers and the two quirks above do not apply the same
+way — but the accepted spelling is written down there too, for the same reason
+in reverse. `strtol` skips leading whitespace and `from_chars` rejects a
+leading `+`, so each port accepted something the other refused (`--rows " 2"`
+in C, `--rows +2` in C++) until both were pinned to `+?[0-9]+`.
+
 This reverses the prediction in `matrix_ops/CLAUDE.md`, which had assumed
 `from_chars` would be the C++ answer. The contract was right that the three
 standard libraries disagree about `nan`/`inf`/signs; it was wrong about which
@@ -83,6 +96,15 @@ error: unknown option '--bogus'
 
 The parity script is what surfaced this; it was the only case of the original
 53 that failed.
+
+Reproducing `getopt_long`'s *classification* of a bad option took a second
+pass. An option written with an attached value is not automatically a known
+option being misused: `--help=x` is, and gets `error: option '--help' does not
+take a value`, but `--bogus=1` is simply unknown and `getopt_long` names the
+whole argument, `=1` included. Testing for the attached value before checking
+the name — which is what this port did first — described every unknown long
+option as one that does not take a value. The check now lives inside the
+`--help` branch, the only option that takes no value.
 
 ## Build & run
 

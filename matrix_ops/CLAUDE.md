@@ -16,7 +16,7 @@ bazel run  //matrix_ops/cpp:matrix_ops -- <add|sub|mul|scale> [operand...]
 bazel test //matrix_ops/c:all
 bazel test //matrix_ops/cpp:all
 
-./matrix_ops/check_parity.sh   # both ports, byte for byte, 56 cases
+./matrix_ops/check_parity.sh   # both ports, byte for byte, 86 cases
 ./matrix_ops/bench/run.sh      # ours vs Eigen vs xtensor
 ```
 
@@ -58,6 +58,28 @@ bazel test //matrix_ops/cpp:all
   `opterr = 0` and uses a leading `:` in the option string so it can report
   unknown options and missing values itself. Both ports print
   `error: unknown option '--x'` and `error: option '--x' requires a value`.
+
+  An attached value does *not* by itself mean a known option was misused:
+  `--help=x` is `error: option '--help' does not take a value`, while `--bogus=1`
+  is `error: unknown option '--bogus=1'` — whole argument, `=1` included, which
+  is what the C port prints from `argv` when `getopt_long` leaves `optopt` at 0.
+  Check the name before the attached value, or every unknown long option is
+  reported as one that does not take a value.
+- **The integer options accept `+?[0-9]+`, written down like the number set.**
+  `strtol` skips leading whitespace and `from_chars` rejects a leading `+`, so
+  `--rows " 2"` worked only in C and `--rows +2` only in C++ until both hand-
+  checked the same shape. `--precision` is additionally capped at
+  `MATRIX_MAX_PRECISION` / `kMaxPrecision` (1100): past ~1074 places every digit
+  is a zero the trimming removes, and uncapped it let one cell demand gigabytes
+  — where C's `snprintf` overflowed the `int` it returns and reported an
+  allocation failure while C++ went ahead and printed 6.3 GB worth.
+- **Out of memory is `matrix_ops: out of memory` and exit 1, not a crash.** The
+  C port returns `MATRIX_ERR_NOMEM`; the C++ one has to catch `std::bad_alloc`
+  to match, which it does in `parse_text`, `read_stream`, and `write`, plus a
+  backstop around `main`. Note `read_stream` cannot see the exception at all
+  when the read buffer is what fails to grow — the stream's sentry catches it
+  and sets `failbit`, indistinguishable from a failed read except by `errno`
+  being `ENOMEM`. `check_parity.sh` runs both ports under `ulimit -v` for this.
 - **Rounding ties go to the even digit** (`0.25` at one decimal is `0.2`).
   `printf` and Rust's formatter both do this;
   `BreaksARoundingTieTowardsTheEvenDigit` in `c/test_matrix_io.c` pins it, and it

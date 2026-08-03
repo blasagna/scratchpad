@@ -56,6 +56,10 @@ check_binaries() {
   return "${missing}"
 }
 
+# Address-space ceiling (KB) applied to the next run_case, or empty for none.
+# Set by run_case_limited.
+LIMIT_KB=""
+
 # run_case <name> <stdin-file|-> <args...>
 #
 # Runs every port with @FIXTURE@ in the arguments replaced by the fixture dir.
@@ -74,12 +78,35 @@ run_case() {
     done
 
     status=0
-    "${bin}" "${args[@]}" \
-      >"${WORK}/${name}.${port}.out" \
-      2>"${WORK}/${name}.${port}.err" \
-      <"${stdin_file}" || status=$?
+    if [[ -n "${LIMIT_KB}" ]]; then
+      bash -c 'ulimit -v "$1"; shift; exec "$@"' _ "${LIMIT_KB}" \
+        "${bin}" "${args[@]}" \
+        >"${WORK}/${name}.${port}.out" \
+        2>"${WORK}/${name}.${port}.err" \
+        <"${stdin_file}" || status=$?
+    else
+      "${bin}" "${args[@]}" \
+        >"${WORK}/${name}.${port}.out" \
+        2>"${WORK}/${name}.${port}.err" \
+        <"${stdin_file}" || status=$?
+    fi
     echo "${status}" >"${WORK}/${name}.${port}.status"
   done < <(binaries)
+}
+
+# run_case_limited <address-space-kb> <name> <stdin-file|-> <args...>
+#
+# run_case with every port run under `ulimit -v`, for the out-of-memory paths.
+# The limit wants a wide margin rather than a tight one: the point is that no
+# port can possibly succeed, not that they fail at the same allocation. A limit
+# landing between the two ports' footprints would be a real divergence, but a
+# noisy way to find one.
+run_case_limited() {
+  local limit="$1"
+  shift
+  LIMIT_KB="${limit}"
+  run_case "$@"
+  LIMIT_KB=""
 }
 
 compare() {
@@ -118,6 +145,10 @@ make_fixtures() {
   printf '\n\n  1   2  \n\n  3   4  \n\n' >"${dir}/padded.txt"
   printf ''                    >"${dir}/empty.txt"
   printf '1 abc 3\n'           >"${dir}/badnum.txt"
+
+  # ~24 MB of text, 6M values, i.e. 48 MB once parsed into doubles. Used only
+  # by the out-of-memory cases, which run it under a 40 MB ceiling.
+  awk 'BEGIN { for (i = 0; i < 6000000; i++) printf "1 " }' >"${dir}/huge.txt"
 }
 
 main() {
@@ -220,10 +251,33 @@ main() {
   run_case err_value_on_flag  - add --help=x --values "1"
   run_case err_unknown_clustered - add -zq --values "1" --values "2"
 
-  # --precision feeds a width argument in both ports; an unbounded one used to
-  # abort the C++ port outright and silently wrap at 2^32.
-  run_case err_precision_intmax - scale --scalar 1 --precision 2147483648 --values "1.5"
+  # An unknown long option written with a value is an *unknown* option, not a
+  # known one misused: the C++ port reported "--bogus does not take a value"
+  # because it tested for the attached value before checking the name.
+  run_case err_unknown_long_value - add --bogus=1 --values "1" --values "2"
+  run_case err_unknown_long_empty - add --bogus= --values "1" --values "2"
+  run_case err_unknown_short_value - add -z9 --values "1" --values "2"
+
+  # The integer spelling accepted by --rows/--cols/--precision. Every case
+  # below diverged: C's strtol skipped leading whitespace and accepted '+',
+  # C++'s from_chars accepted neither, and " 3" for --precision even disagreed
+  # on the exit status. The rule is now written down as '+?[0-9]+'.
+  run_case plus_signed_rows   - scale --scalar 1 --rows +2 --values "1 2 3 4"
+  run_case plus_signed_precision - scale --scalar 1 --precision +3 --values "0.125"
+  run_case err_spaced_rows    - scale --scalar 1 --rows " 2" --values "1 2 3 4"
+  run_case err_spaced_precision - scale --scalar 1 --precision " 3" --values "1.5"
+  run_case err_double_signed_rows - scale --scalar 1 --rows ++2 --values "1 2"
+
+  # --precision is bounded at both ends now. Past the cap every digit is a zero
+  # the trimming removes, and INT_MAX asked one cell for 6.3 GB -- which the C
+  # port refused as an int overflow inside snprintf while the C++ port went
+  # ahead and printed it.
+  run_case precision_at_max   - scale --scalar 1 --precision 1100 --values "0.125"
+  run_case err_precision_over_max - scale --scalar 1 --precision 1101 --values "1.5"
+  run_case err_precision_intmax - scale --scalar 1 --precision 2147483647 --values "1.5"
+  run_case err_precision_over_intmax - scale --scalar 1 --precision 2147483648 --values "1.5"
   run_case err_precision_uintmax - scale --scalar 1 --precision 4294967296 --values "1.5"
+  run_case err_precision_negative - scale --scalar 1 --precision -1 --values "1.5"
   run_case err_rows_huge      - scale --scalar 1 --rows 5000000000 --values "1 2 3 4"
   run_case err_cols_huge      - scale --scalar 1 --cols 5000000000 --values "1 2 3 4"
 
@@ -234,6 +288,15 @@ main() {
 
   # Reading a directory: an operational failure (exit 1), not a usage error.
   run_case err_read_directory - scale --scalar 1 --file /tmp
+
+  # Out of memory, which the contract also calls operational (exit 1) with a
+  # message. The C++ port used to let the bad_alloc escape and abort instead,
+  # dying on a signal with a raw "terminate called after throwing" on stderr.
+  # Both the read buffer and the value array are exercised: 48 MB of doubles
+  # cannot fit in a 40 MB address space whichever one asks for it first.
+  run_case_limited 40000 err_oom_file   - scale --scalar 1 --file @FIXTURE@/huge.txt
+  run_case_limited 40000 err_oom_stdin  "${WORK}/fixtures/huge.txt" \
+                                          scale --scalar 1 --file -
 
   compare
 

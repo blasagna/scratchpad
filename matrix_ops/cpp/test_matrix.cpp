@@ -215,10 +215,10 @@ TEST(Scale, OneByOne) {
 /* --- describe --- */
 
 TEST(Describe, NamesEveryError) {
-  const std::array<Error, 9> all{
-      Error::kOk,     Error::kDimMismatch, Error::kBadNumber,
-      Error::kRagged, Error::kEmpty,       Error::kBadShape,
-      Error::kRead,   Error::kWrite,       Error::kOverflow,
+  const std::array<Error, 10> all{
+      Error::kOk,     Error::kNoMem,    Error::kDimMismatch, Error::kBadNumber,
+      Error::kRagged, Error::kEmpty,    Error::kBadShape,    Error::kRead,
+      Error::kWrite,  Error::kOverflow,
   };
   for (const Error error : all) {
     EXPECT_NE(matrix_ops::describe(error), "unknown error")

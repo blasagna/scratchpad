@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
@@ -82,7 +83,8 @@ static void print_help(void) {
   printf("  -k, --scalar X      the multiplier for 'scale'\n");
   printf("  -p, --precision N   decimal places in the output, trailing zeros "
          "trimmed\n");
-  printf("                      (default: %d)\n", MATRIX_DEFAULT_PRECISION);
+  printf("                      (0 to %d, default: %d)\n", MATRIX_MAX_PRECISION,
+         MATRIX_DEFAULT_PRECISION);
   printf("  -h, --help          show this help\n");
   printf("\n");
   printf("Examples:\n");
@@ -99,17 +101,68 @@ static void print_usage_error(void) {
 }
 
 /*
+ * Parses value as an unsigned decimal integer: an optional leading '+', then
+ * digits, and nothing else. Stores it in *out and returns 0, or returns -1
+ * without printing anything, leaving the message to the caller that knows which
+ * range it wanted.
+ *
+ * The shape is checked by hand rather than left to strtol, which also skips
+ * leading whitespace and accepts a '-'. '+3' is accepted because the value
+ * contract accepts it; ' 3' is not, because as an option value it is a typo
+ * rather than a request. The C++ port's parse_uint accepts exactly this set.
+ */
+static int parse_uint(const char *value, unsigned long long *out) {
+  const char *p = value;
+  if (*p == '+')
+    p++;
+  if (*p == '\0')
+    return -1;
+  for (const char *q = p; *q != '\0'; q++) {
+    if (!isdigit((unsigned char)*q))
+      return -1;
+  }
+
+  errno = 0;
+  char *endp;
+  unsigned long long n = strtoull(p, &endp, 10);
+  if (errno == ERANGE)
+    return -1;
+
+  *out = n;
+  return 0;
+}
+
+/*
  * Parses value as a positive integer (>= 1, fitting in int). On success stores
  * it in *out and returns 0; on failure reports the problem against opt_name and
- * returns -1. Rejects empty input, trailing junk, and non-positive values.
+ * returns -1.
  */
 static int parse_positive(const char *opt_name, const char *value, int *out) {
-  char *endp;
-  long n = strtol(value, &endp, 10);
-  if (endp == value || *endp != '\0' || n < 1 || n > INT_MAX) {
+  unsigned long long n;
+  if (parse_uint(value, &n) != 0 || n < 1 || n > (unsigned long long)INT_MAX) {
     fprintf(stderr,
             "error: invalid value '%s' for %s (expected a positive integer)\n",
             value, opt_name);
+    return -1;
+  }
+  *out = (int)n;
+  return 0;
+}
+
+/*
+ * Parses value as a precision: the same integer spelling, but zero is
+ * meaningful here — it rounds to integers — and the ceiling is
+ * MATRIX_MAX_PRECISION rather than INT_MAX, since past that every digit is a
+ * zero the trimming removes and the rendering alone would want gigabytes.
+ */
+static int parse_precision(const char *value, int *out) {
+  unsigned long long n;
+  if (parse_uint(value, &n) != 0 ||
+      n > (unsigned long long)MATRIX_MAX_PRECISION) {
+    fprintf(stderr,
+            "error: invalid value '%s' for --precision (expected 0 to "
+            "%d)\n",
+            value, MATRIX_MAX_PRECISION);
     return -1;
   }
   *out = (int)n;
@@ -268,15 +321,10 @@ int main(int argc, char *argv[]) {
       break;
 
     case 'p':
-      /* Zero decimal places is meaningful — it rounds to integers — so this is
-       * the one numeric option that is not required to be positive. */
-      if (optarg[0] == '0' && optarg[1] == '\0') {
-        fmt.precision = 0;
-      } else if (parse_positive("--precision", optarg, &n) != 0) {
+      if (parse_precision(optarg, &n) != 0)
         status = 2;
-      } else {
+      else
         fmt.precision = n;
-      }
       break;
 
     case 'h':

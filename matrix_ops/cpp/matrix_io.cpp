@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <format>
 #include <istream>
 #include <limits>
+#include <new>
 #include <optional>
 #include <ostream>
 #include <sstream>
@@ -183,8 +185,13 @@ std::string format_element(double value, int precision) {
 
 } // namespace
 
+// A function-try-block on the three entry points that allocate without a bound
+// the caller controls. The C port returns MATRIX_ERR_NOMEM from exactly these
+// places, and the shared contract makes running out of memory an operational
+// failure (exit 1) with a message -- letting a bad_alloc escape instead would
+// abort the process, which is neither of those.
 ParseResult parse_text(std::string_view text, std::size_t want_rows,
-                       std::size_t want_cols) {
+                       std::size_t want_cols) try {
   std::vector<double> values;
   Layout layout;
 
@@ -210,22 +217,36 @@ ParseResult parse_text(std::string_view text, std::size_t want_rows,
   // established that there are exactly rows * cols of them.
   std::ranges::copy(values, m->values().begin());
   return {*std::move(m), Error::kOk};
+} catch (const std::bad_alloc &) {
+  return {{}, Error::kNoMem};
 }
 
 ParseResult read_stream(std::istream &in, std::size_t want_rows,
-                        std::size_t want_cols) {
+                        std::size_t want_cols) try {
   // errno is cleared first so the check below cannot pick up a stale value
   // from an unrelated earlier call.
   errno = 0;
   std::ostringstream buffer;
   buffer << in.rdbuf();
 
-  // badbit alone is not enough. A failed read through rdbuf() -- reading a
-  // directory is the easy way to see it -- surfaces as "no characters were
-  // inserted", which sets the *destination's* failbit and leaves `in` looking
-  // like a clean empty stream. Reporting that as kEmpty would turn an
-  // operational I/O failure (exit 1) into a usage error (exit 2), which is
-  // what the C port, checking ferror(), gets right.
+  // Two different failures land on the same flag here, and errno is the only
+  // thing that tells them apart.
+  //
+  // A failed read through rdbuf() -- reading a directory is the easy way to
+  // see it -- surfaces as "no characters were inserted", which sets the
+  // *destination's* failbit and leaves `in` looking like a clean empty stream.
+  // Reporting that as kEmpty would turn an operational I/O failure (exit 1)
+  // into a usage error (exit 2), which is what the C port, checking ferror(),
+  // gets right.
+  //
+  // Running out of room to grow the buffer sets the very same failbit: the
+  // sentry catches the bad_alloc and, with the stream's default exception
+  // mask, does not rethrow -- so the function try-block below never sees it
+  // and `buffer.bad()` is not set either. What is left is errno, which the
+  // failed allocation set to ENOMEM. Without this the C port's "out of memory"
+  // came back as a read error naming the file.
+  if (buffer.bad() || (buffer.fail() && errno == ENOMEM))
+    return {{}, Error::kNoMem};
   if (in.bad() || (buffer.fail() && errno != 0))
     return {{}, Error::kRead};
 
@@ -238,6 +259,8 @@ ParseResult read_stream(std::istream &in, std::size_t want_rows,
     return {{}, Error::kBadNumber};
 
   return parse_text(text, want_rows, want_cols);
+} catch (const std::bad_alloc &) {
+  return {{}, Error::kNoMem};
 }
 
 std::string render(const Matrix &m, const Format &fmt) {
@@ -265,10 +288,12 @@ std::string render(const Matrix &m, const Format &fmt) {
   return out;
 }
 
-Error write(std::ostream &out, const Matrix &m, const Format &fmt) {
+Error write(std::ostream &out, const Matrix &m, const Format &fmt) try {
   const std::string text = render(m, fmt);
   out.write(text.data(), static_cast<std::streamsize>(text.size()));
   return out ? Error::kOk : Error::kWrite;
+} catch (const std::bad_alloc &) {
+  return Error::kNoMem;
 }
 
 } // namespace matrix_ops

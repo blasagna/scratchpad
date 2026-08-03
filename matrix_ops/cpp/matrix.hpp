@@ -15,6 +15,7 @@ namespace matrix_ops {
 // pair with a message.
 enum class Error {
   kOk,
+  kNoMem,       // an allocation failed
   kDimMismatch, // add/sub shapes differ, or mul inner dims differ
   kBadNumber,   // a token was not a finite number
   kRagged,      // input rows have differing column counts

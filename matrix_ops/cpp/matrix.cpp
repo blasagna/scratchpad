@@ -32,6 +32,8 @@ std::string_view describe(Error error) {
   switch (error) {
   case Error::kOk:
     return "success";
+  case Error::kNoMem:
+    return "out of memory";
   case Error::kDimMismatch:
     return "incompatible matrix dimensions";
   case Error::kBadNumber:
