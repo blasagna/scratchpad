@@ -1,7 +1,6 @@
-#include <charconv>
 #include <fstream>
 #include <iostream>
-#include <optional>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -18,28 +17,24 @@ using text_analyzer::AnalyzerConfig;
 constexpr std::string_view kStdinArg = "-";
 constexpr std::string_view kStdinLabel = "<stdin>";
 
-// Parses an entire string_view as a positive integer. Returns nullopt on any
-// junk, a leading sign, or a value of zero (the config fields must be >= 1).
-std::optional<unsigned int> parse_positive(std::string_view sv) {
-  unsigned int value = 0;
-  const char *end = sv.data() + sv.size();
-  auto [ptr, ec] = std::from_chars(sv.data(), end, value);
-  if (ec != std::errc{} || ptr != end || value == 0)
-    return std::nullopt;
-  return value;
-}
-
-// A CLI11 validator over the spelling above, rather than CLI::PositiveNumber.
-// CLI11's own numeric conversion skips leading whitespace, so --top-n " 5"
-// would be accepted here and rejected by the C port, which hand-checks the same
-// shape parse_positive does. The library owns the grammar; the accepted value
-// set stays ours.
-const CLI::Validator kPositive{[](const std::string &value) {
-                                 return parse_positive(value)
-                                            ? std::string{}
-                                            : "expected a positive integer";
-                               },
-                               "POSITIVE", "positive integer"};
+// The three numeric options are bound to their real type and checked with
+// CLI11's own CLI::Range, so the library owns the grammar as well as the range.
+// CLI::Range is the right shape for this and CLI::PositiveNumber is not: the
+// latter is a Range<double>, so --top-n 2.5 would clear the check and fail
+// afterwards in the conversion, reporting the wrong kind of error.
+//
+// Handing over the grammar widens what this port accepts relative to C, whose
+// strtol reads base 10 and stops at the first junk character, while CLI11 runs
+// strtoull in base 0, strips '_' and '\'' group separators, and trims trailing
+// whitespace. So `--top-n 0x10`, `1_000` and `"5 "` work here and are usage
+// errors there, and `--top-n 010` even means eight here and ten there. It
+// narrows nothing: CLI11 skips leading whitespace and honours a leading '+'
+// just as strtol does, and rejects a leading '-' before ever reaching
+// strtoull. The divergence is deliberate and tabulated in README.md; the golden
+// tests cannot assert it, since each port renders the same committed goldens
+// from the same flags.
+const CLI::Validator kPositive{
+    CLI::Range(1u, std::numeric_limits<unsigned int>::max(), "POSITIVE")};
 
 // Feeds one named input into analyzer, where "-" means stdin. Returns false
 // after reporting the failure against the input's display name.
