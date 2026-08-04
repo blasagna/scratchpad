@@ -89,23 +89,32 @@ script can only assert agreement. Its surface is pinned by
   script no longer compares stderr, and `--help=x` is a live divergence — the C
   port rejects it, CLI11 reads it as a request for help and exits 0.
 
-  **What is still shared is which command lines are accepted.** A spelling one
-  port takes and the other refuses is a real bug, and `run_case_parser_error`
-  is what catches it.
-- **The integer options accept `+?[0-9]+`, written down like the number set.**
-  `strtol` skips leading whitespace and `from_chars` rejects a leading `+`, so
-  `--rows " 2"` worked only in C and `--rows +2` only in C++ until both hand-
-  checked the same shape.
+  **Which command lines are accepted is no longer fully shared either**, since
+  the C++ port now takes CLI11's number grammar as well as its diagnostics — see
+  the next bullet. `run_case_parser_error` still catches a divergence in every
+  spelling outside that grammar, and a divergence there is still a real bug.
+- **The integer options accept `+?[0-9]+` in C and Rust, and whatever CLI11
+  accepts in C++.** This is the one part of the contract the ports do not share,
+  and it is deliberate: `--rows`, `--cols`, `--precision`, and `--scalar` are
+  bound to `int`/`double` and checked with `CLI::Range`, so CLI11 owns the range
+  *and* the grammar. Its grammar is a superset of C's — `strtoull` in base 0,
+  `_` and `'` stripped as digit separators, surrounding whitespace skipped — so
+  `--rows " 2"`, `--rows 0x10` and `--rows 1_000` run here and are usage errors
+  in C, and `--rows 010` means eight rows here and ten there. The table is in
+  [`README.md`](README.md#known-divergence-argument-parsers).
 
-  **This is why `--rows`, `--cols`, `--precision`, and `--scalar` are bound to
-  `std::string` and validated by `parse_positive`/`parse_precision`/`parse_scalar`
-  behind a `CLI::Validator`, rather than to an `int`/`double` with
-  `CLI::PositiveNumber` or `CLI::Range`.** CLI11's own conversion skips leading
-  whitespace and accepts `nan` and `inf`, so the stock validators make
-  `--rows " 2"` and `--scalar inf` *succeed* here while the C port still refuses
-  them — a divergence in stdout, not just in wording, and one the parity script
-  does catch. CLI11 owns the grammar; the accepted value set stays the
-  contract's.
+  **`check_parity.sh` cannot hold this line, so do not expect it to.** The
+  script only asserts that the ports agree; the cases that used to pin the
+  strict spelling (`err_spaced_rows`, `err_spaced_precision`) are gone, and what
+  is left are the spellings both still reject — `++2`, `2.5` for a dimension,
+  `0`, past `INT_MAX`, precision over `1100`.
+
+  **NaN is the exception, and it is checked by hand in `run()`.** No CLI11
+  validator can reject it: `CLI::Range` tests `val < min || val > max` and every
+  comparison against a NaN is false, so a NaN is inside every range there is.
+  Infinities need no such help, being greater than `DBL_MAX`. `err_scalar_nan`
+  is a `run_case` (not a `run_case_parser_error`) because that check makes the
+  C++ port report it itself, at C's exit 2.
 
   `--precision` is additionally capped at
   `MATRIX_MAX_PRECISION` / `kMaxPrecision` (1100): past ~1074 places every digit

@@ -59,12 +59,11 @@ reject trailing junk, then reject the result with `std::isfinite`. Testing the
 *result* rather than `errno` is what keeps the underflow case accepted, since
 `strtod` sets `ERANGE` for that too.
 
-`from_chars` **is** still what parses `--rows`, `--cols`, and `--precision`,
-where the values are integers and the two quirks above do not apply the same
-way — but the accepted spelling is written down there too, for the same reason
-in reverse. `strtol` skips leading whitespace and `from_chars` rejects a
-leading `+`, so each port accepted something the other refused (`--rows " 2"`
-in C, `--rows +2` in C++) until both were pinned to `+?[0-9]+`.
+All of this is about the numbers *inside* a matrix, which `matrix_io.cpp` still
+parses itself. It no longer says anything about the numbers on the command
+line: `--rows`, `--cols`, `--precision`, and `--scalar` are CLI11's to convert
+now, and `from_chars` is not involved in this port at all — see
+[The CLI](#the-cli).
 
 This reverses the prediction in `matrix_ops/CLAUDE.md`, which had assumed
 `from_chars` would be the C++ answer. The contract was right that the three
@@ -88,15 +87,27 @@ in the order they were typed, one entry per occurrence; walking it with a cursor
 into each option's `results()` replays the command line exactly, and the
 existing pending-rows/pending-cols state machine goes on working unchanged.
 
-**The option values are validated by hand, not by `CLI::PositiveNumber` or
-`CLI::Range`.** `--rows`, `--cols`, `--precision`, and `--scalar` are bound to
-`std::string` and checked with `parse_positive`, `parse_precision`, and
-`parse_scalar` behind a `CLI::Validator`. The stock validators run after CLI11's
-own conversion, which skips leading whitespace and accepts `nan` and `inf`, so
-with them `--rows " 2"` and `--scalar inf` *succeed* here while the C port still
-refuses both — a divergence in the result, not just in the message, and one the
-parity script catches. The library owns the grammar; the accepted value set
-stays the contract's.
+**The option values are `CLI::Range`'s, grammar included.** `--rows`, `--cols`,
+`--precision`, and `--scalar` are bound to `int`/`double` and checked with a
+range; nothing here re-parses them. `parse_order()` then indexes the *converted*
+vectors — `allow_extra_args(false)` gives each occurrence exactly one value, so
+the Nth element of `rows_vals` is the Nth `--rows` typed.
+
+`CLI::Range` is the right shape for this and `CLI::PositiveNumber` is not:
+`PositiveNumber` is a `Range<double>`, so `--rows 2.5` would clear the check and
+fail later in conversion, whereas a `Range<int>` is type-matched to the binding
+and folds the `>= 1` and `<= INT_MAX` bounds into one test.
+
+The cost is that CLI11's number grammar is wider than the contract's — base 0,
+digit separators, surrounding whitespace — so this port accepts command lines
+the C one refuses, which is
+[tabulated in the area README](../README.md#known-divergence-argument-parsers)
+because `check_parity.sh` can only assert agreement. **The one contract rule no
+range can express is the exclusion of NaN**: `CLI::Range` tests
+`val < min || val > max`, and both comparisons are false for a NaN, so a NaN
+sits inside every range including `PositiveNumber`. `run()` rejects a NaN
+`--scalar` by hand for that reason. Infinities need no help, being greater than
+`DBL_MAX`.
 
 **Diagnostics are CLI11's, and are no longer compared to the C port's.** That is
 a deliberate loss. The two ports used to agree byte for byte on stderr, and

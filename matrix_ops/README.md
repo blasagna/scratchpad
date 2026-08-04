@@ -15,8 +15,9 @@ Requirements:
 The behavior all ports implement. `c/` and `cpp/` are held to this by
 `check_parity.sh` (85 cases, comparing stdout and exit status). Every port
 delegates argument parsing to its ecosystem's library — `getopt_long` in C,
-CLI11 in C++, `clap` in Rust — so `--help` text, diagnostics, and the exit code
-for a bad argument are each parser's own and are not compared; see
+CLI11 in C++, `clap` in Rust — so `--help` text, diagnostics, the exit code for
+a bad argument, and (in the C++ port) the exact set of spellings an option value
+may take are each parser's own and are not compared; see
 [Known divergence: argument parsers](#known-divergence-argument-parsers).
 `rust/` implements the same operations, shape rules, and output format but is
 deliberately outside the script — see
@@ -76,17 +77,39 @@ back. So the following differ by design and nothing compares them:
 | `--help=x` | `error: option '--help' does not take a value`, exit 2 | read as a request for help, exit 0 |
 | abbreviated long options (`--row`) | accepted when unambiguous | rejected |
 
-**What does not differ is which command lines are accepted**, `--help=x` and
-abbreviations aside. Every option value is validated against the contract below
-by hand in both ports rather than by the parser: CLI11's own numeric conversion
-skips leading whitespace and accepts `nan` and `inf`, so `--rows " 2"` and
-`--scalar inf` would otherwise succeed in C++ and stay usage errors in C. The
-parity script's `run_case_parser_error` cases assert exactly that — both ports
-reject the same input — without comparing how they say so.
+**The option values differ too**, and this is the one place where the two ports
+disagree about a command line rather than about how to describe one. C checks
+each option value by hand against the contract below; C++ binds the option to
+its real type and hands both the grammar and the range to `CLI::Range`, so it
+accepts whatever `CLI::detail::lexical_cast` accepts. That is a superset:
+integers go through `strtoull`/`strtoll` in **base 0**, with `_` and `'`
+stripped as digit-group separators and surrounding whitespace skipped, and
+floats through `strtold`, which skips trailing whitespace as well.
+
+| `--rows`, `--cols`, `--precision` | C | C++ |
+|---|---|---|
+| `" 2"`, `"2 "` | usage error | `2` |
+| `0x10` | usage error | `16` |
+| `0b101`, `0o17` | usage error | `5`, `15` |
+| `1_000`, `1'000` | usage error | `1000` |
+| `010` | `10` | **`8`** |
+
+| `--scalar` | C | C++ |
+|---|---|---|
+| `"2.5 "` | usage error | `2.5` |
+| `2_5` | usage error | `25` |
+
+`--rows 010` is the only entry where both ports succeed and print *different
+matrices*; everywhere else C refuses a command line C++ runs. What still agrees
+is the rest of the contract: `+2` and `+3` are accepted by both, and `++2`,
+`2.5` for a dimension, `0`, a value past `INT_MAX`, a precision over `1100`,
+`abc`, `inf`, `1e400` and `nan` are refused by both. NaN is refused by hand —
+`CLI::Range` tests `val < min || val > max`, and both comparisons are false for
+a NaN, so no CLI11 validator can exclude it.
 
 `check_parity.sh` only ever asserts that the ports *agree*, so it cannot pin a
-difference; the two rows above where they genuinely disagree live here instead.
-Same treatment `simple_logger/README.md` gives its own.
+difference; every row above lives here instead. Same treatment
+`simple_logger/README.md` gives its own.
 
 #### Known divergence: the Rust port
 

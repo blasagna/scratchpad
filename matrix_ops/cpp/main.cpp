@@ -1,10 +1,8 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
-#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -62,91 +60,29 @@ void print_usage_hint() {
   std::cerr << "Run with --help for more information.\n";
 }
 
-// Parses value as an unsigned decimal integer, accepting an optional leading
-// '+' and then digits, and nothing else.
+// The numeric options are bound to their real types and checked with CLI11's
+// own CLI::Range, so both the grammar and the range are the library's. That
+// makes this port accept spellings the C one refuses -- CLI11 converts integers
+// with strtoull in base 0, strips '_' and '\'' group separators, and skips
+// surrounding whitespace -- so `--rows 0x10`, `--rows 1_000` and `--rows " 2"`
+// work here and are usage errors in C, and `--rows 010` even means eight rows
+// here and ten there. The float side moves much less, since C's strtod already
+// skipped leading whitespace: only a trailing space and the separators are new.
+// The divergence is deliberate and tabulated in README.md; check_parity.sh
+// cannot assert it, since it only ever asserts that the ports agree.
 //
-// The spelling is written down rather than inherited, the same way the value
-// contract's number set is. '+3' is accepted because the contract accepts it
-// for matrix values; leading whitespace is not, even though the C port's
-// strtol would have skipped it, because ' 3' as an option value is a typo
-// rather than a request. The C port checks the identical shape by hand.
-std::optional<unsigned long long> parse_uint(std::string_view value) {
-  std::string_view digits = value;
-  if (digits.starts_with('+'))
-    digits.remove_prefix(1);
+// The one contract rule no built-in can express is the exclusion of NaN:
+// CLI::Range tests `val < min || val > max`, and both comparisons are false for
+// a NaN, so it passes every range there is. Infinities are still caught, being
+// greater than DBL_MAX. run() rejects a NaN --scalar by hand for that reason.
+const CLI::Validator kPositive{
+    CLI::Range(1, std::numeric_limits<int>::max(), "POSITIVE")};
 
-  unsigned long long n = 0;
-  const char *first = digits.data();
-  const char *last = first + digits.size();
-  const auto [stop, ec] = std::from_chars(first, last, n);
-  if (ec != std::errc{} || stop != last)
-    return std::nullopt;
-  return n;
-}
+const CLI::Validator kPrecision{CLI::Range(0, matrix_ops::kMaxPrecision)};
 
-// Parses value as a positive integer in [1, INT_MAX], or nullopt.
-//
-// The INT_MAX ceiling is not cosmetic and is not just for parity with the C
-// port's strtol: a dimension becomes a std::size_t, and a value above INT_MAX
-// narrowed to a negative int before it got one.
-std::optional<int> parse_positive(std::string_view value) {
-  const std::optional<unsigned long long> n = parse_uint(value);
-  if (!n || *n < 1 ||
-      *n > static_cast<unsigned long long>(std::numeric_limits<int>::max()))
-    return std::nullopt;
-  return static_cast<int>(*n);
-}
-
-// Parses value as a precision: the same integer spelling, but zero is
-// meaningful here -- it rounds to integers -- and the ceiling is
-// kMaxPrecision rather than INT_MAX, since past that every digit is a zero the
-// trimming removes and the rendering alone would want gigabytes.
-std::optional<int> parse_precision(std::string_view value) {
-  const std::optional<unsigned long long> n = parse_uint(value);
-  if (!n || *n > static_cast<unsigned long long>(matrix_ops::kMaxPrecision))
-    return std::nullopt;
-  return static_cast<int>(*n);
-}
-
-// Parses value as a finite double, applying the same rule the matrix values
-// themselves are held to: no trailing junk, and no nan or infinity. strtod
-// rather than from_chars for the reasons given in matrix_io.cpp.
-std::optional<double> parse_scalar(std::string_view value) {
-  const std::string text(value);
-  char *end = nullptr;
-  const double n = std::strtod(text.c_str(), &end);
-  if (end == text.c_str() || *end != '\0' || !std::isfinite(n))
-    return std::nullopt;
-  return n;
-}
-
-// The three validators above, as CLI11 checks. They are written here rather
-// than reached for as CLI::PositiveNumber / CLI::Range / a numeric bind because
-// CLI11's own conversion skips leading whitespace and accepts nan and inf: with
-// the stock validators `--rows " 2"` and `--scalar inf` would succeed here and
-// remain usage errors in the C port, which hand-checks these same shapes. CLI11
-// owns the grammar; the accepted value set stays the contract's.
-const CLI::Validator kPositive{[](const std::string &value) -> std::string {
-                                 return parse_positive(value)
-                                            ? std::string{}
-                                            : "expected a positive integer";
-                               },
-                               "N", "positive integer"};
-
-const CLI::Validator kPrecision{
-    [](const std::string &value) -> std::string {
-      return parse_precision(value)
-                 ? std::string{}
-                 : "expected 0 to " + std::to_string(matrix_ops::kMaxPrecision);
-    },
-    "N", "precision"};
-
-const CLI::Validator kFinite{[](const std::string &value) -> std::string {
-                               return parse_scalar(value)
-                                          ? std::string{}
-                                          : "expected a finite number";
-                             },
-                             "X", "finite number"};
+const CLI::Validator kFinite{CLI::Range(std::numeric_limits<double>::lowest(),
+                                        std::numeric_limits<double>::max(),
+                                        "FINITE")};
 
 const OpSpec *find_operation(std::string_view name) {
   const auto it = std::ranges::find(kOperations, name, &OpSpec::name);
@@ -220,12 +156,12 @@ int run(int argc, char *argv[]) {
                "matrix_ops"};
 
   std::vector<std::string> positionals;
-  std::vector<std::string> rows_raw;
-  std::vector<std::string> cols_raw;
+  std::vector<int> rows_vals;
+  std::vector<int> cols_vals;
   std::vector<std::string> values_raw;
   std::vector<std::string> files_raw;
-  std::string scalar_raw;
-  std::string precision_raw;
+  double scalar_val = 0.0;
+  int precision_val = matrix_ops::kDefaultPrecision;
 
   app.add_option("operation", positionals, "add, sub, mul, or scale");
   const CLI::Option *values_opt =
@@ -239,22 +175,34 @@ int run(int argc, char *argv[]) {
                          "' for stdin)")
           ->type_name("PATH")
           ->allow_extra_args(false);
+  // option_text() overrides the whole "INT:POSITIVE" / "INT:INT in [0 - 1100]"
+  // rendering a bound type plus a range would otherwise put in --help, which
+  // wraps and reads worse than the placeholder the C port's help uses.
   const CLI::Option *rows_opt =
-      app.add_option("-r,--rows", rows_raw, "rows for the next operand")
+      app.add_option("-r,--rows", rows_vals, "rows for the next operand")
           ->check(kPositive)
+          ->option_text("N ...")
           ->allow_extra_args(false);
   const CLI::Option *cols_opt =
-      app.add_option("-c,--cols", cols_raw, "columns for the next operand")
+      app.add_option("-c,--cols", cols_vals, "columns for the next operand")
           ->check(kPositive)
+          ->option_text("N ...")
           ->allow_extra_args(false);
-  app.add_option("-k,--scalar", scalar_raw, "the multiplier for 'scale'")
-      ->check(kFinite)
-      ->take_last();
-  app.add_option("-p,--precision", precision_raw,
-                 "decimal places in the output, trailing zeros trimmed")
+  const CLI::Option *scalar_opt =
+      app.add_option("-k,--scalar", scalar_val, "the multiplier for 'scale'")
+          ->check(kFinite)
+          ->option_text("X")
+          ->take_last();
+  // option_text() replaces the default marker along with the type, so the
+  // bound and the default are spelled out in the description instead -- which
+  // is where the C port's help puts them anyway.
+  app.add_option("-p,--precision", precision_val,
+                 "decimal places in the output, trailing zeros trimmed (0 to " +
+                     std::to_string(matrix_ops::kMaxPrecision) + ", default: " +
+                     std::to_string(matrix_ops::kDefaultPrecision) + ")")
       ->check(kPrecision)
-      ->take_last()
-      ->default_str(std::to_string(matrix_ops::kDefaultPrecision));
+      ->option_text("N")
+      ->take_last();
 
   app.footer("Examples:\n"
              "  matrix_ops add --values \"1 2 3\" --values \"4 5 6\"\n"
@@ -282,12 +230,19 @@ int run(int argc, char *argv[]) {
   std::size_t pending_cols = matrix_ops::kDimUnspecified;
 
   matrix_ops::Format fmt;
-  std::optional<double> scalar;
+  fmt.precision = precision_val;
 
-  if (!scalar_raw.empty())
-    scalar = parse_scalar(scalar_raw);
-  if (!precision_raw.empty())
-    fmt.precision = parse_precision(precision_raw).value();
+  std::optional<double> scalar;
+  if (scalar_opt->count() > 0) {
+    // The contract's one exclusion CLI::Range cannot state, checked by hand:
+    // every comparison against a NaN is false, so a NaN is inside every range.
+    if (std::isnan(scalar_val)) {
+      std::cerr << "error: invalid value for --scalar (expected a finite "
+                   "number)\n";
+      return kExitUsage;
+    }
+    scalar = scalar_val;
+  }
 
   // CLI11 hands back one result vector per option, which loses the order the
   // four operand options were interleaved in -- and that order is the contract:
@@ -305,14 +260,17 @@ int run(int argc, char *argv[]) {
 
     // at() rather than []: the index is only in range because
     // allow_extra_args(false) makes each occurrence carry exactly one value,
-    // and that is CLI11's invariant to keep, not ours.
-    const std::string &value = opt->results().at(cursor[opt]++);
+    // and that is CLI11's invariant to keep, not ours. It is also what pairs
+    // the dimensions with their occurrences -- one value per occurrence means
+    // the Nth element of rows_vals is the Nth --rows on the command line.
+    const std::size_t at = cursor[opt]++;
 
     if (opt == rows_opt) {
-      pending_rows = static_cast<std::size_t>(parse_positive(value).value());
+      pending_rows = static_cast<std::size_t>(rows_vals.at(at));
     } else if (opt == cols_opt) {
-      pending_cols = static_cast<std::size_t>(parse_positive(value).value());
+      pending_cols = static_cast<std::size_t>(cols_vals.at(at));
     } else {
+      const std::string &value = opt->results().at(at);
       if (operands.size() == kMaxOperands) {
         std::cerr << "error: at most " << kMaxOperands
                   << " matrices may be given\n";
