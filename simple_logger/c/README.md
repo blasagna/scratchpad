@@ -54,6 +54,6 @@ absolute logfile path (`"$PWD/app.txt"`) or run `bazel-bin/simple_logger/c/simpl
 directly.
 
 Success is silent. On failure the program writes a message to stderr and exits `2`
-for a usage error (missing or empty logfile, unknown option, bad `--level`, bad
-escape, malformed `SIMPLE_LOGGER_FAKE_TIME`) or `1` for an operational one (open,
-write, close, or stdin read).
+for a usage error (missing or empty logfile, unknown option, bad `--level`,
+malformed `SIMPLE_LOGGER_FAKE_TIME`) or `1` for an operational one (open, write,
+close, or stdin read).

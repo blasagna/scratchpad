@@ -226,7 +226,7 @@ main() {
   # An option after the positional must still parse as an option.
   run_case permuted_options - - @LOG@ first --level error second
 
-  # --- formatting options ---
+  # --- field options ---
   # Attached values, which used to be a three-way divergence: the hand-rolled
   # C++ loop matched option tokens exactly and rejected them. CLI11 accepts them
   # the way getopt_long and clap always did, so they are a shared behavior now
@@ -234,9 +234,6 @@ main() {
   run_case attached_level - - --level=error @LOG@ x
   run_case attached_short_level - - -lerror @LOG@ x
 
-  run_case custom_delims - - -d ' | ' -s '\n\n' @LOG@ hi
-  run_case tab_delimiter - - -d '\t' @LOG@ hi
-  run_case escaped_backslash - - -d '\\' @LOG@ hi
   run_case no_timestamp - - --no-timestamp @LOG@ hi
   run_case no_level - - --no-level @LOG@ hi
   run_case no_fields - - --no-timestamp --no-level @LOG@ hi
@@ -266,11 +263,13 @@ main() {
 
   # --- failures: all ports must agree on the exit status ---
   run_case_parser_error bad_level - - --level warn @LOG@ x
-  run_case_parser_error bad_escape - - -s '\q' @LOG@ x
-  run_case_parser_error trailing_backslash - - -d '\' @LOG@ x
   run_case missing_logfile - -
   run_case empty_logfile - - "" x
   run_case_parser_error unknown_option - - --nope @LOG@ x
+  # -d and -s used to set the delimiter and separator. They are gone from all
+  # three ports, and this is what keeps them gone in all three at once.
+  run_case_parser_error removed_delimiter_option - - -d ' | ' @LOG@ x
+  run_case_parser_error removed_separator_option - - --separator '\n\n' @LOG@ x
   run_case bad_fake_time nope - @LOG@ x
 
   # A directory can never be appended to, in any port.

@@ -1,9 +1,9 @@
 //! Library for appending timestamped, level-tagged messages to a log file.
 //!
 //! Semantics match the C and C++ ports: an entry is
-//! `[<timestamp>]<delim>[<LEVEL>]<delim><message><separator>`, the timestamp is
-//! UTC ISO 8601 read once per run, and the separator follows every entry
-//! including the last so the next run appends onto a fresh line.
+//! `[<timestamp>] [<LEVEL>] <message>\n`, the timestamp is UTC ISO 8601 read
+//! once per run, and the newline follows every entry including the last so the
+//! next run appends onto a fresh line.
 //!
 //! Note: the timestamp comes from `jiff::civil::DateTime`, which renders the
 //! same `YYYY-MM-DDTHH:MM:SS` the other two ports build by hand from `gmtime_r`.
@@ -18,16 +18,10 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Text placed between an entry's fields.
-pub const DEFAULT_DELIMITER: &str = " ";
-/// Text placed after every entry.
-pub const DEFAULT_SEPARATOR: &str = "\n";
-/// The default separator as the user would type it on a command line.
-///
-/// Routing this through the same unescaper as a user-supplied value is what
-/// makes `--help` show `[default: \n]` instead of breaking its own layout with a
-/// real newline.
-pub const DEFAULT_SEPARATOR_ESCAPED: &str = "\\n";
+// The fixed entry layout: fields are separated by a space and every entry ends
+// with a newline. Not options — see `Format`.
+const DELIMITER: &str = " ";
+const SEPARATOR: &str = "\n";
 /// Level assumed when `--level` is not given.
 pub const DEFAULT_LEVEL: Level = Level::Info;
 /// Environment variable holding fake epoch seconds for tests.
@@ -73,12 +67,13 @@ impl fmt::Display for Level {
 
 /// How an entry is laid out.
 ///
-/// Omitting a field with `show_timestamp` or `show_level` drops its trailing
-/// delimiter too.
+/// An entry is written as `[<timestamp>] [<LEVEL>] <message>\n`, with omitting a
+/// field through `show_timestamp` or `show_level` dropping its trailing space
+/// too. The space and the newline are fixed: making them options bought nothing
+/// that a pipe through `sed` could not do, and cost every port an unescaper to
+/// spell them on a command line.
 #[derive(Debug, Clone)]
 pub struct Format {
-    pub delimiter: String,
-    pub separator: String,
     pub level: Level,
     pub show_timestamp: bool,
     pub show_level: bool,
@@ -87,8 +82,6 @@ pub struct Format {
 impl Default for Format {
     fn default() -> Self {
         Format {
-            delimiter: DEFAULT_DELIMITER.to_string(),
-            separator: DEFAULT_SEPARATOR.to_string(),
             level: DEFAULT_LEVEL,
             show_timestamp: true,
             show_level: true,
@@ -137,24 +130,6 @@ pub enum LineError {
     Read(io::Error),
     Write(io::Error),
 }
-
-/// An unrecognized escape in a delimiter or separator.
-#[derive(Debug, PartialEq, Eq)]
-pub struct UnescapeError {
-    /// The character after the backslash, or `None` for a trailing lone one.
-    pub escape: Option<char>,
-}
-
-impl fmt::Display for UnescapeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.escape {
-            Some(c) => write!(f, "unknown escape '\\{c}'"),
-            None => f.write_str("trailing lone backslash"),
-        }
-    }
-}
-
-impl std::error::Error for UnescapeError {}
 
 /// A [`FAKE_TIME_VAR`] value that is not epoch seconds.
 #[derive(Debug, PartialEq, Eq)]
@@ -205,34 +180,6 @@ pub fn format_timestamp(epoch_seconds: i64) -> Option<String> {
         return None;
     }
     Some(format!("{datetime}Z"))
-}
-
-/// Expands backslash escapes in a delimiter or separator.
-///
-/// A shell cannot portably hand a program a real newline, so `\n` typed on the
-/// command line has to mean one. Exactly four escapes are recognized: `\n`,
-/// `\t`, `\r`, and `\\`. Any other escape, including a trailing lone backslash,
-/// is an error rather than a pass-through, so the accepted set cannot drift
-/// between ports.
-pub fn unescape(text: &str) -> Result<String, UnescapeError> {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('\\') => out.push('\\'),
-            other => return Err(UnescapeError { escape: other }),
-        }
-    }
-
-    Ok(out)
 }
 
 /// Picks the timestamp for a run.
@@ -291,16 +238,16 @@ pub fn format_entry(fmt: &Format, timestamp: &str, message: &[u8]) -> Vec<u8> {
         entry.push(b'[');
         entry.extend_from_slice(timestamp.as_bytes());
         entry.push(b']');
-        entry.extend_from_slice(fmt.delimiter.as_bytes());
+        entry.extend_from_slice(DELIMITER.as_bytes());
     }
     if fmt.show_level {
         entry.push(b'[');
         entry.extend_from_slice(fmt.level.label().as_bytes());
         entry.push(b']');
-        entry.extend_from_slice(fmt.delimiter.as_bytes());
+        entry.extend_from_slice(DELIMITER.as_bytes());
     }
     entry.extend_from_slice(message);
-    entry.extend_from_slice(fmt.separator.as_bytes());
+    entry.extend_from_slice(SEPARATOR.as_bytes());
     entry
 }
 
@@ -545,34 +492,6 @@ mod tests {
         assert_eq!(Level::Warning.to_string(), "warning");
     }
 
-    // --- unescape ---
-
-    #[test]
-    fn unescape_passes_plain_text() {
-        assert_eq!(unescape(" | ").unwrap(), " | ");
-    }
-
-    #[test]
-    fn unescape_translates_the_four_supported_escapes() {
-        assert_eq!(unescape("\\n\\t\\r").unwrap(), "\n\t\r");
-        assert_eq!(unescape("a\\\\b").unwrap(), "a\\b");
-    }
-
-    #[test]
-    fn unescape_rejects_an_unknown_escape() {
-        assert_eq!(unescape("\\q"), Err(UnescapeError { escape: Some('q') }));
-    }
-
-    #[test]
-    fn unescape_rejects_a_trailing_backslash() {
-        assert_eq!(unescape("ab\\"), Err(UnescapeError { escape: None }));
-    }
-
-    #[test]
-    fn unescape_handles_an_empty_string() {
-        assert_eq!(unescape("").unwrap(), "");
-    }
-
     // --- resolve_clock ---
 
     #[test]
@@ -633,24 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn honors_a_custom_delimiter() {
-        let fmt = Format {
-            delimiter: " | ".to_string(),
-            ..Format::default()
-        };
-        assert_eq!(entry(&fmt, "hello"), "[TS] | [INFO] | hello\n");
-    }
-
-    #[test]
-    fn honors_a_custom_separator() {
-        let fmt = Format {
-            separator: "\n\n".to_string(),
-            ..Format::default()
-        };
-        assert_eq!(entry(&fmt, "hello"), "[TS] [INFO] hello\n\n");
-    }
-
-    #[test]
     fn omits_the_timestamp_field() {
         let fmt = Format {
             show_timestamp: false,
@@ -706,6 +607,8 @@ mod tests {
 
     // --- write_messages ---
 
+    /// The trailing newline after the last entry is deliberate: it is what makes
+    /// the next run start on a fresh line.
     #[test]
     fn writes_one_entry_per_message() {
         let mut out: Vec<u8> = Vec::new();
@@ -732,20 +635,6 @@ mod tests {
         let none: [&str; 0] = [];
         write_messages(&mut out, &Format::default(), "TS", &none).unwrap();
         assert!(out.is_empty());
-    }
-
-    #[test]
-    fn always_ends_with_the_separator() {
-        let fmt = Format {
-            separator: "|".to_string(),
-            ..Format::default()
-        };
-        let mut out: Vec<u8> = Vec::new();
-        write_messages(&mut out, &fmt, "TS", &["a", "b"]).unwrap();
-        assert_eq!(
-            String::from_utf8(out).unwrap(),
-            "[TS] [INFO] a|[TS] [INFO] b|"
-        );
     }
 
     // --- write_lines ---

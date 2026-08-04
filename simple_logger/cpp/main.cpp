@@ -15,41 +15,25 @@
 
 namespace {
 
-// The default separator as the user would type it, for the help text.
-constexpr std::string_view kDefaultSeparatorEscaped = "\\n";
-
 // Exit codes for what this program reports itself: 2 is the user's mistake, 1
 // is an operation that failed. Argument errors come from CLI11 and carry its
 // codes instead.
 constexpr int kExitUsage = 2;
 constexpr int kExitFailure = 1;
 
-// Expands a delimiter or separator in place. The accepted escape set stays
-// logger::unescape's -- exactly \n, \t, \r, and \\ -- rather than
-// CLI::EscapedString's, which also takes \xNN, \uNNNN, and octal and would
-// drift away from the C and Rust ports.
-const CLI::Validator kUnescape{
-    [](std::string &value) -> std::string {
-      const std::optional<std::string> text = logger::unescape(value);
-      if (!text)
-        return "only \\n, \\t, \\r, and \\\\ are recognized";
-      value = *text;
-      return {};
-    },
-    "STR", "escape"};
-
-// The four level spellings, checked through logger::parse_level so the accepted
-// set has one definition. CLI::CheckedTransformer would be the obvious fit and
-// is wrong here: mapping onto an enum, it also accepts the underlying numbers,
-// so `--level 3` would mean "error" in this port and be a usage error in the
-// other two.
-const CLI::Validator kLevel{
-    [](const std::string &value) -> std::string {
-      return logger::parse_level(value)
-                 ? std::string{}
-                 : "expected debug, info, warning, or error";
-    },
-    "LEVEL", "level"};
+// The level spellings, handed to CLI11 as the library's own IsMember check
+// rather than validated by hand. This is the one constrained option here whose
+// grammar CLI11 can own outright: the option is bound to a std::string, so
+// nothing converts it, and IsMember compares the bytes as typed -- no case
+// folding, no trimming, exactly the C port's strcmp against the same four
+// names. CLI::CheckedTransformer, the obvious fit for mapping names onto an
+// enum, is what this cannot be: it also accepts the enum's underlying numbers,
+// so `--level 3` would mean "error" here and be a usage error in the other two
+// ports.
+CLI::Validator level_names() {
+  return CLI::IsMember(std::vector<std::string>(logger::kLevelNames.begin(),
+                                                logger::kLevelNames.end()));
+}
 
 // Reports the failing stage against the log file, or against stdin for a read
 // error, in the same shape as the C port.
@@ -77,7 +61,7 @@ int main(int argc, char *argv[]) {
       "kept.\n"
       "\n"
       "Each entry is written as:\n"
-      "  [<timestamp>]<delim>[<LEVEL>]<delim><message><separator>\n"
+      "  [<timestamp>] [<LEVEL>] <message>\n"
       "\n"
       "The timestamp is UTC ISO 8601 (e.g. [2026-07-30T18:22:05Z]) and is "
       "read\n"
@@ -88,25 +72,17 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> positionals;
   std::string level_name{"info"};
 
-  app.add_option("-l,--level", level_name, "debug, info, warning, or error")
-      ->check(kLevel)
+  app.add_option("-l,--level", level_name,
+                 "severity tag written with each entry")
+      ->check(level_names())
       ->capture_default_str();
-  app.add_option("-d,--delimiter", fmt.delimiter, "text between fields")
-      ->transform(kUnescape)
-      ->default_str(std::string(logger::kDefaultDelimiter));
-  app.add_option("-s,--separator", fmt.separator, "text after each entry")
-      ->transform(kUnescape)
-      ->default_str(std::string(kDefaultSeparatorEscaped));
   app.add_flag("!--no-timestamp", fmt.show_timestamp,
                "omit the [timestamp] field");
   app.add_flag("!--no-level", fmt.show_level, "omit the [LEVEL] field");
   app.add_option("logfile", positionals,
                  "log file to append to, then the messages to write");
 
-  app.footer("STR values accept the escapes \\n, \\t, \\r, and \\\\; any other "
-             "backslash\n"
-             "escape is an error. Use -- before a message that begins with "
-             "'-'.\n"
+  app.footer("Use -- before a message that begins with '-'.\n"
              "\n"
              "Environment:\n"
              "  " +
@@ -127,7 +103,7 @@ int main(int argc, char *argv[]) {
     return app.exit(e);
   }
 
-  // kLevel already rejected anything else, so this cannot fail.
+  // IsMember already rejected anything else, so this cannot fail.
   fmt.level = logger::parse_level(level_name).value();
 
   // The logfile and the messages share one positional list so that a message

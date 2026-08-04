@@ -77,21 +77,27 @@ and the linear-algebra crates (`faer`, `nalgebra`) and `criterion` are confined
 to `matrix_ops/bench/rust`. Unlike the Bazel benchmark, that one is hermetic —
 both libraries are pure Rust, so there is no system BLAS to link.
 
-**Argument parsing is the library's; the accepted value set usually is not.**
+**Argument parsing is the library's; the accepted value set sometimes is not.**
 Each C++ port declares its options to CLI11 and lets it write `--help` and
-reject unknown options. In `text_analyzer` and `simple_logger`, every option
-whose values are constrained also keeps a hand-written validator behind
-`->check()` or `->transform()`: CLI11's own conversion skips surrounding
-whitespace, reads integers in base 0, and accepts `nan`/`inf`, and
-`CLI::CheckedTransformer` onto an enum also accepts the enum's underlying
-integers — each of which would let a C++ port accept a command line its C twin
-rejects.
+reject unknown options. Whether CLI11 may also own an option's *grammar* depends
+on what the option is bound to, and the three ports land in three different
+places:
 
-**`matrix_ops` is the deliberate exception**: its numeric options are bound to
-`int`/`double` and checked with `CLI::Range`, so CLI11 owns the grammar too, and
-the C++ port accepts spellings (`--rows 0x10`, `--rows 1_000`, `--rows " 2"`)
-that C refuses. The divergence is tabulated in
-[`matrix_ops/README.md`](matrix_ops/README.md#known-divergence-argument-parsers).
+- `text_analyzer` keeps a hand-written validator behind `->check()` on every
+  constrained option. Those are numeric, and CLI11's conversion to an integer
+  skips surrounding whitespace, reads base 0, and accepts `nan`/`inf` — each of
+  which would let the C++ port accept a command line its C twin rejects.
+- `simple_logger` has one constrained option, `--level`, bound to a
+  `std::string` and checked with `CLI::IsMember`. Nothing converts a string, so
+  the library's own check compares the bytes as typed and accepts exactly what
+  C's `strcmp` does. The trap there is `CLI::CheckedTransformer`, the obvious way
+  to map names onto an enum: it also accepts the enum's underlying integers.
+- **`matrix_ops` is the deliberate exception**: its numeric options are bound to
+  `int`/`double` and checked with `CLI::Range`, so CLI11 owns the grammar too,
+  and the C++ port accepts spellings (`--rows 0x10`, `--rows 1_000`,
+  `--rows " 2"`) that C refuses. The divergence is tabulated in
+  [`matrix_ops/README.md`](matrix_ops/README.md#known-divergence-argument-parsers).
+
 See the per-area `CLAUDE.md` files.
 
 **New pixi problems** follow the same pattern: `solution.py`, `test_solution.py`,

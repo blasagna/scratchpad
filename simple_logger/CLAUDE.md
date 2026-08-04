@@ -22,8 +22,13 @@ cargo test -p simple_logger
 
 ## Shared behavior (keep the ports in sync)
 
-- **Entry format** is `[<timestamp>]<delim>[<LEVEL>]<delim><message><separator>`, with
-  `--no-timestamp` / `--no-level` dropping a field *and its trailing delimiter*.
+- **Entry format** is `[<timestamp>] [<LEVEL>] <message>\n`, with `--no-timestamp` /
+  `--no-level` dropping a field *and its trailing space*.
+- **The space and the newline are fixed, not options.** `-d`/`-s` set them once, and
+  paying for that meant an unescaper in each port (a shell cannot pass a real newline,
+  so `-s '\n'` had to mean one) plus three copies of the same four-escape rule to keep
+  from drifting. Removing the options removed all of it. Do not reintroduce either
+  without reintroducing that whole apparatus.
 - **Timestamps are UTC ISO 8601 only** (`2026-07-30T18:22:05Z`) and the clock is read
   **once per run**, so every entry from one invocation shares it. Local time was
   considered and rejected: it would need a timezone database in all three ports for a
@@ -42,11 +47,8 @@ cargo test -p simple_logger
   `renders_a_whole_second_without_a_fractional_part` in `rust/src/lib.rs` pins them,
   and it is the first test to check if a `jiff` upgrade makes `check_parity.sh` go red.
 - **Levels** are lowercase on input, uppercase in the log (`[INFO]`).
-- **The separator follows every entry, including the last**, so the next run appends
+- **The newline follows every entry, including the last**, so the next run appends
   onto a fresh line.
-- **`--delimiter` / `--separator` accept exactly `\n`, `\t`, `\r`, `\\`.** Anything
-  else, including a trailing lone backslash, is a usage error rather than a
-  pass-through — that is what stops the accepted set from drifting between ports.
 - **Options permute**: `simple_logger log.txt --level error msg` works everywhere.
   Every port gets this from its parser — `getopt_long` in C, CLI11 in C++, clap
   in Rust — and `--` ends option parsing in all three. Attached values
@@ -65,13 +67,16 @@ cargo test -p simple_logger
   in [`README.md`](README.md). The intersection is the supported surface: plain
   `--option value`, given once. Do not add a shared-behavior claim about argument
   parsing without a parity case to back it.
-- **`--level` is validated through `logger::parse_level`, not through
-  `CLI::CheckedTransformer`.** The transformer is the obvious fit for mapping
-  four names onto an enum and is wrong here: it also accepts the enum's
-  underlying integers, so `--level 3` meant "error" in the C++ port and stayed a
-  usage error in the other two. Same reasoning keeps `--delimiter`/`--separator`
-  on `logger::unescape` rather than `CLI::EscapedString`, which additionally
-  takes `\xNN`, `\uNNNN`, and octal.
+- **`--level` is validated by `CLI::IsMember`, never `CLI::CheckedTransformer`.**
+  With the option bound to a `std::string`, `IsMember` compares the bytes as
+  typed — no conversion, no case folding, no trimming — so CLI11 accepts exactly
+  the set C's `strcmp` does and the C++ port needs no hand-written validator
+  here. The transformer is the obvious fit for mapping four names straight onto
+  the enum and is the one spelling that would be wrong: it also accepts the
+  enum's underlying integers, so `--level 3` would mean "error" in C++ and stay a
+  usage error in the other two. The set comes from `logger::kLevelNames`, which
+  is ordered to match the `Level` enumerators — `parse_level` indexes one into
+  the other, so reordering either alone silently remaps every level.
 - **Exit codes**: `2` usage, `1` operational, `0` success, for what the *program*
   reports — `missing <logfile>`, an empty logfile, a bad `SIMPLE_LOGGER_FAKE_TIME`.
   A bad *argument* is the parser's to report and carries its code: `2` in C and
@@ -110,8 +115,6 @@ Two properties matter and are easy to break:
 - **The fake-time value is validated by hand as `-?[0-9]+`.** `strtoll` would also take
   leading whitespace and Rust's `parse` would take a `+` sign; C++'s `from_chars`
   happens to implement exactly the intended rule.
-- **clap's `--separator` uses `default_value`, not `default_value_t`**, so `--help`
-  shows `[default: \n]` rather than breaking its layout with a real newline.
 
 C-test-with-GoogleTest wrapping (`extern "C"` + `copts = ["-x", "c++"]`), strict
 warnings, and formatting are repo-wide conventions from the root
