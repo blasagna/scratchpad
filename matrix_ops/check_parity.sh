@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build both matrix_ops ports, run the same invocations against each, and check
-# they agree byte for byte.
+# Build the C and C++ matrix_ops ports, run the same invocations against each,
+# and check they agree byte for byte.
 #
 #   ./matrix_ops/check_parity.sh          # build, run every case, report
 #   ./matrix_ops/check_parity.sh --keep   # keep the work dir for inspection
@@ -11,6 +11,13 @@
 # where clap's wording legitimately differs — stderr as well. Both ports here
 # hand-write their messages from the same contract, so an error message that
 # drifts is a real divergence and worth catching.
+#
+# The Rust port is deliberately NOT here. It parses with clap, so its
+# diagnostics and its --help cannot match the hand-written ones, and its
+# dimensions pair with operands by index rather than by the order typed —
+# including it would mean exempting most of what this script checks. Its surface
+# is pinned by matrix_ops/rust/tests/cli.rs, and README.md tabulates exactly
+# where it differs.
 #
 # Builds are unoptimized: there are no timings here, so the --config=opt that
 # bench/run.sh needs does not apply.
