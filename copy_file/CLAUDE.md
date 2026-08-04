@@ -28,8 +28,11 @@ cargo test -p copy_file
 - **A destination that is an existing directory** copies the source into it under
   the source's base name (`copy_file a.txt somedir` → `somedir/a.txt`); the success
   message shows the resolved destination.
-- **Exit codes**: `2` for a usage error (wrong arg count / clap), `1` for any copy
-  error; a confirmation is printed on success.
+- **Exit codes**: `1` for any copy error, `0` and a confirmation on success. A
+  usage error is the parser's to report and carries its code: `2` in C, one of
+  CLI11's in C++, clap's in Rust. Nothing compares them.
+- **`--fs` may appear anywhere** in C++ and Rust, not only before the paths; the
+  C port has no `--fs` at all.
 - The byte transfer is an explicit stream loop (`copy_stream`) so it is unit-testable
   with in-memory streams (`fmemopen` / `std::stringstream` / `Cursor`). C++ and Rust
   also offer a `--fs` method delegating to the stdlib one-shot copy. Rust refuses a

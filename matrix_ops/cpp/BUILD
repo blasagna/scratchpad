@@ -20,6 +20,7 @@ cc_binary(
     deps = [
         ":matrix",
         ":matrix_io",
+        "@cli11",
     ],
 )
 

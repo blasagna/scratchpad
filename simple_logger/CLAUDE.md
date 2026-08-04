@@ -47,11 +47,11 @@ cargo test -p simple_logger
 - **`--delimiter` / `--separator` accept exactly `\n`, `\t`, `\r`, `\\`.** Anything
   else, including a trailing lone backslash, is a usage error rather than a
   pass-through — that is what stops the accepted set from drifting between ports.
-- **Options permute**: `simple_logger log.txt --level error msg` works everywhere. The
-  C port gets this from `getopt_long`; the C++ port hand-rolls permutation on
-  purpose. `--` ends option parsing. Permutation is the *only* part of
-  `getopt_long`'s behavior the C++ loop reproduces — attached values and
-  abbreviations are not, see the divergences below.
+- **Options permute**: `simple_logger log.txt --level error msg` works everywhere.
+  Every port gets this from its parser — `getopt_long` in C, CLI11 in C++, clap
+  in Rust — and `--` ends option parsing in all three. Attached values
+  (`--level=error`, `-lerror`) now work everywhere too; abbreviated long options
+  still only work in C. See the divergences below.
 - **stdin**: one entry per line; strip one `\n` then one `\r`; a blank line is an empty
   entry; a final line without a newline still logs; empty stdin writes nothing but
   still creates the file.
@@ -59,14 +59,25 @@ cargo test -p simple_logger
   is why the primitives take `(const char *, size_t)` / `std::string_view` / `&[u8]`
   rather than NUL-terminated strings. The exception is **argv in the Rust port**,
   which clap requires to be UTF-8 (exit 2); C and C++ pass those bytes through.
-- **The ports do not agree on every argument spelling.** Attached values
-  (`--level=error`, `-lerror`), a repeated option, and abbreviated long options
-  each behave differently in at least one port, and `check_parity.sh` does not
-  cover any of them — see the **Known divergences** table in
-  [`README.md`](README.md). The intersection is the supported surface: plain
+- **The ports do not agree on every argument spelling.** A repeated option and
+  abbreviated long options still behave differently in at least one port, and
+  `check_parity.sh` does not cover either — see the **Known divergences** table
+  in [`README.md`](README.md). The intersection is the supported surface: plain
   `--option value`, given once. Do not add a shared-behavior claim about argument
   parsing without a parity case to back it.
-- **Exit codes**: `2` usage, `1` operational, `0` success. Success is **silent** —
+- **`--level` is validated through `logger::parse_level`, not through
+  `CLI::CheckedTransformer`.** The transformer is the obvious fit for mapping
+  four names onto an enum and is wrong here: it also accepts the enum's
+  underlying integers, so `--level 3` meant "error" in the C++ port and stayed a
+  usage error in the other two. Same reasoning keeps `--delimiter`/`--separator`
+  on `logger::unescape` rather than `CLI::EscapedString`, which additionally
+  takes `\xNN`, `\uNNNN`, and octal.
+- **Exit codes**: `2` usage, `1` operational, `0` success, for what the *program*
+  reports — `missing <logfile>`, an empty logfile, a bad `SIMPLE_LOGGER_FAKE_TIME`.
+  A bad *argument* is the parser's to report and carries its code: `2` in C and
+  Rust, one of CLI11's in C++. `check_parity.sh` registers those cases with
+  `run_case_parser_error`, which requires only that every port reject them.
+  Success is **silent** —
   unlike `copy_file`, nothing is printed on the happy path, which is also what lets the
   parity script assert stdout is empty everywhere.
 

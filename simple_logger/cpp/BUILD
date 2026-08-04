@@ -9,7 +9,10 @@ cc_library(
 cc_binary(
     name = "simple_logger",
     srcs = ["main.cpp"],
-    deps = [":logger"],
+    deps = [
+        ":logger",
+        "@cli11",
+    ],
 )
 
 cc_test(

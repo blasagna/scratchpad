@@ -9,6 +9,8 @@
 #include <string_view>
 #include <vector>
 
+#include <CLI/CLI.hpp>
+
 #include "logger.hpp"
 
 namespace {
@@ -16,59 +18,38 @@ namespace {
 // The default separator as the user would type it, for the help text.
 constexpr std::string_view kDefaultSeparatorEscaped = "\\n";
 
-// Exit codes, matching the C and Rust ports: 2 is the user's mistake, 1 is an
-// operation that failed.
+// Exit codes for what this program reports itself: 2 is the user's mistake, 1
+// is an operation that failed. Argument errors come from CLI11 and carry its
+// codes instead.
 constexpr int kExitUsage = 2;
 constexpr int kExitFailure = 1;
 
-void print_help() {
-  std::cout
-      << "usage: simple_logger [options] <logfile> [message...]\n"
-         "       simple_logger -h | --help\n"
-         "\n"
-         "Appends timestamped messages to a log file. Each message argument "
-         "becomes\n"
-         "one entry; with no message arguments, one entry is read per line "
-         "from\n"
-         "stdin. The log file is opened for append, so previous entries are "
-         "kept.\n"
-         "\n"
-         "Each entry is written as:\n"
-         "  [<timestamp>]<delim>[<LEVEL>]<delim><message><separator>\n"
-         "\n"
-         "The timestamp is UTC ISO 8601 (e.g. [2026-07-30T18:22:05Z]) and is "
-         "read\n"
-         "once per run, so every entry one run writes shares it.\n"
-         "\n"
-         "Options:\n"
-         "  -l, --level LEVEL    debug, info, warning, or error (default: "
-         "info)\n"
-         "  -d, --delimiter STR  text between fields (default: \""
-      << logger::kDefaultDelimiter
-      << "\")\n"
-         "  -s, --separator STR  text after each entry (default: \""
-      << kDefaultSeparatorEscaped
-      << "\")\n"
-         "      --no-timestamp   omit the [timestamp] field\n"
-         "      --no-level       omit the [LEVEL] field\n"
-         "  -h, --help           show this help\n"
-         "\n"
-         "STR values accept the escapes \\n, \\t, \\r, and \\\\; any other "
-         "backslash\n"
-         "escape is an error. Use -- before a message that begins with '-'.\n"
-         "\n"
-         "Environment:\n"
-         "  "
-      << logger::kFakeTimeVar
-      << "  epoch seconds to use instead of the real\n"
-         "                           clock; used by the cross-port parity "
-         "script.\n";
-}
+// Expands a delimiter or separator in place. The accepted escape set stays
+// logger::unescape's -- exactly \n, \t, \r, and \\ -- rather than
+// CLI::EscapedString's, which also takes \xNN, \uNNNN, and octal and would
+// drift away from the C and Rust ports.
+const CLI::Validator kUnescape{
+    [](std::string &value) -> std::string {
+      const std::optional<std::string> text = logger::unescape(value);
+      if (!text)
+        return "only \\n, \\t, \\r, and \\\\ are recognized";
+      value = *text;
+      return {};
+    },
+    "STR", "escape"};
 
-void print_usage_error() {
-  std::cerr << "usage: simple_logger [options] <logfile> [message...]\n"
-               "       simple_logger --help\n";
-}
+// The four level spellings, checked through logger::parse_level so the accepted
+// set has one definition. CLI::CheckedTransformer would be the obvious fit and
+// is wrong here: mapping onto an enum, it also accepts the underlying numbers,
+// so `--level 3` would mean "error" in this port and be a usage error in the
+// other two.
+const CLI::Validator kLevel{
+    [](const std::string &value) -> std::string {
+      return logger::parse_level(value)
+                 ? std::string{}
+                 : "expected debug, info, warning, or error";
+    },
+    "LEVEL", "level"};
 
 // Reports the failing stage against the log file, or against stdin for a read
 // error, in the same shape as the C port.
@@ -86,79 +67,74 @@ void report(const logger::LogResult &result, std::string_view path) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-  const std::span<char *> args(argv, static_cast<std::size_t>(argc));
+  // The name is passed explicitly because CLI11 otherwise takes argv[0], which
+  // under `bazel run` is the full runfiles path.
+  CLI::App app{
+      "Appends timestamped messages to a log file. Each message argument "
+      "becomes\n"
+      "one entry; with no message arguments, one entry is read per line from\n"
+      "stdin. The log file is opened for append, so previous entries are "
+      "kept.\n"
+      "\n"
+      "Each entry is written as:\n"
+      "  [<timestamp>]<delim>[<LEVEL>]<delim><message><separator>\n"
+      "\n"
+      "The timestamp is UTC ISO 8601 (e.g. [2026-07-30T18:22:05Z]) and is "
+      "read\n"
+      "once per run, so every entry one run writes shares it.",
+      "simple_logger"};
 
   logger::Format fmt;
-  std::vector<std::string_view> positionals;
+  std::vector<std::string> positionals;
+  std::string level_name{"info"};
 
-  // A hand-rolled loop rather than getopt_long, but it permutes the same way:
-  // an option is recognized wherever it appears, so `simple_logger log.txt
-  // --level error msg` works in every port. "--" ends option parsing, which is
-  // how a message beginning with '-' gets through.
-  bool options_done = false;
-  for (std::size_t i = 1; i < args.size(); i++) {
-    const std::string_view arg = args[i];
+  app.add_option("-l,--level", level_name, "debug, info, warning, or error")
+      ->check(kLevel)
+      ->capture_default_str();
+  app.add_option("-d,--delimiter", fmt.delimiter, "text between fields")
+      ->transform(kUnescape)
+      ->default_str(std::string(logger::kDefaultDelimiter));
+  app.add_option("-s,--separator", fmt.separator, "text after each entry")
+      ->transform(kUnescape)
+      ->default_str(std::string(kDefaultSeparatorEscaped));
+  app.add_flag("!--no-timestamp", fmt.show_timestamp,
+               "omit the [timestamp] field");
+  app.add_flag("!--no-level", fmt.show_level, "omit the [LEVEL] field");
+  app.add_option("logfile", positionals,
+                 "log file to append to, then the messages to write");
 
-    if (!options_done && arg == "--") {
-      options_done = true;
-      continue;
-    }
-    // A lone "-" is an ordinary argument, not an option.
-    if (options_done || arg.size() < 2 || arg[0] != '-') {
-      positionals.push_back(arg);
-      continue;
-    }
+  app.footer("STR values accept the escapes \\n, \\t, \\r, and \\\\; any other "
+             "backslash\n"
+             "escape is an error. Use -- before a message that begins with "
+             "'-'.\n"
+             "\n"
+             "Environment:\n"
+             "  " +
+             std::string(logger::kFakeTimeVar) +
+             "  epoch seconds to use instead of the real\n"
+             "                           clock; used by the cross-port parity "
+             "script.");
 
-    const bool takes_value = arg == "-l" || arg == "--level" || arg == "-d" ||
-                             arg == "--delimiter" || arg == "-s" ||
-                             arg == "--separator";
-    std::string_view value;
-    if (takes_value) {
-      if (i + 1 >= args.size()) {
-        std::cerr << "error: option '" << arg << "' requires a value\n";
-        print_usage_error();
-        return kExitUsage;
-      }
-      value = args[++i];
-    }
+  // CLI11 word-wraps the description and footer by default, which strips the
+  // leading spaces the entry-format line and the Environment block rely on.
+  // The prose here is already laid out; print it verbatim.
+  app.get_formatter()->enable_description_formatting(false);
+  app.get_formatter()->enable_footer_formatting(false);
 
-    if (arg == "-h" || arg == "--help") {
-      print_help();
-      return 0;
-    } else if (arg == "-l" || arg == "--level") {
-      const std::optional<logger::Level> level = logger::parse_level(value);
-      if (!level) {
-        std::cerr << "error: invalid value '" << value
-                  << "' for --level (expected debug, info, warning, or "
-                     "error)\n";
-        return kExitUsage;
-      }
-      fmt.level = *level;
-    } else if (arg == "-d" || arg == "--delimiter" || arg == "-s" ||
-               arg == "--separator") {
-      const bool is_delimiter = arg == "-d" || arg == "--delimiter";
-      const std::optional<std::string> text = logger::unescape(value);
-      if (!text) {
-        std::cerr << "error: invalid value '" << value << "' for "
-                  << (is_delimiter ? "--delimiter" : "--separator")
-                  << " (only \\n, \\t, \\r, and \\\\ are recognized)\n";
-        return kExitUsage;
-      }
-      (is_delimiter ? fmt.delimiter : fmt.separator) = *text;
-    } else if (arg == "--no-timestamp") {
-      fmt.show_timestamp = false;
-    } else if (arg == "--no-level") {
-      fmt.show_level = false;
-    } else {
-      std::cerr << "error: unknown option '" << arg << "'\n";
-      print_usage_error();
-      return kExitUsage;
-    }
+  try {
+    app.parse(argc, argv);
+  } catch (const CLI::ParseError &e) {
+    return app.exit(e);
   }
 
+  // kLevel already rejected anything else, so this cannot fail.
+  fmt.level = logger::parse_level(level_name).value();
+
+  // The logfile and the messages share one positional list so that a message
+  // is never mistaken for a second logfile; splitting them here keeps the
+  // "missing <logfile>" and "must not be empty" diagnostics ours, at exit 2.
   if (positionals.empty()) {
     std::cerr << "error: missing <logfile>\n";
-    print_usage_error();
     return kExitUsage;
   }
 
@@ -167,8 +143,9 @@ int main(int argc, char *argv[]) {
     std::cerr << "error: <logfile> must not be empty\n";
     return kExitUsage;
   }
-  const std::span<const std::string_view> messages =
-      std::span(positionals).subspan(1);
+  const std::vector<std::string_view> message_views(positionals.begin() + 1,
+                                                    positionals.end());
+  const std::span<const std::string_view> messages{message_views};
 
   // One clock reading for the whole run, so a slow stdin pipe cannot spread
   // one invocation's entries across several seconds.

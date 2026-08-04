@@ -86,19 +86,32 @@ need this.
 needs its own `BUILD`; no `MODULE.bazel` change is needed for standard targets
 since `rules_cc` and `googletest` are already declared.
 
-**Third-party dependencies** are declared in `MODULE.bazel` and used by exactly
-one package, `//matrix_ops/bench` (Eigen and xtensor, for a comparison
-benchmark). `third_party/` holds BUILD overlays for archives that are not in the
-Bazel Central Registry. Two things are worth knowing before adding another:
-`.bazelrc` sets `--features=external_include_paths` so the repo's `-Werror` does
-not apply to external headers, and `//matrix_ops/bench` is the only non-hermetic
-target here — it links a system OpenBLAS. See
+**Third-party dependencies** are declared in `MODULE.bazel` and fall into two
+groups. CLI11 parses the command line for every C++ binary — it is the C++
+counterpart to `getopt_long` in the C ports and `clap` in the Rust ones, and it
+is the only library the ports themselves depend on. Eigen, xtensor, and
+xtensor-blas are used by exactly one package, `//matrix_ops/bench`, for a
+comparison benchmark. `third_party/` holds BUILD overlays for archives that are
+not in the Bazel Central Registry (only xtensor-blas needs one; CLI11 is in the
+registry, so it is a bare `bazel_dep`). Two things are worth knowing before
+adding another: `.bazelrc` sets `--features=external_include_paths` so the
+repo's `-Werror` does not apply to external headers, and `//matrix_ops/bench` is
+the only non-hermetic target here — it links a system OpenBLAS. See
 [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md).
 
 The Rust side has the same shape: the ports themselves depend only on `clap`,
 and the linear-algebra crates (`faer`, `nalgebra`) and `criterion` are confined
 to `matrix_ops/bench/rust`. Unlike the Bazel benchmark, that one is hermetic —
 both libraries are pure Rust, so there is no system BLAS to link.
+
+**Argument parsing is the library's; the accepted value set is not.** Each C++
+port declares its options to CLI11 and lets it write `--help` and reject unknown
+options, but every option whose values are constrained keeps a hand-written
+validator behind `->check()` or `->transform()`. CLI11's own conversion skips
+leading whitespace and accepts `nan`/`inf`, and `CLI::CheckedTransformer` onto
+an enum also accepts the enum's underlying integers — each of which would let a
+C++ port accept a command line its C twin rejects. See the per-area `CLAUDE.md`
+files.
 
 **New pixi problems** follow the same pattern: `solution.py`, `test_solution.py`,
 and a `pixi.toml` with `test` and `main` tasks (`pixi init <directory>` to start).

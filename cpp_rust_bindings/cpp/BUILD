@@ -12,7 +12,10 @@ cc_library(
 cc_binary(
     name = "exprkit_cli",
     srcs = ["main.cpp"],
-    deps = [":exprkit"],
+    deps = [
+        ":exprkit",
+        "@cli11",
+    ],
 )
 
 cc_test(

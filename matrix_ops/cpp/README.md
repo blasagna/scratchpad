@@ -3,7 +3,7 @@
 A CLI that adds, subtracts, multiplies, and scales 2D matrices of real numbers,
 written in C++20 with the same semantics as the C port. See the top-level
 `matrix_ops/README.md` for the full contract that both ports share, and
-`../check_parity.sh` for the 86 cases that hold them to it.
+`../check_parity.sh` for the 85 cases that hold them to it.
 
 ## Design
 
@@ -73,45 +73,59 @@ way to resolve it.
 
 ## The CLI
 
-`main.cpp` parses options with a hand-rolled loop rather than `getopt_long`,
-but it **permutes the way GNU `getopt_long` does** — an option is recognized
-wherever it appears, so the operation name may come before or after the
-operands in both ports. `--` ends option parsing.
+`main.cpp` declares its options to [CLI11](https://github.com/CLIUtils/CLI11)
+and lets it do the parsing. Permutation, `--`, attached values (`--rows=2`,
+`-r2`), and `--help` all come from the library; what the port keeps is the
+contract around them.
 
-Writing this port also fixed a wart in the C one. `getopt_long`'s own
-diagnostics are prefixed with `argv[0]`, which under Bazel is the full path to
-the binary, so `matrix_ops --bogus` printed something like
+**Dimensions bind to the next operand, in the order typed.** `--rows 2 --values
+A --rows 3 --values B` shapes two operands differently, which means the port has
+to know the order `--rows`, `--cols`, `--values`, and `--file` were interleaved
+in — and a parser that hands back one result vector per option has thrown that
+away. This is exactly where the Rust port gave up and switched to pairing by
+index. CLI11 has the answer in `App::parse_order()`, which returns the options
+in the order they were typed, one entry per occurrence; walking it with a cursor
+into each option's `results()` replays the command line exactly, and the
+existing pending-rows/pending-cols state machine goes on working unchanged.
+
+**The option values are validated by hand, not by `CLI::PositiveNumber` or
+`CLI::Range`.** `--rows`, `--cols`, `--precision`, and `--scalar` are bound to
+`std::string` and checked with `parse_positive`, `parse_precision`, and
+`parse_scalar` behind a `CLI::Validator`. The stock validators run after CLI11's
+own conversion, which skips leading whitespace and accepts `nan` and `inf`, so
+with them `--rows " 2"` and `--scalar inf` *succeed* here while the C port still
+refuses both — a divergence in the result, not just in the message, and one the
+parity script catches. The library owns the grammar; the accepted value set
+stays the contract's.
+
+**Diagnostics are CLI11's, and are no longer compared to the C port's.** That is
+a deliberate loss. The two ports used to agree byte for byte on stderr, and
+getting there had cost real work: `getopt_long` prefixes its own diagnostics
+with `argv[0]`, which under Bazel is the full path to the binary, so
+`matrix_ops --bogus` printed
 
 ```
 /home/you/scratchpad/bazel-bin/matrix_ops/c/matrix_ops: unrecognized option '--bogus'
 ```
 
-That can never match another port's wording, and a build path in a user-facing
-error is worse than useless. The C port now sets `opterr = 0` and reports both
-unknown options and missing values by hand, so both ports print
+which can never match another port and puts a build path in a user-facing error.
+The C port still sets `opterr = 0` and reports unknown options and missing
+values itself, at exit 2; the C++ port now prints CLI11's wording and exits with
+CLI11's codes. `check_parity.sh` compares stdout and exit status for everything
+the *program* reports, and for the parser's own failures asserts only that both
+ports reject the command line.
 
-```
-error: unknown option '--bogus'
-```
-
-The parity script is what surfaced this; it was the only case of the original
-53 that failed.
-
-Reproducing `getopt_long`'s *classification* of a bad option took a second
-pass. An option written with an attached value is not automatically a known
-option being misused: `--help=x` is, and gets `error: option '--help' does not
-take a value`, but `--bogus=1` is simply unknown and `getopt_long` names the
-whole argument, `=1` included. Testing for the attached value before checking
-the name — which is what this port did first — described every unknown long
-option as one that does not take a value. The check now lives inside the
-`--help` branch, the only option that takes no value.
+One case survives as a genuine disagreement rather than a wording difference:
+`--help=x` is `error: option '--help' does not take a value` and exit 2 in C,
+and a request for help and exit 0 under CLI11. It is recorded in
+`../README.md` rather than in the script, which can only assert agreement.
 
 ## Build & run
 
 ```sh
 bazel run  //matrix_ops/cpp:matrix_ops -- add --values "1 2 3" --values "4 5 6"
 bazel test //matrix_ops/cpp:all
-./matrix_ops/check_parity.sh          # both ports, byte for byte
+./matrix_ops/check_parity.sh          # both ports
 ```
 
 `bazel run` executes from Bazel's runfiles directory, not your shell's, so pass

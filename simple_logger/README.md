@@ -105,18 +105,21 @@ here and covered by `check_parity.sh`.
 ### Known divergences
 
 The rows above are guaranteed. These are **not**: each is a place where the three
-ports disagree, inherited from `getopt_long`, the hand-rolled C++ loop, and clap
-having different ideas about the same spelling. None is covered by
-`check_parity.sh` — which is exactly why they survived — so treat the intersection
-of the three as the supported surface and prefer the plain `--option value` form.
+parsers — `getopt_long`, CLI11, and clap — have different ideas about the same
+spelling. None is covered by `check_parity.sh`, so treat the intersection of the
+three as the supported surface and prefer the plain `--option value` form.
 
 | Case | C | C++ | Rust |
 |---|---|---|---|
-| Non-UTF-8 **argv** | passes bytes through | passes bytes through | exit 2 (clap) |
-| `--level=error`, `-lerror` (attached value) | accepted | **exit 2** | accepted |
-| `-d=` (empty attached value) | delimiter is `=` | **exit 2** | delimiter is empty |
-| `--level error --level debug` (repeated option) | last wins | last wins | **exit 2** |
-| `--lev`, `--no-time` (abbreviated long option) | accepted | **exit 2** | **exit 2** |
+| Non-UTF-8 **argv** | passes bytes through | passes bytes through | rejected (clap) |
+| `-d=` (empty attached value) | delimiter is `=` | delimiter is `=` | delimiter is empty |
+| `--level error --level debug` (repeated option) | last wins | **rejected** | **rejected** |
+| `--lev`, `--no-time` (abbreviated long option) | accepted | **rejected** | **rejected** |
+
+Note also that **the exit code for a rejected argument is the parser's**, not the
+contract's — `2` in C and Rust, one of CLI11's in C++ — which is why
+`check_parity.sh` registers those cases with `run_case_parser_error` and requires
+only that every port reject them.
 
 Why each stands:
 
@@ -124,13 +127,16 @@ Why each stands:
   through would mean taking `OsString` everywhere for a case that barely arises;
   stdin, the far likelier source of odd bytes, is byte-transparent in all three.
   The same kind of deliberate gap as `copy_file`'s `~user`.
-- **Attached values** — `getopt_long` and clap both accept them; the C++ port
-  matches option tokens exactly, so it does not. `-d=` differs between C and Rust
-  besides, because clap strips a leading `=` after a short flag and getopt does
-  not.
-- **Repeated options** — clap 4's default action errors on a second occurrence,
-  where both C ports simply overwrite. `#[arg(overrides_with_self)]` would restore
-  last-wins if this ever matters.
+- **`-d=`** — clap strips a leading `=` after a short flag; `getopt_long` and
+  CLI11 do not. (Attached values themselves — `--level=error`, `-lerror` — used
+  to be on this list, rejected only by the hand-rolled C++ loop. CLI11 accepts
+  them like the other two, so they are shared behavior now, with
+  `attached_level` and `attached_short_level` in `check_parity.sh` to keep them
+  that way.)
+- **Repeated options** — clap 4's default action errors on a second occurrence
+  and so does CLI11; only `getopt_long` overwrites. `#[arg(overrides_with_self)]`
+  and `->take_last()` would restore last-wins on the two respectively, if this
+  ever matters.
 - **Abbreviations** — GNU `getopt_long` accepts any unambiguous prefix and offers
   no switch to turn that off, so removing it would mean hand-checking every token
   against the full option names before handing off.
@@ -141,7 +147,8 @@ Why each stands:
 |---|---|
 | `0` | Success — and success is **silent**, unlike `copy_file`'s confirmation line. |
 | `1` | An operation failed: opening, writing, or closing the log file, or reading stdin. |
-| `2` | A usage error: missing or empty logfile, unknown option, bad `--level`, bad escape, or a malformed `SIMPLE_LOGGER_FAKE_TIME`. |
+| `2` | A usage error the program reports: missing or empty logfile, or a malformed `SIMPLE_LOGGER_FAKE_TIME`. |
+| parser's own | A malformed command line — unknown option, bad `--level`, bad escape. `2` in C and Rust; CLI11 picks its own in C++. |
 
 ### Testing the clock
 

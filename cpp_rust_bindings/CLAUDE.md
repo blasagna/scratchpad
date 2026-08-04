@@ -58,14 +58,27 @@ cargo run -q -p exprkit -- '2 ^ 10'
   `exprkit::format_value`, the C++ formatter, so there is no second
   implementation to keep in sync. **Do not "simplify" the Rust CLI by formatting
   floats in Rust** — `tests/evaluate.rs::the_two_clis_share_one_formatter` is
-  the tripwire. Three documented exceptions, all argument-parsing or encoding
-  conventions rather than exprkit behavior: `--help` text, a bare `--` (clap
-  separator vs. unknown option), and non-UTF-8 input (spelled `'�'` rather than
-  the raw byte). Nothing else may drift.
+  the tripwire. Two documented exceptions remain, both conventions rather than
+  exprkit behavior: `--help` text (CLI11 writes one, clap the other) and
+  non-UTF-8 input (spelled `'�'` rather than the raw byte). Unknown-option
+  wording and its exit code are *not* exceptions — both print
+  `exprkit: unknown option: --x` and exit 2 — and a bare `--` now ends option
+  parsing in both, which it did not before the C++ CLI had a parser. Nothing
+  else may drift.
+- **Neither CLI lets its parser decide what an option is.** Only a `--` prefix
+  marks one; a single dash never does, because a leading minus is arithmetic
+  here — `-2 ^ 2` is -4, `-e` is -2.718…, `-x + 1` reads a variable. Both ports
+  therefore pre-scan argv with a `split_options` pass and hand the library only
+  what is genuinely an option. **Do not delete either one.** Left to itself
+  clap rejects `-2 ^ 2`, and CLI11 classifies every `-<non-digit>` as a short
+  option — which rejects `-e` and `-pi`, exprkit's own constants, and silently
+  prints *help* for `-h + 1`, since `-h` is a real flag. That last one is the
+  reason this is a pre-scan and not a documented divergence: it is a wrong
+  answer with exit 0, not a rejection.
 - **The Rust CLI's option handling is not just `#[derive(Parser)]`.**
   `allow_hyphen_values` is required so `-2 ^ 2` is arithmetic, but it also makes
   clap ignore options after the first positional; `split_options` restores the
-  C++'s position-independent scan. Do not delete either half. Likewise, stdin is
+  position-independent scan. Do not delete either half. Likewise, stdin is
   read with `from_utf8_lossy`, not `BufRead::lines()`, which fails a whole run
   on one stray byte.
 - **Test the logic in C++, the seam in Rust.** `cpp/test_exprkit.cpp` owns

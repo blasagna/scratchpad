@@ -20,17 +20,25 @@ bazel test //matrix_ops/c:all
 bazel test //matrix_ops/cpp:all
 cargo test -p matrix_ops
 
-./matrix_ops/check_parity.sh     # C and C++ only, byte for byte, 86 cases
+./matrix_ops/check_parity.sh     # C and C++ only, 85 cases
 ./matrix_ops/bench/run.sh        # ours vs Eigen vs xtensor       (C++)
 ./matrix_ops/bench/rust/run.sh   # ours vs faer vs nalgebra       (Rust)
 ```
 
-**`check_parity.sh` covers C and C++ only.** The Rust port uses clap, so its
-diagnostics and its `--help` cannot match the hand-written ones, and its
-dimensions pair with operands by index rather than by the order typed. Adding it
-to the script would mean exempting most of what the script checks. Its surface
-is pinned by `matrix_ops/rust/tests/cli.rs` instead, and the divergences are
-tabulated in [`README.md`](README.md#known-divergence-the-rust-port).
+**`check_parity.sh` compares results, not diagnostics.** Each port reaches for
+its own argument parser — `getopt_long` in C, CLI11 in C++, clap in Rust — so
+the script splits its cases by who reports the outcome. `run_case` compares
+stdout and the exit status, and covers every happy path plus every error the
+*program* reports (exit 2 or 1). `run_case_parser_error` covers the ones the
+*parser* reports and asserts only that both ports reject the command line;
+`run_case_status_only` covers `--help`. Stderr is not compared at all any more.
+
+**The Rust port is still not in the script**, for a reason that has nothing to
+do with wording: its dimensions pair with operands by index rather than by the
+order typed, so it disagrees on command lines both other ports accept — and this
+script can only assert agreement. Its surface is pinned by
+`matrix_ops/rust/tests/cli.rs`, and the divergences are tabulated in
+[`README.md`](README.md#known-divergence-the-rust-port).
 
 ## Shared behavior (keep the ports in sync)
 
@@ -71,23 +79,35 @@ tabulated in [`README.md`](README.md#known-divergence-the-rust-port).
   its own "shortest representation" formatter will diverge here — the C++ port
   uses `std::format("{:.{}f}")`, *not* `std::format("{}")`.
 
-- **Neither port lets its option parser write the error message.** `getopt_long`
-  prefixes its diagnostics with `argv[0]`, which under Bazel is the full path to
-  the binary, so no other port can ever match the wording. The C port sets
-  `opterr = 0` and uses a leading `:` in the option string so it can report
-  unknown options and missing values itself. Both ports print
-  `error: unknown option '--x'` and `error: option '--x' requires a value`.
+- **Each port's option parser writes its own diagnostics, and that is not a
+  shared behavior.** The C port sets `opterr = 0` and uses a leading `:` in the
+  option string so it can report unknown options and missing values itself,
+  because `getopt_long` prefixes its own with `argv[0]` — the full runfiles path
+  under `bazel run`. The C++ port hands the whole job to CLI11 and takes CLI11's
+  wording and CLI11's exit codes (109 for an unknown option, 114 for a missing
+  value, 105 for a rejected value). Do not try to reconcile the two; the parity
+  script no longer compares stderr, and `--help=x` is a live divergence — the C
+  port rejects it, CLI11 reads it as a request for help and exits 0.
 
-  An attached value does *not* by itself mean a known option was misused:
-  `--help=x` is `error: option '--help' does not take a value`, while `--bogus=1`
-  is `error: unknown option '--bogus=1'` — whole argument, `=1` included, which
-  is what the C port prints from `argv` when `getopt_long` leaves `optopt` at 0.
-  Check the name before the attached value, or every unknown long option is
-  reported as one that does not take a value.
+  **What is still shared is which command lines are accepted.** A spelling one
+  port takes and the other refuses is a real bug, and `run_case_parser_error`
+  is what catches it.
 - **The integer options accept `+?[0-9]+`, written down like the number set.**
   `strtol` skips leading whitespace and `from_chars` rejects a leading `+`, so
   `--rows " 2"` worked only in C and `--rows +2` only in C++ until both hand-
-  checked the same shape. `--precision` is additionally capped at
+  checked the same shape.
+
+  **This is why `--rows`, `--cols`, `--precision`, and `--scalar` are bound to
+  `std::string` and validated by `parse_positive`/`parse_precision`/`parse_scalar`
+  behind a `CLI::Validator`, rather than to an `int`/`double` with
+  `CLI::PositiveNumber` or `CLI::Range`.** CLI11's own conversion skips leading
+  whitespace and accepts `nan` and `inf`, so the stock validators make
+  `--rows " 2"` and `--scalar inf` *succeed* here while the C port still refuses
+  them — a divergence in stdout, not just in wording, and one the parity script
+  does catch. CLI11 owns the grammar; the accepted value set stays the
+  contract's.
+
+  `--precision` is additionally capped at
   `MATRIX_MAX_PRECISION` / `kMaxPrecision` (1100): past ~1074 places every digit
   is a zero the trimming removes, and uncapped it let one cell demand gigabytes
   — where C's `snprintf` overflowed the `int` it returns and reported an
@@ -117,8 +137,13 @@ tabulated in [`README.md`](README.md#known-divergence-the-rust-port).
   `-0.0` from `scale --scalar 0`, and a small negative rounded away by the
   precision — so the check is on the *rendering*, not on the value.
 - **Every line of output ends in a newline, including the last.**
-- **Exit codes**: `2` usage, `1` operational, `0` success. A dimension mismatch is
-  a usage error (`2`), since it always traces back to what was typed.
+- **Exit codes**: `2` usage, `1` operational, `0` success — for what the
+  *program* reports. A dimension mismatch is a usage error (`2`), since it
+  always traces back to what was typed. Failures the argument parser reports
+  carry its own code instead: `getopt_long` never gets to, since the C port
+  reports those itself at `2`, but CLI11 does, so the C++ port exits 104/105/109/
+  114 on a bad argument. That difference is deliberate and is why those cases
+  are `run_case_parser_error` in the script.
 
 ## Gotchas
 

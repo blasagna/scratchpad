@@ -33,6 +33,18 @@ in both text and JSON.** This is the property the golden tests and `bench/run.sh
   follow serde's pretty layout. Multiple files are one concatenated stream; stdin is
   read when no file is given or the file arg is `-`.
 
+## Argument parsing
+
+Each port uses its ecosystem's parser — `getopt_long` in C, CLI11 in C++, clap
+in Rust — so `--help` text and argument diagnostics differ between them and
+nothing compares them. What is shared is the flag surface and the accepted
+values: the three integer options take `[0-9]+` above zero in every port, which
+is why the C++ port validates them with `parse_positive` behind a
+`CLI::Validator` rather than binding an `unsigned int` with
+`CLI::PositiveNumber` — CLI11's own conversion would also accept `--top-n " 5"`.
+A read failure still exits 1; a bad argument exits with whatever the parser
+chose.
+
 ## Commands
 
 ```sh

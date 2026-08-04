@@ -9,9 +9,14 @@
 # For each case every port writes to its own log file; the C port is the
 # reference and the others are diffed against it. Three things are compared:
 # the log file bytes, stdout (which must be empty everywhere, since success is
-# silent), and the exit status. Stderr is deliberately NOT compared — clap's
-# wording legitimately differs from the hand-written C and C++ messages — it is
-# only required to be non-empty when a run fails.
+# silent), and the exit status. Stderr is deliberately NOT compared — each port
+# reaches for its own argument parser (getopt_long, CLI11, clap) and their
+# wording legitimately differs — it is only required to be non-empty when a run
+# fails.
+#
+# Cases registered with run_case_parser_error are the ones the argument parsers
+# reject rather than the program, so their exit codes are each parser's own too.
+# There, every port must merely fail; the code is not compared.
 #
 # The clock is pinned through SIMPLE_LOGGER_FAKE_TIME, which every port reads
 # only at its CLI boundary. A malformed value is a hard error in all three
@@ -42,6 +47,10 @@ failed=0
 # Case names in the order they were first run, filled in by run_case so the
 # comparison pass cannot drift out of sync with the cases above it.
 CASES=()
+
+# Cases whose exit code belongs to the argument parser rather than the program.
+declare -A CASE_MUST_FAIL
+MUST_FAIL=0
 
 # Ports under test, reference first.
 binaries() {
@@ -74,6 +83,7 @@ run_case() {
     [[ "${existing}" == "${name}" ]] && seen=1
   done
   [[ "${seen}" == "0" ]] && CASES+=("${name}")
+  CASE_MUST_FAIL["${name}"]="${MUST_FAIL}"
 
   local port bin log args arg status
   while IFS='|' read -r port bin; do
@@ -93,6 +103,17 @@ run_case() {
     set -e
     echo "${status}" >"${WORK}/${name}.${port}.status"
   done < <(binaries)
+}
+
+# run_case_parser_error <name> <fake-time|-> <stdin-file|-> <args...>
+#
+# For a command line the argument parser rejects. getopt_long reports it in the
+# C port, CLI11 in the C++ one, and clap in the Rust one, so the exit code is
+# each parser's own; all that is asserted is that every port rejected it.
+run_case_parser_error() {
+  MUST_FAIL=1
+  run_case "$@"
+  MUST_FAIL=0
 }
 
 compare_case() {
@@ -116,7 +137,13 @@ compare_case() {
     status="$(cat "${WORK}/${name}.${port}.status")"
     log="${WORK}/${name}.${port}.log"
 
-    if [[ "${status}" != "${ref_status}" ]]; then
+    if [[ "${CASE_MUST_FAIL[${name}]}" == "1" ]]; then
+      if [[ "${status}" == "0" || "${ref_status}" == "0" ]]; then
+        echo "PARITY FAILURE: ${port} exited ${status} and C exited" \
+          "${ref_status} on '${name}'; both must reject it" >&2
+        case_failed=1
+      fi
+    elif [[ "${status}" != "${ref_status}" ]]; then
       echo "PARITY FAILURE: ${port} exited ${status}, C exited ${ref_status}," \
         "on '${name}'" >&2
       case_failed=1
@@ -200,6 +227,13 @@ main() {
   run_case permuted_options - - @LOG@ first --level error second
 
   # --- formatting options ---
+  # Attached values, which used to be a three-way divergence: the hand-rolled
+  # C++ loop matched option tokens exactly and rejected them. CLI11 accepts them
+  # the way getopt_long and clap always did, so they are a shared behavior now
+  # and get cases to keep them one.
+  run_case attached_level - - --level=error @LOG@ x
+  run_case attached_short_level - - -lerror @LOG@ x
+
   run_case custom_delims - - -d ' | ' -s '\n\n' @LOG@ hi
   run_case tab_delimiter - - -d '\t' @LOG@ hi
   run_case escaped_backslash - - -d '\\' @LOG@ hi
@@ -231,12 +265,12 @@ main() {
   run_case far_future 2147483648 - @LOG@ "past the 2038 wrap"
 
   # --- failures: all ports must agree on the exit status ---
-  run_case bad_level - - --level warn @LOG@ x
-  run_case bad_escape - - -s '\q' @LOG@ x
-  run_case trailing_backslash - - -d '\' @LOG@ x
+  run_case_parser_error bad_level - - --level warn @LOG@ x
+  run_case_parser_error bad_escape - - -s '\q' @LOG@ x
+  run_case_parser_error trailing_backslash - - -d '\' @LOG@ x
   run_case missing_logfile - -
   run_case empty_logfile - - "" x
-  run_case unknown_option - - --nope @LOG@ x
+  run_case_parser_error unknown_option - - --nope @LOG@ x
   run_case bad_fake_time nope - @LOG@ x
 
   # A directory can never be appended to, in any port.

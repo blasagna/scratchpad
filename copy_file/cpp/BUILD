@@ -9,7 +9,10 @@ cc_library(
 cc_binary(
     name = "copy_file",
     srcs = ["main.cpp"],
-    deps = [":copyfile"],
+    deps = [
+        ":copyfile",
+        "@cli11",
+    ],
 )
 
 cc_test(

@@ -12,11 +12,15 @@ Requirements:
 
 ## Contract
 
-The behavior all ports implement. `c/` and `cpp/` are held to this byte-for-byte
-by `check_parity.sh` (86 cases, comparing stdout, stderr, and exit status).
-`rust/` implements the same operations, shape rules, and output format, but
-parses its command line with `clap` and is deliberately outside that script —
-see [Known divergence: the Rust port](#known-divergence-the-rust-port).
+The behavior all ports implement. `c/` and `cpp/` are held to this by
+`check_parity.sh` (85 cases, comparing stdout and exit status). Every port
+delegates argument parsing to its ecosystem's library — `getopt_long` in C,
+CLI11 in C++, `clap` in Rust — so `--help` text, diagnostics, and the exit code
+for a bad argument are each parser's own and are not compared; see
+[Known divergence: argument parsers](#known-divergence-argument-parsers).
+`rust/` implements the same operations, shape rules, and output format but is
+deliberately outside the script — see
+[Known divergence: the Rust port](#known-divergence-the-rust-port).
 
 ### CLI
 
@@ -59,31 +63,43 @@ removes, and the ceiling is set at `1100`. It is not only cosmetic: a rendering
 of a large value needs 309 digits before the point plus the precision after it,
 so an uncapped precision lets a single cell demand gigabytes.
 
-#### Known divergence: abbreviated long options
+#### Known divergence: argument parsers
 
-The C port gets its parsing from `getopt_long`, which accepts any *unambiguous
-prefix* of a long option — `--row` for `--rows`, `--val` for `--values`. The C++
-port's hand-rolled loop matches full names only and reports `error: unknown
-option '--row'`.
+Each port declares its options to a library and takes what that library gives
+back. So the following differ by design and nothing compares them:
 
-This is deliberate: reproducing the abbreviation rule also means reproducing
-`getopt`'s ambiguity diagnostics (`option '--r' is ambiguous; possibilities:
-…`), which is more machinery than the feature earns. **The supported surface is
-the intersection — spell long options in full.** `check_parity.sh` only asserts
-that the ports agree, so it cannot pin a difference and has no case for this;
-the divergence lives here instead. Same treatment `simple_logger/README.md`
-gives its own argument-parsing divergences.
+| | C (`getopt_long`) | C++ (CLI11) |
+|---|---|---|
+| `--help` | the hand-written text below | CLI11's rendering |
+| unknown option | `error: unknown option '--x'` | `The following argument was not expected: --x` |
+| bad-argument exit code | `2` | CLI11's: `104` conversion, `105` validation, `109` extras, `114` missing value |
+| `--help=x` | `error: option '--help' does not take a value`, exit 2 | read as a request for help, exit 0 |
+| abbreviated long options (`--row`) | accepted when unambiguous | rejected |
+
+**What does not differ is which command lines are accepted**, `--help=x` and
+abbreviations aside. Every option value is validated against the contract below
+by hand in both ports rather than by the parser: CLI11's own numeric conversion
+skips leading whitespace and accepts `nan` and `inf`, so `--rows " 2"` and
+`--scalar inf` would otherwise succeed in C++ and stay usage errors in C. The
+parity script's `run_case_parser_error` cases assert exactly that — both ports
+reject the same input — without comparing how they say so.
+
+`check_parity.sh` only ever asserts that the ports *agree*, so it cannot pin a
+difference; the two rows above where they genuinely disagree live here instead.
+Same treatment `simple_logger/README.md` gives its own.
 
 #### Known divergence: the Rust port
 
-The C and C++ ports hand-write their option parsing so their diagnostics can
-agree byte for byte. The Rust port uses `clap` in the ordinary way instead, and
-accepts clap's behavior where it differs. It is not in `check_parity.sh`.
+The Rust port is not in `check_parity.sh`, and the reason is not its
+diagnostics — every port's diagnostics are its parser's now. It is the operand
+ordering: clap cannot report the order two different options were interleaved
+in, so the Rust port pairs dimensions with operands by index. (CLI11 *can*, via
+`App::parse_order()`, which is how the C++ port keeps C's rule.) That difference
+shows up in stdout, which the script does compare, so including the port would
+mean exempting the cases the script exists for.
 
 | | C and C++ | Rust |
 |---|---|---|
-| usage diagnostics | `error: unknown option '--x'` | clap's wording |
-| `--help` | the hand-written text below | clap's rendering |
 | dimensions | bind to the *next* operand, in the order typed | the Nth `--rows` describes the Nth operand |
 | mixed operand sources | interleaved in the order typed | inline operands ordered before file ones |
 | hex floats (`0x1p3`) | accepted, via `strtod` | rejected |
@@ -142,10 +158,17 @@ and separated by two spaces, so decimal points line up.
 
 ### Exit codes
 
-`0` success, `2` usage error (unknown operation or option, wrong operand count,
-bad number, bad or ragged shape, dimensions with no operand to attach to), `1`
-operational error (a file that cannot be opened or read, a failed write, out of
-memory).
+`0` success, `2` usage error (unknown operation, wrong operand count, bad or
+ragged shape, a bad number inside an operand, dimensions with no operand to
+attach to), `1` operational error (a file that cannot be opened or read, a
+failed write, out of memory).
+
+These are the codes for what the *program* reports. A malformed command line —
+an unknown option, a missing value, an option value the contract rejects — is
+reported by the parser and carries the parser's code: `2` in the C port, which
+suppresses `getopt_long`'s own diagnostics and reports them itself, and one of
+CLI11's in the C++ port. See
+[Known divergence: argument parsers](#known-divergence-argument-parsers).
 
 Out of memory is an exit code and a message — `matrix_ops: out of memory` —
 rather than a crash, in every port. For the C++ one that means an allocation

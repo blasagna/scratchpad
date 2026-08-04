@@ -9,13 +9,15 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <new>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
+
+#include <CLI/CLI.hpp>
 
 #include "matrix.hpp"
 #include "matrix_io.hpp"
@@ -32,8 +34,9 @@ constexpr std::string_view kStdinLabel = "<stdin>";
 // The most operands any operation takes.
 constexpr std::size_t kMaxOperands = 2;
 
-// Exit codes, matching the C port: 2 is the user's mistake, 1 is an operation
-// that failed.
+// Exit codes for what this program reports itself, matching the C port: 2 is
+// the user's mistake, 1 is an operation that failed. Argument errors come from
+// CLI11 and carry its codes instead.
 constexpr int kExitUsage = 2;
 constexpr int kExitFailure = 1;
 
@@ -53,68 +56,10 @@ constexpr std::array<OpSpec, 4> kOperations{{
     {"scale", Op::kScale, 1, true},
 }};
 
-void print_help() {
-  std::cout
-      << "usage: matrix_ops <add|sub|mul|scale> [operand...] [options]\n"
-         "       matrix_ops -h | --help\n"
-         "\n"
-         "Performs an operation on 2D matrices of real numbers and prints the "
-         "result.\n"
-         "\n"
-         "Operations:\n"
-         "  add      element-wise sum of two matrices of the same shape\n"
-         "  sub      element-wise difference of two matrices of the same "
-         "shape\n"
-         "  mul      matrix product; the first operand's column count must "
-         "equal\n"
-         "           the second operand's row count\n"
-         "  scale    multiplies one matrix by --scalar\n"
-         "\n"
-         "Operands:\n"
-         "  Each --values or --file introduces one operand, and any --rows or "
-         "--cols\n"
-         "  written before it describes that operand, so the two operands of "
-         "a\n"
-         "  product may have different shapes.\n"
-         "\n"
-         "  -v, --values \"...\"  values separated by whitespace or newlines\n"
-         "  -f, --file PATH     read the values from a file ('"
-      << kStdinArg
-      << "' for stdin)\n"
-         "  -r, --rows N        rows for the next operand (optional)\n"
-         "  -c, --cols N        columns for the next operand (optional)\n"
-         "\n"
-         "Shape:\n"
-         "  Dimensions are optional. Without them the layout decides: one "
-         "line of\n"
-         "  values is a row vector, and several lines are rows. Given both "
-         "--rows\n"
-         "  and --cols, the values are reshaped row-major and their count "
-         "must be\n"
-         "  exactly rows x cols; given only one, the other is derived. Rows "
-         "of\n"
-         "  differing length are always an error.\n"
-         "\n"
-         "Options:\n"
-         "  -k, --scalar X      the multiplier for 'scale'\n"
-         "  -p, --precision N   decimal places in the output, trailing zeros "
-         "trimmed\n"
-         "                      (0 to "
-      << matrix_ops::kMaxPrecision
-      << ", default: " << matrix_ops::kDefaultPrecision
-      << ")\n"
-         "  -h, --help          show this help\n"
-         "\n"
-         "Examples:\n"
-         "  matrix_ops add --values \"1 2 3\" --values \"4 5 6\"\n"
-         "  matrix_ops mul --rows 2 --cols 3 --values \"1 2 3 4 5 6\" \\\n"
-         "                 --rows 3 --cols 2 --file b.txt\n"
-         "  matrix_ops scale --scalar 2.5 --file a.txt\n";
-}
-
-void print_usage_error() {
-  std::cerr << "usage: matrix_ops <add|sub|mul|scale> [operand...] [options]\n"
-               "       matrix_ops --help\n";
+// Echoes CLI11's own hint after an error this program reports itself, so a
+// usage failure points at --help however it was detected.
+void print_usage_hint() {
+  std::cerr << "Run with --help for more information.\n";
 }
 
 // Parses value as an unsigned decimal integer, accepting an optional leading
@@ -139,21 +84,16 @@ std::optional<unsigned long long> parse_uint(std::string_view value) {
   return n;
 }
 
-// Parses value as a positive integer in [1, INT_MAX]. Reports the problem
-// against opt_name and returns nullopt on failure.
+// Parses value as a positive integer in [1, INT_MAX], or nullopt.
 //
 // The INT_MAX ceiling is not cosmetic and is not just for parity with the C
 // port's strtol: a dimension becomes a std::size_t, and a value above INT_MAX
 // narrowed to a negative int before it got one.
-std::optional<int> parse_positive(std::string_view opt_name,
-                                  std::string_view value) {
+std::optional<int> parse_positive(std::string_view value) {
   const std::optional<unsigned long long> n = parse_uint(value);
   if (!n || *n < 1 ||
-      *n > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
-    std::cerr << "error: invalid value '" << value << "' for " << opt_name
-              << " (expected a positive integer)\n";
+      *n > static_cast<unsigned long long>(std::numeric_limits<int>::max()))
     return std::nullopt;
-  }
   return static_cast<int>(*n);
 }
 
@@ -163,30 +103,50 @@ std::optional<int> parse_positive(std::string_view opt_name,
 // trimming removes and the rendering alone would want gigabytes.
 std::optional<int> parse_precision(std::string_view value) {
   const std::optional<unsigned long long> n = parse_uint(value);
-  if (!n || *n > static_cast<unsigned long long>(matrix_ops::kMaxPrecision)) {
-    std::cerr << "error: invalid value '" << value
-              << "' for --precision (expected 0 to "
-              << matrix_ops::kMaxPrecision << ")\n";
+  if (!n || *n > static_cast<unsigned long long>(matrix_ops::kMaxPrecision))
     return std::nullopt;
-  }
   return static_cast<int>(*n);
 }
 
 // Parses value as a finite double, applying the same rule the matrix values
 // themselves are held to: no trailing junk, and no nan or infinity. strtod
 // rather than from_chars for the reasons given in matrix_io.cpp.
-std::optional<double> parse_scalar(std::string_view opt_name,
-                                   std::string_view value) {
+std::optional<double> parse_scalar(std::string_view value) {
   const std::string text(value);
   char *end = nullptr;
   const double n = std::strtod(text.c_str(), &end);
-  if (end == text.c_str() || *end != '\0' || !std::isfinite(n)) {
-    std::cerr << "error: invalid value '" << value << "' for " << opt_name
-              << " (expected a finite number)\n";
+  if (end == text.c_str() || *end != '\0' || !std::isfinite(n))
     return std::nullopt;
-  }
   return n;
 }
+
+// The three validators above, as CLI11 checks. They are written here rather
+// than reached for as CLI::PositiveNumber / CLI::Range / a numeric bind because
+// CLI11's own conversion skips leading whitespace and accepts nan and inf: with
+// the stock validators `--rows " 2"` and `--scalar inf` would succeed here and
+// remain usage errors in the C port, which hand-checks these same shapes. CLI11
+// owns the grammar; the accepted value set stays the contract's.
+const CLI::Validator kPositive{[](const std::string &value) -> std::string {
+                                 return parse_positive(value)
+                                            ? std::string{}
+                                            : "expected a positive integer";
+                               },
+                               "N", "positive integer"};
+
+const CLI::Validator kPrecision{
+    [](const std::string &value) -> std::string {
+      return parse_precision(value)
+                 ? std::string{}
+                 : "expected 0 to " + std::to_string(matrix_ops::kMaxPrecision);
+    },
+    "N", "precision"};
+
+const CLI::Validator kFinite{[](const std::string &value) -> std::string {
+                               return parse_scalar(value)
+                                          ? std::string{}
+                                          : "expected a finite number";
+                             },
+                             "X", "finite number"};
 
 const OpSpec *find_operation(std::string_view name) {
   const auto it = std::ranges::find(kOperations, name, &OpSpec::name);
@@ -225,9 +185,96 @@ int report_operand_error(Error error, std::string_view source) {
   return kExitUsage;
 }
 
-int run(std::span<char *> args) {
+int run(int argc, char *argv[]) {
+  // The name is passed explicitly because CLI11 otherwise takes argv[0], which
+  // under `bazel run` is the full runfiles path.
+  CLI::App app{"Performs an operation on 2D matrices of real numbers and "
+               "prints the result.\n"
+               "\n"
+               "Operations:\n"
+               "  add      element-wise sum of two matrices of the same shape\n"
+               "  sub      element-wise difference of two matrices of the same "
+               "shape\n"
+               "  mul      matrix product; the first operand's column count "
+               "must equal\n"
+               "           the second operand's row count\n"
+               "  scale    multiplies one matrix by --scalar\n"
+               "\n"
+               "Operands:\n"
+               "  Each --values or --file introduces one operand, and any "
+               "--rows or --cols\n"
+               "  written before it describes that operand, so the two "
+               "operands of a\n"
+               "  product may have different shapes.\n"
+               "\n"
+               "Shape:\n"
+               "  Dimensions are optional. Without them the layout decides: "
+               "one line of\n"
+               "  values is a row vector, and several lines are rows. Given "
+               "both --rows\n"
+               "  and --cols, the values are reshaped row-major and their "
+               "count must be\n"
+               "  exactly rows x cols; given only one, the other is derived. "
+               "Rows of\n"
+               "  differing length are always an error.",
+               "matrix_ops"};
+
+  std::vector<std::string> positionals;
+  std::vector<std::string> rows_raw;
+  std::vector<std::string> cols_raw;
+  std::vector<std::string> values_raw;
+  std::vector<std::string> files_raw;
+  std::string scalar_raw;
+  std::string precision_raw;
+
+  app.add_option("operation", positionals, "add, sub, mul, or scale");
+  const CLI::Option *values_opt =
+      app.add_option("-v,--values", values_raw,
+                     "values separated by whitespace or newlines")
+          ->type_name("\"...\"")
+          ->allow_extra_args(false);
+  const CLI::Option *file_opt =
+      app.add_option("-f,--file", files_raw,
+                     "read the values from a file ('" + std::string(kStdinArg) +
+                         "' for stdin)")
+          ->type_name("PATH")
+          ->allow_extra_args(false);
+  const CLI::Option *rows_opt =
+      app.add_option("-r,--rows", rows_raw, "rows for the next operand")
+          ->check(kPositive)
+          ->allow_extra_args(false);
+  const CLI::Option *cols_opt =
+      app.add_option("-c,--cols", cols_raw, "columns for the next operand")
+          ->check(kPositive)
+          ->allow_extra_args(false);
+  app.add_option("-k,--scalar", scalar_raw, "the multiplier for 'scale'")
+      ->check(kFinite)
+      ->take_last();
+  app.add_option("-p,--precision", precision_raw,
+                 "decimal places in the output, trailing zeros trimmed")
+      ->check(kPrecision)
+      ->take_last()
+      ->default_str(std::to_string(matrix_ops::kDefaultPrecision));
+
+  app.footer("Examples:\n"
+             "  matrix_ops add --values \"1 2 3\" --values \"4 5 6\"\n"
+             "  matrix_ops mul --rows 2 --cols 3 --values \"1 2 3 4 5 6\" \\\n"
+             "                 --rows 3 --cols 2 --file b.txt\n"
+             "  matrix_ops scale --scalar 2.5 --file a.txt");
+
+  // CLI11 word-wraps the description and footer by default, which strips the
+  // leading spaces the Operations block and the Examples continuation lines
+  // rely on. The prose here is already laid out; print it verbatim.
+  app.get_formatter()->enable_description_formatting(false);
+  app.get_formatter()->enable_footer_formatting(false);
+
+  try {
+    app.parse(argc, argv);
+  } catch (const CLI::ParseError &e) {
+    return app.exit(e);
+  }
+
   std::vector<Matrix> operands;
-  std::vector<std::string_view> positionals;
 
   // Dimensions seen since the last operand closed; they attach to the next
   // --values or --file.
@@ -237,100 +284,41 @@ int run(std::span<char *> args) {
   matrix_ops::Format fmt;
   std::optional<double> scalar;
 
-  // A hand-rolled loop rather than getopt_long, but it reproduces the parts of
-  // getopt_long's behavior the C port gets for free, because the contract is
-  // byte-for-byte parity and check_parity.sh compares stderr too:
-  //
-  //   - it permutes, so an option is recognized wherever it appears and the
-  //     operation name may come before or after the operands;
-  //   - "--" ends option parsing, and a lone "-" is an ordinary argument;
-  //   - a value may be attached (--rows=2, -r2) or separate (--rows 2).
-  //
-  // Abbreviated long options (--row for --rows) are the one thing it does not
-  // reproduce: getopt_long accepts any unambiguous prefix, and matching its
-  // ambiguity diagnostics exactly costs more than the feature is worth. That
-  // is a known divergence, recorded in README.md; check_parity.sh only ever
-  // asserts agreement, so it cannot pin a difference and does not try.
-  bool options_done = false;
-  for (std::size_t i = 1; i < args.size(); i++) {
-    const std::string_view arg = args[i];
+  if (!scalar_raw.empty())
+    scalar = parse_scalar(scalar_raw);
+  if (!precision_raw.empty())
+    fmt.precision = parse_precision(precision_raw).value();
 
-    if (!options_done && arg == "--") {
-      options_done = true;
+  // CLI11 hands back one result vector per option, which loses the order the
+  // four operand options were interleaved in -- and that order is the contract:
+  // --rows/--cols bind to the *next* --values or --file, so `--rows 2 --values
+  // A --rows 3 --values B` shapes two operands differently. parse_order() gives
+  // the options back in the order they were typed, one entry per occurrence, so
+  // walking it with a cursor into each option's results() replays the command
+  // line exactly. (The Rust port could not do this under clap and pairs
+  // dimensions with operands by index instead; see README.md.)
+  std::map<const CLI::Option *, std::size_t> cursor;
+  for (const CLI::Option *opt : app.parse_order()) {
+    if (opt != rows_opt && opt != cols_opt && opt != values_opt &&
+        opt != file_opt)
       continue;
-    }
-    // A lone "-" is an ordinary argument, not an option.
-    if (options_done || arg.size() < 2 || arg[0] != '-') {
-      positionals.push_back(arg);
-      continue;
-    }
 
-    // Split an attached value off the option name: "--rows=2" and "-r2" both
-    // carry their value in the same argv element, the way getopt_long accepts
-    // them in the C port.
-    std::string_view name = arg;
-    std::string_view value;
-    bool attached = false;
-    if (arg.starts_with("--")) {
-      if (const std::size_t eq = arg.find('='); eq != std::string_view::npos) {
-        name = arg.substr(0, eq);
-        value = arg.substr(eq + 1);
-        attached = true;
-      }
-    } else if (arg.size() > 2) {
-      name = arg.substr(0, 2);
-      value = arg.substr(2);
-      attached = true;
-    }
+    // at() rather than []: the index is only in range because
+    // allow_extra_args(false) makes each occurrence carry exactly one value,
+    // and that is CLI11's invariant to keep, not ours.
+    const std::string &value = opt->results().at(cursor[opt]++);
 
-    const bool takes_value =
-        name == "-r" || name == "--rows" || name == "-c" || name == "--cols" ||
-        name == "-v" || name == "--values" || name == "-f" ||
-        name == "--file" || name == "-k" || name == "--scalar" ||
-        name == "-p" || name == "--precision";
-
-    if (takes_value && !attached) {
-      if (i + 1 >= args.size()) {
-        std::cerr << "error: option '" << name << "' requires a value\n";
-        print_usage_error();
-        return kExitUsage;
-      }
-      value = args[++i];
-    }
-
-    const std::string_view arg_ = name;
-    if (arg_ == "-h" || arg_ == "--help") {
-      // The only option that takes no value, so it is the only one that can be
-      // given one by mistake. The check lives here rather than beside the
-      // takes_value test above because "--bogus=1" is an *unknown* option, not
-      // a known one misused, and the two get different messages -- deciding
-      // this on the attached value alone described every unknown long option
-      // as one that does not take a value.
-      if (attached && name.starts_with("--")) {
-        std::cerr << "error: option '" << name << "' does not take a value\n";
-        print_usage_error();
-        return kExitUsage;
-      }
-      print_help();
-      return 0;
-    } else if (arg_ == "-r" || arg_ == "--rows") {
-      const std::optional<int> n = parse_positive("--rows", value);
-      if (!n)
-        return kExitUsage;
-      pending_rows = static_cast<std::size_t>(*n);
-    } else if (arg_ == "-c" || arg_ == "--cols") {
-      const std::optional<int> n = parse_positive("--cols", value);
-      if (!n)
-        return kExitUsage;
-      pending_cols = static_cast<std::size_t>(*n);
-    } else if (arg_ == "-v" || arg_ == "--values" || arg_ == "-f" ||
-               arg_ == "--file") {
+    if (opt == rows_opt) {
+      pending_rows = static_cast<std::size_t>(parse_positive(value).value());
+    } else if (opt == cols_opt) {
+      pending_cols = static_cast<std::size_t>(parse_positive(value).value());
+    } else {
       if (operands.size() == kMaxOperands) {
         std::cerr << "error: at most " << kMaxOperands
                   << " matrices may be given\n";
         return kExitUsage;
       }
-      const bool from_file = arg_ == "-f" || arg_ == "--file";
+      const bool from_file = opt == file_opt;
       matrix_ops::ParseResult parsed =
           from_file ? load_file(value, pending_rows, pending_cols)
                     : matrix_ops::parse_text(value, pending_rows, pending_cols);
@@ -345,25 +333,6 @@ int run(std::span<char *> args) {
       // own or infers them.
       pending_rows = matrix_ops::kDimUnspecified;
       pending_cols = matrix_ops::kDimUnspecified;
-    } else if (arg_ == "-k" || arg_ == "--scalar") {
-      const std::optional<double> k = parse_scalar("--scalar", value);
-      if (!k)
-        return kExitUsage;
-      scalar = *k;
-    } else if (arg_ == "-p" || arg_ == "--precision") {
-      const std::optional<int> n = parse_precision(value);
-      if (!n)
-        return kExitUsage;
-      fmt.precision = *n;
-    } else {
-      // A long option is named with the whole argument, value and all
-      // ("--bogus=1"), which is what the C port prints from argv when
-      // getopt_long leaves optopt at 0. A short one is named by itself, since
-      // in a cluster like "-zq" only the offending character is unknown.
-      std::cerr << "error: unknown option '"
-                << (name.starts_with("--") ? arg : name) << "'\n";
-      print_usage_error();
-      return kExitUsage;
     }
   }
 
@@ -376,12 +345,12 @@ int run(std::span<char *> args) {
 
   if (positionals.empty()) {
     std::cerr << "error: missing operation\n";
-    print_usage_error();
+    print_usage_hint();
     return kExitUsage;
   }
   if (positionals.size() > 1) {
     std::cerr << "error: unexpected argument '" << positionals[1] << "'\n";
-    print_usage_error();
+    print_usage_hint();
     return kExitUsage;
   }
 
@@ -452,7 +421,7 @@ int run(std::span<char *> args) {
 } // namespace
 
 int main(int argc, char *argv[]) try {
-  return run(std::span<char *>(argv, static_cast<std::size_t>(argc)));
+  return run(argc, argv);
 } catch (const std::bad_alloc &) {
   // The backstop for the allocations run() does not funnel through matrix_io
   // -- a result matrix, the operand vector -- which in the C port are

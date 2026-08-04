@@ -4,6 +4,11 @@
 bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "googletest", version = "1.17.0")
 
+# CLI11 parses the command line for every C++ binary here. It is the one
+# third-party library the ports themselves depend on: the C ports use
+# getopt_long, the Rust ports use clap, and this is the C++ counterpart.
+bazel_dep(name = "cli11", version = "2.6.2")
+
 # Third-party linear algebra libraries, used ONLY by //matrix_ops/bench to
 # compare our hand-written implementation against. No port depends on these.
 bazel_dep(name = "eigen", version = "3.4.0.bcr.3")

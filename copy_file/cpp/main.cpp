@@ -1,29 +1,34 @@
-#include <cstddef>
 #include <iostream>
-#include <span>
+#include <string>
 #include <string_view>
+
+#include <CLI/CLI.hpp>
 
 #include "copyfile.hpp"
 
 int main(int argc, char *argv[]) {
-  const std::span<char *> args(argv, static_cast<std::size_t>(argc));
+  // CLI11 is given an explicit program name because it otherwise takes argv[0],
+  // which under `bazel run` is the full runfiles path.
+  CLI::App app{"Copies a source file to a destination.", "copy_file"};
 
-  // An optional leading --fs flag selects the std::filesystem::copy_file
-  // implementation; the default is the explicit stream copy.
   bool use_fs = false;
-  std::size_t pos = 1;
-  if (pos < args.size() && std::string_view(args[pos]) == "--fs") {
-    use_fs = true;
-    ++pos;
-  }
+  std::string source;
+  std::string dest;
 
-  if (args.size() - pos != 2) {
-    std::cerr << "usage: copy_file [--fs] <source> <destination>\n";
-    return 2;
-  }
+  // --fs selects the std::filesystem::copy_file implementation; the default is
+  // the explicit stream copy.
+  app.add_flag("--fs", use_fs, "copy with std::filesystem::copy_file");
+  app.add_option("source", source, "file to copy")->required();
+  app.add_option("destination", dest,
+                 "path to copy it to; an existing directory receives the file "
+                 "under its own name")
+      ->required();
 
-  const std::string_view source = args[pos];
-  const std::string_view dest = args[pos + 1];
+  try {
+    app.parse(argc, argv);
+  } catch (const CLI::ParseError &e) {
+    return app.exit(e);
+  }
 
   const copyfile::CopyResult result =
       use_fs ? copyfile::copy_fs(source, dest) : copyfile::copy(source, dest);

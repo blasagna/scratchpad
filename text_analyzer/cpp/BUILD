@@ -9,7 +9,10 @@ cc_library(
 cc_binary(
     name = "text_analyzer",
     srcs = ["main.cpp"],
-    deps = [":analyzer"],
+    deps = [
+        ":analyzer",
+        "@cli11",
+    ],
 )
 
 cc_test(
