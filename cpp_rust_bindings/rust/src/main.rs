@@ -53,7 +53,29 @@ struct Cli {
     names: bool,
 
     /// The expression to evaluate; standard input is read when it is omitted.
+    ///
+    /// See `expression_value` for why both halves of this are load-bearing.
+    #[arg(allow_hyphen_values = true, value_parser = expression_value)]
     expression: Option<String>,
+}
+
+/// Accepts anything that is not a long option.
+///
+/// `allow_hyphen_values` on the expression is what makes `-2^2` arithmetic
+/// rather than an unknown flag, matching ../cpp/main.cpp, where CLI11 reads a
+/// dash followed by a digit as a value. On its own it goes too far: clap then
+/// hands `--bogus` over as the expression too, and a typo'd flag is evaluated
+/// (`unknown name: 'bogus'`, exit 1) instead of reported. Rejecting `--` here
+/// puts that back as a usage error.
+///
+/// `clap::Arg::allow_negative_numbers` looks like the narrower tool for this and
+/// is not: it requires the whole value to parse as a number, so it takes `-4`
+/// and still refuses `-2^2`.
+fn expression_value(value: &str) -> Result<String, String> {
+    if value.starts_with("--") {
+        return Err("expected an expression".to_string());
+    }
+    Ok(value.to_string())
 }
 
 fn main() -> ExitCode {

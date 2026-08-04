@@ -224,11 +224,12 @@ libraries own, plus one encoding convention. None of it is exprkit behavior:
   exits `2`; CLI11 picks from its own set (`109` for an unexpected argument).
   Each parser words its own diagnostics, exactly as `statkit` lets each runtime
   word its own OS errors.
-- **A leading-dash expression written without `--`.** CLI11 reads a dash
-  followed by a digit as a value, so `exprkit '-2 ^ 2'` evaluates to `-4` in C++
-  and is rejected by clap. Everything else starting with `-` is rejected by
-  both. **Write `exprkit -- '-2 ^ 2'`** and the two agree; that is the spelling
-  used throughout these docs.
+- **An expression starting with a dash and a non-digit, written without `--`.**
+  A leading negative number is fine in both — `exprkit '-2^2'` is `-4` either
+  way. Beyond that clap is the more permissive: it evaluates `-e` and `-x + 1`,
+  where CLI11 classifies them as short options and rejects them. **Write
+  `exprkit -- '-e'`** and the two agree; that is the spelling used throughout
+  these docs.
 - **Input that is not valid UTF-8.** The bindings take `&str`, so the Rust CLI
   replaces a stray byte with U+FFFD before it ever reaches C++. Both CLIs fail
   on the same line with the same exit code and the same message shape; only the
@@ -325,11 +326,16 @@ diff <(printf '0.1 + 0.2\n2 ^ 3 ^ 2\n' | bazel-bin/cpp_rust_bindings/cpp/exprkit
 - **A single quoted expression is what removed the pre-scan.** Both CLIs used to
   accept a list, and both needed a hand-written `split_options` pass to decide
   which arguments were options before handing the rest to the library. Taking
-  one `EXPRESSION` deleted that from both sides. Do not restore
-  `allow_hyphen_values` on the Rust positional to win back bare `-2 ^ 2`: it
-  also makes `-e` and `-h + 1` evaluate in Rust while CLI11 still rejects them,
-  and demotes `--bogus` from a usage error to an expression
-  (`unknown name: 'bogus'`). Two cases fixed, three broken.
+  one `EXPRESSION` deleted that from both sides.
+- **The Rust expression carries `allow_hyphen_values` *and* a `value_parser`,
+  and needs both.** The attribute makes `exprkit '-2^2'` arithmetic rather than
+  an unknown flag — CLI11 does this for free, via its dash-then-digit rule.
+  Alone it goes too far: clap then accepts `--bogus` as the expression, so a
+  typo'd flag is evaluated (`unknown name: 'bogus'`, exit 1) rather than
+  reported, which is the worst shape for it. `expression_value` rejects a `--`
+  prefix and restores the usage error. `clap::Arg::allow_negative_numbers` is
+  not the narrower tool it appears to be: it requires the whole value to parse
+  as a number, so it accepts `-4` and still refuses `-2^2`.
 - **A message that is not valid UTF-8 is converted lossily.** The C++ tokenizer
   works in bytes, so `evaluate("1 + −")` (U+2212) quotes a lone continuation
   byte; it arrives in Rust as U+FFFD rather than failing. Do not put arbitrary

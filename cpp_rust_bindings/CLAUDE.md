@@ -67,10 +67,12 @@ cargo run -q -p exprkit -- '2 ^ 10'
   |---|---|---|
   | `--help` text | CLI11's | clap's |
   | argument-error wording and exit code | CLI11's, `104`/`109`/… | clap's, `2` |
-  | `-2 ^ 2`, `-.5 + 1` unquoted by `--` | evaluated; CLI11 reads a dash-then-digit as a value | rejected |
+  | `-e`, `-x + 1` without `--` | rejected | evaluated |
 
-  Both accept every leading-dash expression once written after `--`, and that
-  is the spelling to use in docs and examples.
+  A leading *negative number* works bare in both — `exprkit '-2^2'` is `-4`
+  either way. The row above is the remainder: clap is the more permissive of the
+  two about a dash followed by a non-digit. Both agree once `--` is used, which
+  is the spelling to prefer in docs and examples.
 - **Each CLI takes exactly one expression, and lets its parser do the parsing.**
   Both did accept a list, with a hand-written `split_options` pre-scan on each
   side deciding what counted as an option. One quoted argument removed the need
@@ -80,11 +82,15 @@ cargo run -q -p exprkit -- '2 ^ 10'
   matched the help flag and printed help with **exit 0** — a wrong answer that
   looks like success. Undeclared, the same argument is an ordinary rejection.
   Do not add the alias back for symmetry with other tools.
-- **Do not put `allow_hyphen_values` back on the Rust positional.** It buys
-  `-2 ^ 2` without `--`, and costs more than it buys: `-e` and `-h + 1` then
-  evaluate in Rust while CLI11 still rejects them, and `--bogus` stops being a
-  usage error at all and is read as an expression (`unknown name: 'bogus'`).
-  Measured: two cases fixed, three broken.
+- **`allow_hyphen_values` on the Rust expression needs its `value_parser`.**
+  The attribute is what makes `exprkit '-2^2'` arithmetic rather than an unknown
+  flag, matching what CLI11 does for free. Alone it goes too far: clap hands
+  `--bogus` over as the expression, so a typo'd flag is *evaluated*
+  (`unknown name: 'bogus'`, exit 1) instead of reported. `expression_value`
+  rejects a `--` prefix and puts that back as a usage error. Do not delete
+  either half, and do not reach for `clap::Arg::allow_negative_numbers` instead
+  — it requires the whole value to parse as a number, so it takes `-4` and still
+  refuses `-2^2`.
 - **stdin is read with `from_utf8_lossy`, not `BufRead::lines()`**, which fails
   a whole run on one stray byte where the C++ CLI carries on.
 - **Test the logic in C++, the seam in Rust.** `cpp/test_exprkit.cpp` owns
