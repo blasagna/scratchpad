@@ -33,6 +33,21 @@ in both text and JSON.** This is the property the golden tests and `bench/run.sh
   follow serde's pretty layout. Multiple files are one concatenated stream; stdin is
   read when no file is given or the file arg is `-`.
 
+## Argument parsing
+
+Each port uses its ecosystem's parser — `getopt_long` in C, CLI11 in C++, clap
+in Rust — so `--help` text and argument diagnostics differ between them and
+nothing compares them. What is shared is the flag surface and the intent of the
+three integer options (at least 1); the *grammar* is each parser's, and the
+three disagree. C reads base 10 with `strtol`, C++ binds `unsigned int` and
+checks with `CLI::Range` (base 0, group separators, surrounding whitespace), and
+Rust's clap uses `u64::from_str`. So `--top-n 010` means 8 in C++ and 10 in the
+other two. **This is deliberate and tabulated in
+[`README.md`](README.md#known-divergence-argument-parsers) — do not "fix" it by
+reintroducing a hand-written validator; an earlier one pinned the C++ port to a
+shape no other port had.** A read failure still exits 1; a bad argument exits
+with whatever the parser chose (1 in C, 2 in Rust, CLI11's codes in C++).
+
 ## Commands
 
 ```sh

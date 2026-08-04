@@ -26,10 +26,25 @@ instead of `fopen`/`fclose`, `std::from_chars` instead of `strtoll`, and
 `std::span<char *>` over `argv` instead of index arithmetic. Messages are
 `std::string_view`, which carries its own length and so keeps embedded NULs intact.
 
-`main.cpp` parses options with a hand-rolled loop rather than `getopt_long`, but it
-**permutes the way GNU `getopt_long` does** — an option is recognized wherever it
-appears, so `simple_logger log.txt --level error msg` behaves identically in all three
-ports. `--` ends option parsing.
+`main.cpp` parses options with CLI11, which permutes the way GNU `getopt_long` does —
+an option is recognized wherever it appears, so `simple_logger log.txt --level error
+msg` behaves identically in all three ports — and writes `--help` and rejects unknown
+options on its own. `--` ends option parsing.
+
+**`--level` is checked with `CLI::IsMember`, and that is the whole validation.** It is
+the one constrained option here, and CLI11 can own its grammar outright: the option is
+bound to a `std::string`, so no conversion runs on the value, and `IsMember` compares
+the bytes as typed — no case folding, no trimming — which is exactly the C port's
+`strcmp` against the same four names. The set itself comes from `logger::kLevelNames`
+rather than being respelled here, and `--help` renders it as
+`TEXT:{debug,info,warning,error}`.
+
+The one CLI11 spelling that would *not* have matched is the obvious one:
+`CLI::CheckedTransformer` maps names onto an enum in a single step, but it also accepts
+the enum's underlying integers, so `--level 3` would mean `error` here and stay a usage
+error in the other two ports. Elsewhere in the repo — `text_analyzer`, `simple_logger`
+before this — that kind of gap is what the hand-written validators behind `->check()`
+exist to close; `--level` no longer needs one.
 
 Two details keep the ports in step: `format_timestamp` composes the string with
 `std::format("{:04}-…")` rather than `strftime("%Y-…")`, since glibc's `%Y` does not

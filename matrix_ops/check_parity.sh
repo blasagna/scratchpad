@@ -6,18 +6,29 @@
 #   ./matrix_ops/check_parity.sh          # build, run every case, report
 #   ./matrix_ops/check_parity.sh --keep   # keep the work dir for inspection
 #
-# The C port is the reference; every other port is diffed against it. Three
-# things are compared: stdout, the exit status, and — unlike simple_logger,
-# where clap's wording legitimately differs — stderr as well. Both ports here
-# hand-write their messages from the same contract, so an error message that
-# drifts is a real divergence and worth catching.
+# The C port is the reference; every other port is diffed against it. What is
+# compared depends on who reports the outcome:
 #
-# The Rust port is deliberately NOT here. It parses with clap, so its
-# diagnostics and its --help cannot match the hand-written ones, and its
-# dimensions pair with operands by index rather than by the order typed —
-# including it would mean exempting most of what this script checks. Its surface
-# is pinned by matrix_ops/rust/tests/cli.rs, and README.md tabulates exactly
-# where it differs.
+#   run_case              — stdout and exit status. The default, and where the
+#                           contract lives: results, shape rules, and every
+#                           error the program itself reports (exit 2 or 1).
+#   run_case_parser_error — stdout only, plus "both ports must fail". These are
+#                           the failures the argument parser reports, and the
+#                           two ports no longer share one: C uses getopt_long,
+#                           C++ uses CLI11, so neither the wording nor the exit
+#                           code is shared. What still has to hold is that the
+#                           same command line is rejected by both.
+#   run_case_status_only  — exit status only, for --help, whose text is now
+#                           CLI11's on the C++ side.
+#
+# Stderr is not compared at all, for the same reason simple_logger's script does
+# not compare it: the messages no longer come from one hand-written contract.
+#
+# The Rust port is deliberately NOT here. Its dimensions pair with operands by
+# index rather than by the order typed, so it disagrees on cases these ports
+# both accept — a difference this script cannot express, since it only ever
+# asserts agreement. Its surface is pinned by matrix_ops/rust/tests/cli.rs, and
+# README.md tabulates exactly where it differs.
 #
 # Builds are unoptimized: there are no timings here, so the --config=opt that
 # bench/run.sh needs does not apply.
@@ -37,6 +48,16 @@ fi
 
 failed=0
 CASES=()
+
+# Per-case comparison policy, filled in by run_case from the two variables
+# below, so the case list itself records which cases are parser-owned.
+declare -A CASE_STREAMS
+declare -A CASE_MUST_FAIL
+
+# Streams the next run_case compares, and whether it only requires that every
+# port failed rather than that they failed alike. Set by the run_case_* wrappers.
+STREAMS="out status"
+MUST_FAIL=0
 
 # Ports under test, reference first.
 binaries() {
@@ -76,6 +97,8 @@ run_case() {
 
   [[ "${stdin_file}" == "-" ]] && stdin_file="/dev/null"
   CASES+=("${name}")
+  CASE_STREAMS["${name}"]="${STREAMS}"
+  CASE_MUST_FAIL["${name}"]="${MUST_FAIL}"
 
   local port bin args arg status
   while IFS='|' read -r port bin; do
@@ -116,17 +139,54 @@ run_case_limited() {
   LIMIT_KB=""
 }
 
+# run_case_parser_error <name> <stdin-file|-> <args...>
+#
+# For a command line the argument parser rejects. getopt_long reports it in the
+# C port and CLI11 in the C++ one, so the message and the exit code are each
+# parser's own; what is asserted is that stdout agrees (empty in both) and that
+# every port rejected it.
+run_case_parser_error() {
+  STREAMS="out"
+  MUST_FAIL=1
+  run_case "$@"
+  STREAMS="out status"
+  MUST_FAIL=0
+}
+
+# run_case_status_only <name> <stdin-file|-> <args...>
+#
+# For --help, whose text the C port hand-writes and the C++ port gets from
+# CLI11. Only the exit status is compared.
+run_case_status_only() {
+  STREAMS="status"
+  run_case "$@"
+  STREAMS="out status"
+}
+
 compare() {
   local name port bin ref_port ref_bin
   IFS='|' read -r ref_port ref_bin < <(binaries)
 
   for name in ${CASES[@]+"${CASES[@]}"}; do
     local case_failed=0
+
+    # A parser-owned case asserts only that every port rejected the command
+    # line, the reference included.
+    if [[ "${CASE_MUST_FAIL[${name}]}" == "1" ]]; then
+      while IFS='|' read -r port bin; do
+        if [[ "$(cat "${WORK}/${name}.${port}.status")" == "0" ]]; then
+          echo "PARITY FAILURE: ${name}: ${port} exited 0, expected a rejection" >&2
+          case_failed=1
+          failed=1
+        fi
+      done < <(binaries)
+    fi
+
     while IFS='|' read -r port bin; do
       [[ "${port}" == "${ref_port}" ]] && continue
 
       local stream
-      for stream in out err status; do
+      for stream in ${CASE_STREAMS[${name}]}; do
         if ! diff -q "${WORK}/${name}.${ref_port}.${stream}" \
                      "${WORK}/${name}.${port}.${stream}" >/dev/null; then
           echo "PARITY FAILURE: ${name}: ${port} differs from ${ref_port} on ${stream}" >&2
@@ -209,7 +269,7 @@ main() {
   run_case stdin_flat     "${WORK}/fixtures/flat6.txt" scale --scalar 2 --rows 2 --cols 3 --file -
 
   # --- option handling ---
-  run_case help               - --help
+  run_case_status_only help   - --help
   run_case permuted_op        - --values "1 2 3" --values "4 5 6" add
   run_case short_flags        - mul -r 2 -c 3 -v "1 2 3 4 5 6" -r 3 -c 2 -v "1 2 3 4 5 6"
 
@@ -228,20 +288,25 @@ main() {
   run_case err_bad_shape      - add --rows 2 --cols 4 --values "1 2 3 4 5 6" --values "1"
   run_case err_uneven_divide  - add --rows 2 --values "1 2 3 4 5" --values "1"
   run_case err_dangling_dims  - add --values "1 2 3 4 5" --rows 2
-  run_case err_zero_rows      - add --rows 0 --values "1 2"
+  run_case_parser_error err_zero_rows - add --rows 0 --values "1 2"
   run_case err_too_many       - add --values "1" --values "2" --values "3"
   run_case err_unknown_op     - frobnicate --values "1" --values "2"
   run_case err_missing_op     - --values "1" --values "2"
   run_case err_wrong_count    - add --values "1"
   run_case err_scale_no_k     - scale --values "1 2"
   run_case err_scalar_misuse  - add --scalar 3 --values "1" --values "2"
-  run_case err_bad_scalar     - scale --scalar abc --values "1"
-  run_case err_scalar_inf     - scale --scalar inf --values "1"
+  run_case_parser_error err_bad_scalar - scale --scalar abc --values "1"
+  run_case_parser_error err_scalar_inf - scale --scalar inf --values "1"
+  # NaN is the one exclusion CLI11 cannot state -- every comparison against it
+  # is false, so it sits inside CLI::Range -- so the C++ port checks it by hand
+  # and reports it itself, at the same exit 2 as C. run_case, not
+  # run_case_parser_error, is what pins that.
+  run_case err_scalar_nan     - scale --scalar nan --values "1"
   run_case err_extra_arg      - add extra --values "1" --values "2"
-  run_case err_unknown_opt    - add --bogus --values "1" --values "2"
-  run_case err_unknown_short  - add -z --values "1" --values "2"
-  run_case err_missing_value  - add --values "1" --values "2" --rows
-  run_case err_missing_short  - add --values "1" --values "2" -r
+  run_case_parser_error err_unknown_opt - add --bogus --values "1" --values "2"
+  run_case_parser_error err_unknown_short - add -z --values "1" --values "2"
+  run_case_parser_error err_missing_value - add --values "1" --values "2" --rows
+  run_case_parser_error err_missing_short - add --values "1" --values "2" -r
 
   # --- attached option values, and the numeric bounds around them ---
   # Everything below was found by a code review, not by this script: the
@@ -255,38 +320,44 @@ main() {
   run_case attached_scalar    - scale --scalar=2.5 --values "1 2"
   run_case attached_precision - scale --scalar 1 --precision=2 --values "0.125"
   run_case attached_file      - scale --scalar 1 --file=@FIXTURE@/a2x3.txt
-  run_case err_value_on_flag  - add --help=x --values "1"
-  run_case err_unknown_clustered - add -zq --values "1" --values "2"
+  # "--help=x" is not here, and cannot be: the C port rejects it as
+  # `error: option '--help' does not take a value` (exit 2) while CLI11 reads it
+  # as a request for help and exits 0. This script only ever asserts agreement,
+  # so like abbreviated long options it cannot pin a difference. Recorded in
+  # README.md instead.
+  run_case_parser_error err_unknown_clustered - add -zq --values "1" --values "2"
 
   # An unknown long option written with a value is an *unknown* option, not a
   # known one misused: the C++ port reported "--bogus does not take a value"
   # because it tested for the attached value before checking the name.
-  run_case err_unknown_long_value - add --bogus=1 --values "1" --values "2"
-  run_case err_unknown_long_empty - add --bogus= --values "1" --values "2"
-  run_case err_unknown_short_value - add -z9 --values "1" --values "2"
+  run_case_parser_error err_unknown_long_value - add --bogus=1 --values "1" --values "2"
+  run_case_parser_error err_unknown_long_empty - add --bogus= --values "1" --values "2"
+  run_case_parser_error err_unknown_short_value - add -z9 --values "1" --values "2"
 
-  # The integer spelling accepted by --rows/--cols/--precision. Every case
-  # below diverged: C's strtol skipped leading whitespace and accepted '+',
-  # C++'s from_chars accepted neither, and " 3" for --precision even disagreed
-  # on the exit status. The rule is now written down as '+?[0-9]+'.
+  # The integer spelling accepted by --rows/--cols/--precision. C writes the
+  # rule down as '+?[0-9]+'; the C++ port takes whatever CLI11's conversion
+  # accepts, which is a superset. Only the cases both ports still agree on can
+  # live here -- the ones where CLI11 is more permissive (leading and trailing
+  # whitespace, base-0 prefixes, '_' and '\'' digit separators) are stdout
+  # divergences and are tabulated in README.md instead, since this script can
+  # only assert agreement.
   run_case plus_signed_rows   - scale --scalar 1 --rows +2 --values "1 2 3 4"
   run_case plus_signed_precision - scale --scalar 1 --precision +3 --values "0.125"
-  run_case err_spaced_rows    - scale --scalar 1 --rows " 2" --values "1 2 3 4"
-  run_case err_spaced_precision - scale --scalar 1 --precision " 3" --values "1.5"
-  run_case err_double_signed_rows - scale --scalar 1 --rows ++2 --values "1 2"
+  run_case_parser_error err_double_signed_rows - scale --scalar 1 --rows ++2 --values "1 2"
+  run_case_parser_error err_fractional_rows - scale --scalar 1 --rows 2.5 --values "1 2 3 4"
 
   # --precision is bounded at both ends now. Past the cap every digit is a zero
   # the trimming removes, and INT_MAX asked one cell for 6.3 GB -- which the C
   # port refused as an int overflow inside snprintf while the C++ port went
   # ahead and printed it.
   run_case precision_at_max   - scale --scalar 1 --precision 1100 --values "0.125"
-  run_case err_precision_over_max - scale --scalar 1 --precision 1101 --values "1.5"
-  run_case err_precision_intmax - scale --scalar 1 --precision 2147483647 --values "1.5"
-  run_case err_precision_over_intmax - scale --scalar 1 --precision 2147483648 --values "1.5"
-  run_case err_precision_uintmax - scale --scalar 1 --precision 4294967296 --values "1.5"
-  run_case err_precision_negative - scale --scalar 1 --precision -1 --values "1.5"
-  run_case err_rows_huge      - scale --scalar 1 --rows 5000000000 --values "1 2 3 4"
-  run_case err_cols_huge      - scale --scalar 1 --cols 5000000000 --values "1 2 3 4"
+  run_case_parser_error err_precision_over_max - scale --scalar 1 --precision 1101 --values "1.5"
+  run_case_parser_error err_precision_intmax - scale --scalar 1 --precision 2147483647 --values "1.5"
+  run_case_parser_error err_precision_over_intmax - scale --scalar 1 --precision 2147483648 --values "1.5"
+  run_case_parser_error err_precision_uintmax - scale --scalar 1 --precision 4294967296 --values "1.5"
+  run_case_parser_error err_precision_negative - scale --scalar 1 --precision -1 --values "1.5"
+  run_case_parser_error err_rows_huge - scale --scalar 1 --rows 5000000000 --values "1 2 3 4"
+  run_case_parser_error err_cols_huge - scale --scalar 1 --cols 5000000000 --values "1 2 3 4"
 
   # A wide render: 309 digits before the point plus 300 after, which overran a
   # fixed buffer in the C port and was reported as "out of memory: Success".

@@ -1,18 +1,22 @@
 #include "logger.hpp"
 
-#include <array>
 #include <cerrno>
 #include <charconv>
+#include <cstddef>
 #include <cstdlib>
 #include <ctime>
 #include <format>
 #include <fstream>
 #include <istream>
 #include <ostream>
-#include <utility>
 
 namespace logger {
 namespace {
+
+// The fixed entry layout: fields are separated by a space and every entry ends
+// with a newline. Not options -- see Format in logger.hpp.
+constexpr std::string_view kDelimiter = " ";
+constexpr std::string_view kSeparator = "\n";
 
 // Flushes and closes an output file, folding any late failure into the stage
 // already reported. A write failure outranks a close failure: it names the
@@ -57,8 +61,6 @@ std::string_view describe(LogStage stage) {
     return "error reading input";
   case LogStage::kBadLevel:
     return "unknown log level";
-  case LogStage::kBadEscape:
-    return "unknown escape sequence";
   case LogStage::kBadTime:
     return "cannot determine the time";
   }
@@ -80,16 +82,9 @@ std::string_view name(Level level) {
 }
 
 std::optional<Level> parse_level(std::string_view text) {
-  static constexpr std::array<std::pair<std::string_view, Level>, 4> kLevels{{
-      {"debug", Level::kDebug},
-      {"info", Level::kInfo},
-      {"warning", Level::kWarning},
-      {"error", Level::kError},
-  }};
-
-  for (const auto &[spelling, level] : kLevels) {
-    if (text == spelling)
-      return level;
+  for (std::size_t i = 0; i < kLevelNames.size(); i++) {
+    if (text == kLevelNames[i])
+      return static_cast<Level>(i);
   }
   return std::nullopt;
 }
@@ -108,40 +103,6 @@ std::optional<std::string> format_timestamp(std::time_t when) {
   return std::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year,
                      parts.tm_mon + 1, parts.tm_mday, parts.tm_hour,
                      parts.tm_min, parts.tm_sec);
-}
-
-std::optional<std::string> unescape(std::string_view text) {
-  std::string result;
-  result.reserve(text.size());
-
-  for (std::size_t i = 0; i < text.size(); i++) {
-    if (text[i] != '\\') {
-      result.push_back(text[i]);
-      continue;
-    }
-
-    // A trailing lone backslash falls through to the default case.
-    const char escape = (i + 1 < text.size()) ? text[i + 1] : '\0';
-    switch (escape) {
-    case 'n':
-      result.push_back('\n');
-      break;
-    case 't':
-      result.push_back('\t');
-      break;
-    case 'r':
-      result.push_back('\r');
-      break;
-    case '\\':
-      result.push_back('\\');
-      break;
-    default:
-      return std::nullopt;
-    }
-    i++;
-  }
-
-  return result;
 }
 
 std::optional<std::time_t> resolve_clock(std::optional<std::string_view> fake,
@@ -178,22 +139,22 @@ std::optional<std::time_t> clock_now() {
 std::string format_entry(const Format &fmt, std::string_view timestamp,
                          std::string_view message) {
   std::string entry;
-  entry.reserve(timestamp.size() + message.size() + fmt.separator.size() + 16);
+  entry.reserve(timestamp.size() + message.size() + 16);
 
   if (fmt.show_timestamp) {
     entry.push_back('[');
     entry.append(timestamp);
     entry.push_back(']');
-    entry.append(fmt.delimiter);
+    entry.append(kDelimiter);
   }
   if (fmt.show_level) {
     entry.push_back('[');
     entry.append(name(fmt.level));
     entry.push_back(']');
-    entry.append(fmt.delimiter);
+    entry.append(kDelimiter);
   }
   entry.append(message);
-  entry.append(fmt.separator);
+  entry.append(kSeparator);
   return entry;
 }
 

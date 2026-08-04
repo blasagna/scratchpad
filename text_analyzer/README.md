@@ -195,3 +195,46 @@ both text and JSON form. Notes on the shared behavior:
 - **Multiple files** are analyzed as a single concatenated stream: one combined
   report, not per-file sections. A word split across a file boundary counts once.
 - **stdin** is read when no file is given, or when the file argument is `-`.
+
+### Known divergence: argument parsers
+
+Each port declares its options to its ecosystem's parser — `getopt_long` in C,
+CLI11 in C++, `clap` in Rust — and takes what that parser gives back. So
+`--help` text, diagnostics, and the exit code after a bad argument differ by
+design, and nothing compares them: a read failure exits `1` everywhere, but a
+usage error exits `1` in C, `2` in Rust, and with CLI11's own codes (`105`
+validation, `109` extras, `114` missing value) in C++.
+
+**The option values differ too.** The flag surface is shared, and all three
+ports want the same thing from `--top-n`, `--max-word-len` and
+`--word-table-cap` — an integer of at least 1 — but each hands the spelling to
+its parser and gets a different grammar. C uses `strtol` in base 10 and rejects
+any trailing junk; C++ binds the option to `unsigned int` and checks it with
+`CLI::Range`, so it accepts whatever `CLI::detail::lexical_cast` does —
+`strtoull` in **base 0**, retried with `_` and `'` group separators stripped and
+with trailing whitespace trimmed; Rust's `clap` uses `u64::from_str`, which
+takes an optional sign and nothing else.
+
+| `--top-n`, `--max-word-len`, `--word-table-cap` | C | C++ | Rust |
+|---|---|---|---|
+| `" 5"` | `5` | `5` | usage error |
+| `"5 "` | usage error | `5` | usage error |
+| `+5` | `5` | `5` | `5` |
+| `0x10`, `0b101`, `0o17` | usage error | `16`, `5`, `15` | usage error |
+| `1_000`, `1'000` | usage error | `1000` | usage error |
+| `010` | `10` | **`8`** | `10` |
+| above `INT_MAX` | usage error | up to `UINT_MAX` | up to `u64::MAX` |
+
+`--top-n 010` is the only entry where every port succeeds and C++ prints a
+*different report*; elsewhere one port refuses a command line another runs. What
+still agrees is the rest of the contract: `0`, `-1`, `2.5`, `5abc` and an empty
+value are refused by all three.
+
+The C++ side is deliberate. An earlier version wrapped a hand-written
+`from_chars` check in a `CLI::Validator` to pin the accepted set, but it was
+pinning it to a shape *no* port actually had — stricter than C, which skips
+leading whitespace and takes a `+`. Handing the grammar to `CLI::Range` costs
+the rows above and removes that third dialect. The golden corpus cannot assert
+any of this, since every port renders the same committed goldens from the same
+flags; the table lives here instead. Same treatment `matrix_ops/README.md` and
+`simple_logger/README.md` give their own.

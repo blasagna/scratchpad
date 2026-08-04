@@ -1,6 +1,7 @@
 #ifndef SIMPLE_LOGGER_CPP_LOGGER_HPP
 #define SIMPLE_LOGGER_CPP_LOGGER_HPP
 
+#include <array>
 #include <ctime>
 #include <filesystem>
 #include <iosfwd>
@@ -12,28 +13,28 @@
 
 namespace logger {
 
-// Defaults shared with the C and Rust ports; they are part of the contract, so
-// they live in the header rather than in an implementation detail.
-inline constexpr std::string_view kDefaultDelimiter = " ";
-inline constexpr std::string_view kDefaultSeparator = "\n";
-
 // Environment variable holding fake epoch seconds for tests.
 inline constexpr std::string_view kFakeTimeVar = "SIMPLE_LOGGER_FAKE_TIME";
 
 // Severity tag written with each entry, ordered least to most severe.
 enum class Level { kDebug, kInfo, kWarning, kError };
 
+// The spellings accepted on the command line, in the same order as the Level
+// enumerators, so an index into one is the other. Exposed because main.cpp
+// hands this very set to CLI11 rather than repeating the four names there.
+inline constexpr std::array<std::string_view, 4> kLevelNames{
+    "debug", "info", "warning", "error"};
+
 // The stage at which a logging operation failed. Stages backed by a libc call
 // carry the failing errno in LogResult::ec; the rest describe bad input.
 enum class LogStage {
   kOk,
-  kOpenFile,  // opening the log file for append failed
-  kWrite,     // a write or flush error occurred on the log file
-  kClose,     // closing the log file failed; data may not be on disk
-  kRead,      // a read error occurred on the message input stream
-  kBadLevel,  // the level name was not debug, info, warning, or error
-  kBadEscape, // a delimiter/separator escape was unrecognized
-  kBadTime,   // the epoch seconds could not be rendered
+  kOpenFile, // opening the log file for append failed
+  kWrite,    // a write or flush error occurred on the log file
+  kClose,    // closing the log file failed; data may not be on disk
+  kRead,     // a read error occurred on the message input stream
+  kBadLevel, // the level name was not debug, info, warning, or error
+  kBadTime,  // the epoch seconds could not be rendered
 };
 
 // Returns a short human-readable label for a stage.
@@ -42,9 +43,9 @@ std::string_view describe(LogStage stage);
 // Returns the uppercase label written for a level ("DEBUG", "INFO", ...).
 std::string_view name(Level level);
 
-// Maps a level name to a Level. Only the exact lowercase spellings "debug",
-// "info", "warning", and "error" are accepted, so every port takes the same
-// set. Returns nullopt for anything else.
+// Maps a level name to a Level. Only the exact spellings in kLevelNames are
+// accepted, so every port takes the same set. Returns nullopt for anything
+// else.
 std::optional<Level> parse_level(std::string_view text);
 
 // Outcome of an operation that touches the filesystem. A stage other than kOk
@@ -59,15 +60,15 @@ struct LogResult {
 
 // How an entry is laid out. An entry is written as
 //
-//   [<timestamp>]<delimiter>[<LEVEL>]<delimiter><message><separator>
+//   [<timestamp>] [<LEVEL>] <message>\n
 //
 // with the timestamp field omitted when show_timestamp is false and the level
 // field omitted when show_level is false; omitting a field drops its trailing
-// delimiter too. The separator follows every entry, including the last, so the
-// next run appends onto a fresh line.
+// space too. The newline follows every entry, including the last, so the next
+// run appends onto a fresh line. The space and the newline are fixed: making
+// them options bought nothing that a pipe through sed could not do, and cost
+// every port an unescaper to spell them on a command line.
 struct Format {
-  std::string delimiter{kDefaultDelimiter};
-  std::string separator{kDefaultSeparator};
   Level level = Level::kInfo;
   bool show_timestamp = true;
   bool show_level = true;
@@ -78,13 +79,6 @@ struct Format {
 // database. Negative values are valid. Returns nullopt when the time cannot be
 // converted or the year does not fit in four digits.
 std::optional<std::string> format_timestamp(std::time_t when);
-
-// Expands backslash escapes in a delimiter or separator. A shell cannot
-// portably hand a program a real newline, so "\n" typed on the command line has
-// to mean one. Exactly four escapes are recognized: \n, \t, \r, and \\. Any
-// other escape, including a trailing lone backslash, yields nullopt rather than
-// passing through, so the accepted set cannot drift between ports.
-std::optional<std::string> unescape(std::string_view text);
 
 // Picks the timestamp for a run, reading the clock once so every entry a single
 // invocation writes shares one timestamp. `fake` is the raw kFakeTimeVar value,

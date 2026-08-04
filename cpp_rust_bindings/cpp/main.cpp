@@ -1,13 +1,16 @@
 // CLI for the C++ exprkit library.
 //
 // ../rust/src/main.rs is the same program written against the Rust bindings.
-// The two print byte-identical output for the same input -- structurally, not
-// by convention: every number they print comes from exprkit::format_value.
+// Every number the two print comes from exprkit::format_value, so results agree
+// structurally rather than by convention. They no longer agree on how many
+// expressions they take: this one accepts a single quoted argument, the Rust
+// one accepts a list. See ../README.md.
 
 #include <iostream>
 #include <string>
 #include <string_view>
-#include <vector>
+
+#include <CLI/CLI.hpp>
 
 #include "exprkit.hpp"
 
@@ -15,22 +18,6 @@ namespace {
 
 constexpr int kExitOk = 0;
 constexpr int kExitError = 1;
-constexpr int kExitUsage = 2;
-
-constexpr std::string_view kUsage =
-    "usage: exprkit [--names] [--help] [EXPRESSION ...]\n"
-    "\n"
-    "Evaluates arithmetic expressions.\n"
-    "\n"
-    "With one or more EXPRESSION arguments, each is evaluated in turn;\n"
-    "otherwise expressions are read one per line from standard input.\n"
-    "Variables assigned with `name = expr` persist across expressions.\n"
-    "Blank lines and lines whose first non-blank character is '#' are\n"
-    "skipped.\n"
-    "\n"
-    "  --names    after the last expression, print every defined name and\n"
-    "             its value, one per line, as `name = value`\n"
-    "  --help     print this message and exit\n";
 
 // is_blank_or_comment - reports whether a line carries no expression.
 bool is_blank_or_comment(std::string_view line) {
@@ -54,39 +41,59 @@ void print_names(const exprkit::Evaluator &evaluator) {
 } // namespace
 
 int main(int argc, char **argv) {
-  bool want_names = false;
-  std::vector<std::string_view> expressions;
+  // The name is passed explicitly because CLI11 otherwise takes argv[0], which
+  // under `bazel run` is the full runfiles path.
+  CLI::App app{"Evaluates arithmetic expressions.\n"
+               "\n"
+               "With an EXPRESSION argument it is evaluated and printed;\n"
+               "otherwise expressions are read one per line from standard "
+               "input,\n"
+               "and variables assigned with `name = expr` persist from one "
+               "line\n"
+               "to the next. Blank lines and lines whose first non-blank\n"
+               "character is '#' are skipped.",
+               "exprkit"};
 
-  for (int i = 1; i < argc; i++) {
-    std::string_view arg = argv[i];
-    if (arg == "--help" || arg == "-h") {
-      std::cout << kUsage;
-      return kExitOk;
-    }
-    if (arg == "--names") {
-      want_names = true;
-    } else if (arg.starts_with("--")) {
-      // Note this catches a bare "--" too. clap, in the Rust CLI, treats "--"
-      // as an end-of-options separator instead; that is one of the two places
-      // the two CLIs deliberately differ (the other is --help text). Both are
-      // argument-parser conventions rather than exprkit behavior.
-      // A hint rather than the usage block: the Rust CLI gets its help text
-      // from clap and could not reproduce kUsage byte for byte, and keeping
-      // every non-help stream identical is worth more than the extra lines.
-      std::cerr << "exprkit: unknown option: " << arg << '\n'
-                << "Try 'exprkit --help' for more information.\n";
-      return kExitUsage;
-    } else {
-      expressions.push_back(arg);
-    }
+  // Only "--help", with no "-h" alias. CLI11 classifies any "-<non-digit>" as a
+  // short option, so with -h declared `exprkit '-h + 1'` matched the help flag
+  // and printed help with exit 0 -- a wrong answer that looks like success.
+  // Undeclared, the same argument is an ordinary unknown-option rejection.
+  app.set_help_flag("--help", "Print this help message and exit");
+
+  bool want_names = false;
+  std::string expression;
+
+  app.add_flag("--names", want_names,
+               "after the expression, print every defined name and its "
+               "value, one per line, as `name = value`");
+  const CLI::Option *expression_opt =
+      app.add_option("expression", expression, "the expression to evaluate")
+          ->type_name("EXPRESSION");
+
+  app.footer(
+      "EXPRESSION is one argument, so quote it: `exprkit '1 + 2'`. Unquoted,\n"
+      "the shell splits it and the extra words are rejected.\n"
+      "\n"
+      "An expression starting with '-' looks like an option, so write\n"
+      "`exprkit -- '-e'` or `exprkit -- '-x + 1'`. A leading negative number,\n"
+      "as in `exprkit '-2 ^ 2'`, needs no separator.");
+
+  // CLI11 word-wraps the description and footer by default, rewrapping prose
+  // that is already laid out to fit. Print both verbatim instead.
+  app.get_formatter()->enable_description_formatting(false);
+  app.get_formatter()->enable_footer_formatting(false);
+
+  try {
+    app.parse(argc, argv);
+  } catch (const CLI::ParseError &e) {
+    return app.exit(e);
   }
 
   exprkit::Evaluator evaluator;
 
-  // One try around the whole run: the first failure stops everything, which is
-  // what makes `exprkit 'x = 1/0' 'x'` fail instead of reporting twice.
+  // One try around the whole run, so a failure reports once and stops.
   try {
-    if (expressions.empty()) {
+    if (expression_opt->count() == 0) {
       std::string line;
       for (long number = 1; std::getline(std::cin, line); number++) {
         if (is_blank_or_comment(line)) {
@@ -96,15 +103,13 @@ int main(int argc, char **argv) {
           std::cout << exprkit::format_value(evaluator.eval(line)) << '\n';
         } catch (const exprkit::ExprError &err) {
           // Only stdin gets a line number; there is nothing to number when the
-          // expressions came from the command line.
+          // expression came from the command line.
           std::cerr << "exprkit: line " << number << ": " << err.what() << '\n';
           return kExitError;
         }
       }
     } else {
-      for (std::string_view expression : expressions) {
-        std::cout << exprkit::format_value(evaluator.eval(expression)) << '\n';
-      }
+      std::cout << exprkit::format_value(evaluator.eval(expression)) << '\n';
     }
 
     if (want_names) {

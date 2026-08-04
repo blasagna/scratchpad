@@ -1,12 +1,11 @@
-#include <array>
-#include <charconv>
 #include <fstream>
 #include <iostream>
-#include <optional>
-#include <span>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <CLI/CLI.hpp>
 
 #include "analyzer.hpp"
 
@@ -14,83 +13,28 @@ namespace {
 
 using text_analyzer::AnalyzerConfig;
 
-constexpr std::string_view kUsage = "usage: text_analyzer [options] [file...]\n"
-                                    "       text_analyzer -h | --help\n";
-
 // Argument that means "read stdin", and the label used for it in errors.
 constexpr std::string_view kStdinArg = "-";
 constexpr std::string_view kStdinLabel = "<stdin>";
 
-// The integer options, each paired with the config field it sets. Listing them
-// once keeps the "--flag N" and "--flag=N" paths in sync.
-constexpr std::array<
-    std::pair<std::string_view, unsigned int AnalyzerConfig::*>, 3>
-    kIntFlags = {{
-        {"--top-n", &AnalyzerConfig::top_n},
-        {"--max-word-len", &AnalyzerConfig::max_word_len},
-        {"--word-table-cap", &AnalyzerConfig::word_table_init_cap},
-    }};
-
-// Returns the config field an integer flag sets, or nullptr if name is not one.
-unsigned int AnalyzerConfig::*int_flag_field(std::string_view name) {
-  for (const auto &[flag, field] : kIntFlags) {
-    if (flag == name)
-      return field;
-  }
-  return nullptr;
-}
-
-void print_help() {
-  std::cout << kUsage
-            << "\n"
-               "Reads text files and prints statistics:\n"
-               "  - total line, blank line, word, character, digit, and "
-               "punctuation counts\n"
-               "  - word length distribution (mean, min, max, quartiles)\n"
-               "  - top N most frequent words (case-insensitive)\n"
-               "  - top N most frequent non-space characters\n"
-               "\n"
-               "Multiple files are analyzed as a single concatenated stream. "
-               "Reads\n"
-               "stdin when no file is given or when the file is '-'.\n"
-               "\n"
-               "Input is treated as ASCII bytes: characters are counted as "
-               "bytes, not\n"
-               "Unicode codepoints, and any non-ASCII byte separates words.\n"
-               "\n"
-               "Options:\n";
-  std::cout
-      << "  --top-n N           number of top words/chars to report (default: "
-      << text_analyzer::kDefaultTopN << ")\n";
-  std::cout << "  --max-word-len N    max characters per word before "
-               "truncation (default: "
-            << text_analyzer::kDefaultMaxWordLen << ")\n";
-  std::cout << "  --word-table-cap N  initial word frequency table capacity "
-               "(default: "
-            << text_analyzer::kDefaultWordTableCap << ")\n";
-  std::cout
-      << "  --json              print the summary as JSON instead of text\n"
-         "  -h, --help          show this help\n";
-}
-
-void print_usage_error() { std::cerr << kUsage; }
-
-// Parses an entire string_view as a positive integer. Returns nullopt on any
-// junk, a leading sign, or a value of zero (the config fields must be >= 1).
-std::optional<unsigned int> parse_positive(std::string_view sv) {
-  unsigned int value = 0;
-  const char *end = sv.data() + sv.size();
-  auto [ptr, ec] = std::from_chars(sv.data(), end, value);
-  if (ec != std::errc{} || ptr != end || value == 0)
-    return std::nullopt;
-  return value;
-}
-
-struct Options {
-  AnalyzerConfig config;
-  bool json = false;
-  std::vector<std::string_view> filenames;
-};
+// The three numeric options are bound to their real type and checked with
+// CLI11's own CLI::Range, so the library owns the grammar as well as the range.
+// CLI::Range is the right shape for this and CLI::PositiveNumber is not: the
+// latter is a Range<double>, so --top-n 2.5 would clear the check and fail
+// afterwards in the conversion, reporting the wrong kind of error.
+//
+// Handing over the grammar widens what this port accepts relative to C, whose
+// strtol reads base 10 and stops at the first junk character, while CLI11 runs
+// strtoull in base 0, strips '_' and '\'' group separators, and trims trailing
+// whitespace. So `--top-n 0x10`, `1_000` and `"5 "` work here and are usage
+// errors there, and `--top-n 010` even means eight here and ten there. It
+// narrows nothing: CLI11 skips leading whitespace and honours a leading '+'
+// just as strtol does, and rejects a leading '-' before ever reaching
+// strtoull. The divergence is deliberate and tabulated in README.md; the golden
+// tests cannot assert it, since each port renders the same committed goldens
+// from the same flags.
+const CLI::Validator kPositive{
+    CLI::Range(1u, std::numeric_limits<unsigned int>::max(), "POSITIVE")};
 
 // Feeds one named input into analyzer, where "-" means stdin. Returns false
 // after reporting the failure against the input's display name.
@@ -121,79 +65,66 @@ bool feed_named(text_analyzer::Analyzer &analyzer, std::string_view name) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-  const std::span<char *> args(argv, static_cast<std::size_t>(argc));
-  Options opts;
+  // The name is passed explicitly because CLI11 otherwise takes argv[0], which
+  // under `bazel run` is the full runfiles path.
+  CLI::App app{
+      "Reads text files and prints statistics:\n"
+      "  - total line, blank line, word, character, digit, and punctuation "
+      "counts\n"
+      "  - word length distribution (mean, min, max, quartiles)\n"
+      "  - top N most frequent words (case-insensitive)\n"
+      "  - top N most frequent non-space characters\n"
+      "\n"
+      "Multiple files are analyzed as a single concatenated stream. Reads\n"
+      "stdin when no file is given or when the file is '-'.\n"
+      "\n"
+      "Input is treated as ASCII bytes: characters are counted as bytes, not\n"
+      "Unicode codepoints, and any non-ASCII byte separates words.",
+      "text_analyzer"};
 
-  for (std::size_t i = 1; i < args.size(); i++) {
-    const std::string_view arg = args[i];
+  AnalyzerConfig config;
+  bool json = false;
+  std::vector<std::string> filenames;
 
-    if (arg == "-h" || arg == "--help") {
-      print_help();
-      return 0;
-    }
-    if (arg == "--json") {
-      opts.json = true;
-      continue;
-    }
+  app.add_option("--top-n", config.top_n, "number of top words/chars to report")
+      ->check(kPositive)
+      ->capture_default_str();
+  app.add_option("--max-word-len", config.max_word_len,
+                 "max characters per word before truncation")
+      ->check(kPositive)
+      ->capture_default_str();
+  app.add_option("--word-table-cap", config.word_table_init_cap,
+                 "initial word frequency table capacity")
+      ->check(kPositive)
+      ->capture_default_str();
+  app.add_flag("--json", json, "print the summary as JSON instead of text");
+  app.add_option("files", filenames, "files to analyze ('-' for stdin)");
 
-    // Integer options, accepting both "--flag N" and "--flag=N".
-    if (auto field = int_flag_field(arg); field != nullptr) {
-      if (i + 1 >= args.size()) {
-        std::cerr << "error: missing value for " << arg << "\n";
-        print_usage_error();
-        return 1;
-      }
-      const std::string_view value = args[++i];
-      const std::optional<unsigned int> n = parse_positive(value);
-      if (!n) {
-        std::cerr << "error: invalid value '" << value << "' for " << arg
-                  << " (expected a positive integer)\n";
-        print_usage_error();
-        return 1;
-      }
-      opts.config.*field = *n;
-      continue;
-    }
-    if (const std::size_t eq = arg.find('=');
-        eq != std::string_view::npos && arg.starts_with("--")) {
-      const std::string_view name = arg.substr(0, eq);
-      const std::string_view value = arg.substr(eq + 1);
-      if (auto field = int_flag_field(name); field != nullptr) {
-        const std::optional<unsigned int> n = parse_positive(value);
-        if (!n) {
-          std::cerr << "error: invalid value '" << value << "' for " << name
-                    << " (expected a positive integer)\n";
-          print_usage_error();
-          return 1;
-        }
-        opts.config.*field = *n;
-        continue;
-      }
-    }
+  // CLI11 word-wraps the description by default, which strips the leading
+  // spaces the bulleted list of statistics relies on. The prose here is already
+  // laid out; print it verbatim.
+  app.get_formatter()->enable_description_formatting(false);
+  app.get_formatter()->enable_footer_formatting(false);
 
-    // "-" is a positional meaning stdin, so check it before rejecting options.
-    if (arg != kStdinArg && arg.starts_with("-")) {
-      std::cerr << "error: unknown option '" << arg << "'\n";
-      print_usage_error();
-      return 1;
-    }
-
-    opts.filenames.push_back(arg);
+  try {
+    app.parse(argc, argv);
+  } catch (const CLI::ParseError &e) {
+    return app.exit(e);
   }
 
-  text_analyzer::Analyzer analyzer(opts.config);
-  if (opts.filenames.empty()) {
+  text_analyzer::Analyzer analyzer(config);
+  if (filenames.empty()) {
     if (!feed_named(analyzer, kStdinArg))
       return 1;
   } else {
-    for (const std::string_view name : opts.filenames) {
+    for (const std::string &name : filenames) {
       if (!feed_named(analyzer, name))
         return 1;
     }
   }
 
   const text_analyzer::TextStats stats = analyzer.finish();
-  if (opts.json) {
+  if (json) {
     text_analyzer::print_stats_json(std::cout, stats);
   } else {
     text_analyzer::print_stats(std::cout, stats);

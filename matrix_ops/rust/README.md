@@ -10,21 +10,29 @@ cargo test -p matrix_ops
 
 ## What this port does not do
 
-The C and C++ ports agree byte for byte on every stream, including stderr, and
-[`../check_parity.sh`](../check_parity.sh) holds them there across 86 cases.
-**This port is not in that script.** It uses `clap` the ordinary way and accepts
-clap's behavior wherever it differs.
+The C and C++ ports agree on results and exit status, and
+[`../check_parity.sh`](../check_parity.sh) holds them there across 85 cases.
+**This port is not in that script.**
 
-That is a deliberate trade, and the cost is worth writing down:
+The reason is no longer the diagnostics. Every port now delegates parsing to a
+library — `getopt_long`, CLI11, `clap` — so all three word their own `--help`
+and their own argument errors, and the script stopped comparing stderr. What
+keeps this port out is the operand ordering, which shows up in *stdout*:
 
 | | C and C++ | Rust |
 |---|---|---|
-| usage diagnostics | `error: unknown option '--x'`, hand-written | clap's wording |
-| `--help` | a hand-written 40-line text | clap's rendering |
 | dimensions | bind to the *next* operand, in the order typed | the Nth `--rows` describes the Nth operand |
 | mixed operand sources | interleaved in the order typed | inline operands ordered before file ones |
 | hex floats (`0x1p3`) | accepted, via `strtod` | rejected |
 | out of memory | `matrix_ops: out of memory`, exit 1 | the process aborts |
+
+The ordering row is the one that cannot be fixed cheaply. `clap` cannot report
+the order two different options were interleaved in, so pairing by index is the
+practical choice; the C++ port keeps C's rule only because CLI11 exposes
+`App::parse_order()`. Reconstructing it under clap is possible —
+`ArgMatches::indices_of` draws from one counter shared by every argument — but
+it is a lot of machinery for a rule that only bites in spellings C rejects
+anyway.
 
 Everything else matches, and the parts that matter to someone actually using the
 tool match exactly: the four operations, the shape rules, and the rendering.

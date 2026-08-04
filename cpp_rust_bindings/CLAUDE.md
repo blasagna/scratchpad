@@ -58,16 +58,41 @@ cargo run -q -p exprkit -- '2 ^ 10'
   `exprkit::format_value`, the C++ formatter, so there is no second
   implementation to keep in sync. **Do not "simplify" the Rust CLI by formatting
   floats in Rust** — `tests/evaluate.rs::the_two_clis_share_one_formatter` is
-  the tripwire. Three documented exceptions, all argument-parsing or encoding
-  conventions rather than exprkit behavior: `--help` text, a bare `--` (clap
-  separator vs. unknown option), and non-UTF-8 input (spelled `'�'` rather than
-  the raw byte). Nothing else may drift.
-- **The Rust CLI's option handling is not just `#[derive(Parser)]`.**
-  `allow_hyphen_values` is required so `-2 ^ 2` is arithmetic, but it also makes
-  clap ignore options after the first positional; `split_options` restores the
-  C++'s position-independent scan. Do not delete either half. Likewise, stdin is
-  read with `from_utf8_lossy`, not `BufRead::lines()`, which fails a whole run
-  on one stray byte.
+  the tripwire. What is guaranteed is the *result* of evaluating an expression
+  and the exit code for it (`0` ok, `1` evaluation error), over the shared
+  surface: one quoted EXPRESSION, stdin, and `--names`. Outside that sit the
+  things the two argument parsers own, none of them exprkit behavior:
+
+  | | C++ (CLI11) | Rust (clap) |
+  |---|---|---|
+  | `--help` text | CLI11's | clap's |
+  | argument-error wording and exit code | CLI11's, `104`/`109`/… | clap's, `2` |
+  | `-e`, `-x + 1` without `--` | rejected | evaluated |
+
+  A leading *negative number* works bare in both — `exprkit '-2^2'` is `-4`
+  either way. The row above is the remainder: clap is the more permissive of the
+  two about a dash followed by a non-digit. Both agree once `--` is used, which
+  is the spelling to prefer in docs and examples.
+- **Each CLI takes exactly one expression, and lets its parser do the parsing.**
+  Both did accept a list, with a hand-written `split_options` pre-scan on each
+  side deciding what counted as an option. One quoted argument removed the need
+  for both. An expression beginning with `-` is written after `--`.
+- **Neither declares a `-h` alias; only `--help`.** Both parsers classify
+  `-<non-digit>` as a short option, so with `-h` declared, `exprkit '-h + 1'`
+  matched the help flag and printed help with **exit 0** — a wrong answer that
+  looks like success. Undeclared, the same argument is an ordinary rejection.
+  Do not add the alias back for symmetry with other tools.
+- **`allow_hyphen_values` on the Rust expression needs its `value_parser`.**
+  The attribute is what makes `exprkit '-2^2'` arithmetic rather than an unknown
+  flag, matching what CLI11 does for free. Alone it goes too far: clap hands
+  `--bogus` over as the expression, so a typo'd flag is *evaluated*
+  (`unknown name: 'bogus'`, exit 1) instead of reported. `expression_value`
+  rejects a `--` prefix and puts that back as a usage error. Do not delete
+  either half, and do not reach for `clap::Arg::allow_negative_numbers` instead
+  — it requires the whole value to parse as a number, so it takes `-4` and still
+  refuses `-2^2`.
+- **stdin is read with `from_utf8_lossy`, not `BufRead::lines()`**, which fails
+  a whole run on one stray byte where the C++ CLI carries on.
 - **Test the logic in C++, the seam in Rust.** `cpp/test_exprkit.cpp` owns
   precedence, parsing, and the error taxonomy. The Rust tests deliberately do
   not re-check arithmetic; they check what only they can — bit-for-bit floats,

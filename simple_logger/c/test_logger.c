@@ -15,8 +15,6 @@ static const char *kMsg = "hello";
 
 static LogFormat default_format(void) {
   LogFormat fmt;
-  fmt.delimiter = " ";
-  fmt.separator = "\n";
   fmt.level = LOG_LEVEL_INFO;
   fmt.show_timestamp = 1;
   fmt.show_level = 1;
@@ -28,13 +26,6 @@ static std::string stamp(time_t when) {
   char buf[LOG_TIMESTAMP_BUF];
   EXPECT_EQ(log_format_timestamp(when, buf, sizeof(buf)), LOG_OK);
   return std::string(buf);
-}
-
-/* Copies and frees the malloc'd result of log_unescape. */
-static std::string take(char *p) {
-  std::string s(p);
-  free(p);
-  return s;
 }
 
 /* Runs body against an in-memory output stream and returns what it wrote. */
@@ -166,42 +157,6 @@ TEST(LevelStr, UppercaseLabels) {
   EXPECT_STREQ(log_level_str(LOG_LEVEL_ERROR), "ERROR");
 }
 
-/* --- log_unescape --- */
-
-TEST(Unescape, PassesPlainText) {
-  char *out = nullptr;
-  ASSERT_EQ(log_unescape(" | ", &out), LOG_OK);
-  EXPECT_EQ(take(out), " | ");
-}
-
-TEST(Unescape, TranslatesNewlineTabCarriageReturn) {
-  char *out = nullptr;
-  ASSERT_EQ(log_unescape("\\n\\t\\r", &out), LOG_OK);
-  EXPECT_EQ(take(out), "\n\t\r");
-}
-
-TEST(Unescape, TranslatesDoubleBackslash) {
-  char *out = nullptr;
-  ASSERT_EQ(log_unescape("a\\\\b", &out), LOG_OK);
-  EXPECT_EQ(take(out), "a\\b");
-}
-
-TEST(Unescape, RejectsUnknownEscape) {
-  char *out = nullptr;
-  EXPECT_EQ(log_unescape("\\q", &out), LOG_ERR_BAD_ESCAPE);
-}
-
-TEST(Unescape, RejectsTrailingBackslash) {
-  char *out = nullptr;
-  EXPECT_EQ(log_unescape("ab\\", &out), LOG_ERR_BAD_ESCAPE);
-}
-
-TEST(Unescape, HandlesEmptyString) {
-  char *out = nullptr;
-  ASSERT_EQ(log_unescape("", &out), LOG_OK);
-  EXPECT_EQ(take(out), "");
-}
-
 /* --- log_clock_resolve --- */
 
 TEST(ClockResolve, UsesRealNowWhenUnset) {
@@ -270,24 +225,6 @@ TEST(WriteEntry, EachLevelLabel) {
   }
 }
 
-TEST(WriteEntry, CustomDelimiter) {
-  LogFormat fmt = default_format();
-  fmt.delimiter = " | ";
-  std::string out = captured([&](FILE *f) {
-    EXPECT_EQ(log_write_entry(f, &fmt, "TS", kMsg, strlen(kMsg)), LOG_OK);
-  });
-  EXPECT_EQ(out, "[TS] | [INFO] | hello\n");
-}
-
-TEST(WriteEntry, CustomSeparator) {
-  LogFormat fmt = default_format();
-  fmt.separator = "\n\n";
-  std::string out = captured([&](FILE *f) {
-    EXPECT_EQ(log_write_entry(f, &fmt, "TS", kMsg, strlen(kMsg)), LOG_OK);
-  });
-  EXPECT_EQ(out, "[TS] [INFO] hello\n\n");
-}
-
 TEST(WriteEntry, WithoutTimestamp) {
   LogFormat fmt = default_format();
   fmt.show_timestamp = 0;
@@ -353,6 +290,8 @@ TEST(WriteEntry, NonAsciiBytesArePassedThrough) {
 
 /* --- log_write_messages --- */
 
+/* The trailing newline after the last entry is deliberate: it is what makes the
+ * next run start on a fresh line. */
 TEST(WriteMessages, WritesOneEntryPerMessage) {
   LogFormat fmt = default_format();
   const char *messages[] = {"one", "two", "three"};
@@ -377,16 +316,6 @@ TEST(WriteMessages, ZeroMessagesWritesNothing) {
     EXPECT_EQ(log_write_messages(f, &fmt, "TS", nullptr, 0), LOG_OK);
   });
   EXPECT_EQ(out, "");
-}
-
-TEST(WriteMessages, AlwaysEndsWithTheSeparator) {
-  LogFormat fmt = default_format();
-  fmt.separator = "|";
-  const char *messages[] = {"a", "b"};
-  std::string out = captured([&](FILE *f) {
-    EXPECT_EQ(log_write_messages(f, &fmt, "TS", messages, 2), LOG_OK);
-  });
-  EXPECT_EQ(out, "[TS] [INFO] a|[TS] [INFO] b|");
 }
 
 /* --- log_write_lines --- */
@@ -480,10 +409,9 @@ TEST(Append, OpenFailsOnADirectory) {
 /* --- log_result_str --- */
 
 TEST(ResultStr, NamesEveryStage) {
-  const LogResult all[] = {
-      LOG_OK,       LOG_ERR_OPEN,      LOG_ERR_WRITE,      LOG_ERR_CLOSE,
-      LOG_ERR_READ, LOG_ERR_BAD_LEVEL, LOG_ERR_BAD_ESCAPE, LOG_ERR_BAD_TIME,
-      LOG_ERR_NOMEM};
+  const LogResult all[] = {LOG_OK,           LOG_ERR_OPEN, LOG_ERR_WRITE,
+                           LOG_ERR_CLOSE,    LOG_ERR_READ, LOG_ERR_BAD_LEVEL,
+                           LOG_ERR_BAD_TIME, LOG_ERR_NOMEM};
   for (LogResult r : all) {
     const char *label = log_result_str(r);
     EXPECT_NE(label, nullptr);

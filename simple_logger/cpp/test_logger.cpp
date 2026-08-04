@@ -132,28 +132,6 @@ TEST(LevelName, UppercaseLabels) {
   EXPECT_EQ(logger::name(Level::kError), "ERROR");
 }
 
-// --- unescape ---
-
-TEST(Unescape, PassesPlainText) { EXPECT_EQ(logger::unescape(" | "), " | "); }
-
-TEST(Unescape, TranslatesNewlineTabCarriageReturn) {
-  EXPECT_EQ(logger::unescape("\\n\\t\\r"), "\n\t\r");
-}
-
-TEST(Unescape, TranslatesDoubleBackslash) {
-  EXPECT_EQ(logger::unescape("a\\\\b"), "a\\b");
-}
-
-TEST(Unescape, RejectsUnknownEscape) {
-  EXPECT_FALSE(logger::unescape("\\q").has_value());
-}
-
-TEST(Unescape, RejectsTrailingBackslash) {
-  EXPECT_FALSE(logger::unescape("ab\\").has_value());
-}
-
-TEST(Unescape, HandlesEmptyString) { EXPECT_EQ(logger::unescape(""), ""); }
-
 // --- resolve_clock ---
 
 TEST(ResolveClock, UsesRealNowWhenUnset) {
@@ -209,18 +187,6 @@ TEST(FormatEntry, EachLevelLabel) {
   }
 }
 
-TEST(FormatEntry, CustomDelimiter) {
-  Format fmt;
-  fmt.delimiter = " | ";
-  EXPECT_EQ(logger::format_entry(fmt, "TS", kMsg), "[TS] | [INFO] | hello\n");
-}
-
-TEST(FormatEntry, CustomSeparator) {
-  Format fmt;
-  fmt.separator = "\n\n";
-  EXPECT_EQ(logger::format_entry(fmt, "TS", kMsg), "[TS] [INFO] hello\n\n");
-}
-
 TEST(FormatEntry, WithoutTimestamp) {
   Format fmt;
   fmt.show_timestamp = false;
@@ -266,6 +232,8 @@ TEST(FormatEntry, NonAsciiBytesArePassedThrough) {
 
 // --- write_messages ---
 
+// The trailing newline after the last entry is deliberate: it is what makes the
+// next run start on a fresh line.
 TEST(WriteMessages, WritesOneEntryPerMessage) {
   const Format fmt;
   const std::vector<std::string_view> messages{"one", "two", "three"};
@@ -291,16 +259,6 @@ TEST(WriteMessages, ZeroMessagesWritesNothing) {
     EXPECT_EQ(logger::write_messages(o, fmt, "TS", messages), LogStage::kOk);
   });
   EXPECT_EQ(out, "");
-}
-
-TEST(WriteMessages, AlwaysEndsWithTheSeparator) {
-  Format fmt;
-  fmt.separator = "|";
-  const std::vector<std::string_view> messages{"a", "b"};
-  const std::string out = captured([&](std::ostream &o) {
-    EXPECT_EQ(logger::write_messages(o, fmt, "TS", messages), LogStage::kOk);
-  });
-  EXPECT_EQ(out, "[TS] [INFO] a|[TS] [INFO] b|");
 }
 
 // --- write_lines ---
@@ -408,10 +366,10 @@ TEST(Append, OpenFailsOnADirectory) {
 // --- describe ---
 
 TEST(Describe, NamesEveryStage) {
-  const std::array<LogStage, 8> all{
-      LogStage::kOk,        LogStage::kOpenFile, LogStage::kWrite,
-      LogStage::kClose,     LogStage::kRead,     LogStage::kBadLevel,
-      LogStage::kBadEscape, LogStage::kBadTime,
+  const std::array<LogStage, 7> all{
+      LogStage::kOk,      LogStage::kOpenFile, LogStage::kWrite,
+      LogStage::kClose,   LogStage::kRead,     LogStage::kBadLevel,
+      LogStage::kBadTime,
   };
   for (const LogStage stage : all)
     EXPECT_NE(logger::describe(stage), "unknown error");

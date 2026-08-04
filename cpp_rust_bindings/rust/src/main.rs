@@ -1,16 +1,16 @@
 //! CLI for the Rust `exprkit` bindings.
 //!
 //! `../cpp/main.cpp` is the same program written directly against the C++
-//! library, and prints byte-identical output for the same input. That is not a
+//! library, and prints byte-identical results for the same input. That is not a
 //! convention being maintained by hand: the two share their formatter, because
 //! `exprkit::format_value` is the C++ one reached through the bindings.
 //!
-//! Three things are outside that guarantee, all of them argument-parsing or
-//! encoding conventions rather than exprkit behavior:
+//! Both take a single quoted EXPRESSION and let their argument parser do the
+//! parsing -- clap here, CLI11 there -- so what falls outside the guarantee is
+//! what those two libraries own, plus one encoding convention:
 //!
-//! * `--help` text. clap writes this one; the C++ hand-rolls its own.
-//! * A bare `--`. clap takes it as an end-of-options separator, the C++ CLI
-//!   reports it as an unknown option.
+//! * `--help` text, and the wording and exit code of an argument error. clap
+//!   exits 2, CLI11 picks from its own set.
 //! * Input that is not valid UTF-8. The bindings take `&str`, so a stray byte
 //!   is replaced with U+FFFD and the error message spells it differently --
 //!   same failure, same exit code, different character.
@@ -18,78 +18,68 @@
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 use exprkit::{Evaluator, ExprError, format_value};
 
 const EXIT_ERROR: u8 = 1;
-const EXIT_USAGE: u8 = 2;
 
 #[derive(Parser)]
 #[command(
     name = "exprkit",
     about = "Evaluates arithmetic expressions.",
     long_about = "Evaluates arithmetic expressions.\n\n\
-                  With one or more EXPRESSION arguments, each is evaluated in turn; \
-                  otherwise expressions are read one per line from standard input. \
-                  Variables assigned with `name = expr` persist across expressions. \
-                  Blank lines and lines whose first non-blank character is '#' are skipped."
+                  With an EXPRESSION argument it is evaluated and printed; otherwise \
+                  expressions are read one per line from standard input, and variables \
+                  assigned with `name = expr` persist from one line to the next. Blank \
+                  lines and lines whose first non-blank character is '#' are skipped.\n\n\
+                  EXPRESSION is one argument, so quote it: `exprkit '1 + 2'`. An \
+                  expression starting with '-' looks like an option, so write \
+                  `exprkit -- '-e'`; a leading negative number, as in `exprkit '-2 ^ 2'`, \
+                  needs no separator.",
+    // Only `--help`, with no `-h` alias, matching ../cpp/main.cpp. With `-h`
+    // declared, `exprkit '-h + 1'` matches the help flag and prints help with
+    // exit 0 -- a wrong answer that looks like success. Undeclared, the same
+    // argument is an ordinary unknown-option rejection.
+    disable_help_flag = true
 )]
 struct Cli {
-    /// After the last expression, print every defined name and its value.
+    /// Print help.
+    #[arg(long, action = ArgAction::Help)]
+    help: Option<bool>,
+
+    /// After the expression, print every defined name and its value.
     #[arg(long)]
     names: bool,
 
-    /// Expressions to evaluate; standard input is read when none are given.
+    /// The expression to evaluate; standard input is read when it is omitted.
     ///
-    /// `allow_hyphen_values` is required, not cosmetic: without it clap reads
-    /// `-2 ^ 2` as an unknown flag and exits 2, while the C++ CLI evaluates it
-    /// to -4. A leading minus is ordinary arithmetic, so it cannot be a usage
-    /// error here.
-    ///
-    /// It costs two things, both taken back by `split_options` below: clap
-    /// stops rejecting unknown options, and it stops recognizing *any* option
-    /// once the first positional appears, so `exprkit '1+1' --names` would
-    /// otherwise treat `--names` as an expression.
-    #[arg(allow_hyphen_values = true)]
-    expressions: Vec<String>,
+    /// See `expression_value` for why both halves of this are load-bearing.
+    #[arg(allow_hyphen_values = true, value_parser = expression_value)]
+    expression: Option<String>,
 }
 
-/// What `split_options` found in the leftover positional arguments.
-enum Options {
-    /// The real expressions, with any late `--names` folded into the flag.
-    Expressions(Vec<String>),
-    /// A late `--help`; the C++ CLI prints usage and exits 0 wherever it sits.
-    Help,
-    /// An unrecognized `--` argument, to report as a usage error.
-    Unknown(String),
+/// Accepts anything that is not a long option.
+///
+/// `allow_hyphen_values` on the expression is what makes `-2^2` arithmetic
+/// rather than an unknown flag, matching ../cpp/main.cpp, where CLI11 reads a
+/// dash followed by a digit as a value. On its own it goes too far: clap then
+/// hands `--bogus` over as the expression too, and a typo'd flag is evaluated
+/// (`unknown name: 'bogus'`, exit 1) instead of reported. Rejecting `--` here
+/// puts that back as a usage error.
+///
+/// `clap::Arg::allow_negative_numbers` looks like the narrower tool for this and
+/// is not: it requires the whole value to parse as a number, so it takes `-4`
+/// and still refuses `-2^2`.
+fn expression_value(value: &str) -> Result<String, String> {
+    if value.starts_with("--") {
+        return Err("expected an expression".to_string());
+    }
+    Ok(value.to_string())
 }
 
 fn main() -> ExitCode {
-    let mut cli = Cli::parse();
-
-    // The C++ CLI scans every argument for options regardless of position,
-    // because it hand-rolls its parser. clap with allow_hyphen_values does not,
-    // so this pass restores C-style semantics over what clap left behind.
-    match split_options(std::mem::take(&mut cli.expressions), &mut cli.names) {
-        Options::Expressions(expressions) => cli.expressions = expressions,
-        Options::Help => {
-            // Exits 0, as `clap` does for an early --help and the C++ does for
-            // a late one. The text itself is clap's and differs from the C++
-            // usage block -- the one accepted difference between the two CLIs.
-            let mut command = <Cli as clap::CommandFactory>::command();
-            if command.print_long_help().is_err() {
-                return ExitCode::from(EXIT_ERROR);
-            }
-            return ExitCode::SUCCESS;
-        }
-        Options::Unknown(option) => {
-            // Kept byte-identical with the same path in ../cpp/main.cpp.
-            eprintln!("exprkit: unknown option: {option}");
-            eprintln!("Try 'exprkit --help' for more information.");
-            return ExitCode::from(EXIT_USAGE);
-        }
-    }
+    let cli = Cli::parse();
 
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
@@ -98,27 +88,6 @@ fn main() -> ExitCode {
             ExitCode::from(EXIT_ERROR)
         }
     }
-}
-
-/// Pulls options out of the positional arguments clap handed back.
-///
-/// A single `-` is deliberately not an option: `-2 ^ 2` is an expression, and
-/// so is `-x`. Only `--` prefixes are considered, matching `../cpp/main.cpp`.
-fn split_options(arguments: Vec<String>, names: &mut bool) -> Options {
-    let mut expressions = Vec::with_capacity(arguments.len());
-
-    for argument in arguments {
-        match argument.as_str() {
-            "--names" => *names = true,
-            "--help" => return Options::Help,
-            argument if argument.starts_with("--") => {
-                return Options::Unknown(argument.to_string());
-            }
-            _ => expressions.push(argument),
-        }
-    }
-
-    Options::Expressions(expressions)
 }
 
 /// Does the work, returning the message to print on failure.
@@ -131,7 +100,10 @@ fn run(cli: &Cli) -> Result<(), String> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if cli.expressions.is_empty() {
+    if let Some(expression) = &cli.expression {
+        let value = evaluator.eval(expression).map_err(|err| err.to_string())?;
+        writeln!(out, "{}", format_value(value)).map_err(|err| err.to_string())?;
+    } else {
         let mut input = io::stdin().lock();
         let mut number = 0;
         // Deliberately not `BufRead::lines()`: that validates UTF-8 over the
@@ -143,16 +115,11 @@ fn run(cli: &Cli) -> Result<(), String> {
             if is_blank_or_comment(&line) {
                 continue;
             }
+            // The first failure stops everything, so a bad line reports once
+            // and the rest of the input is not read.
             let value = evaluator
                 .eval(&line)
                 .map_err(|err: ExprError| format!("line {number}: {err}"))?;
-            writeln!(out, "{}", format_value(value)).map_err(|err| err.to_string())?;
-        }
-    } else {
-        // The first failure stops everything, so `exprkit 'x = 1/0' 'x'`
-        // reports once rather than twice.
-        for expression in &cli.expressions {
-            let value = evaluator.eval(expression).map_err(|err| err.to_string())?;
             writeln!(out, "{}", format_value(value)).map_err(|err| err.to_string())?;
         }
     }
@@ -246,49 +213,5 @@ mod tests {
         assert_eq!(read_line(&mut input).unwrap().unwrap(), "b");
         assert_eq!(read_line(&mut input).unwrap().unwrap(), "c"); // no trailing \n
         assert_eq!(read_line(&mut input).unwrap(), None);
-    }
-
-    /// Runs `split_options` over string literals, returning the outcome and the
-    /// resulting `--names` state.
-    fn split(values: &[&str]) -> (Options, bool) {
-        let mut names = false;
-        let arguments = values.iter().map(|s| s.to_string()).collect();
-        (split_options(arguments, &mut names), names)
-    }
-
-    #[test]
-    fn expressions_beginning_with_a_hyphen_are_not_options() {
-        // The whole reason allow_hyphen_values is on: `-2 ^ 2` is the C++
-        // suite's own example of unary-minus precedence, and must evaluate.
-        let (options, names) = split(&["-2 ^ 2", "-x", "1+1"]);
-        assert!(matches!(options, Options::Expressions(e) if e == ["-2 ^ 2", "-x", "1+1"]));
-        assert!(!names);
-    }
-
-    #[test]
-    fn a_late_names_flag_is_recognized() {
-        // clap stops parsing options after the first positional, so without
-        // split_options this `--names` would be evaluated as an expression.
-        let (options, names) = split(&["r = 3", "--names"]);
-        assert!(matches!(options, Options::Expressions(e) if e == ["r = 3"]));
-        assert!(names);
-    }
-
-    #[test]
-    fn a_late_help_flag_is_recognized() {
-        assert!(matches!(split(&["1+1", "--help"]).0, Options::Help));
-    }
-
-    #[test]
-    fn unknown_double_hyphen_arguments_are_usage_errors() {
-        assert!(matches!(split(&["--bogus"]).0, Options::Unknown(o) if o == "--bogus"));
-        assert!(matches!(split(&["1+1", "--x"]).0, Options::Unknown(o) if o == "--x"));
-    }
-
-    #[test]
-    fn no_arguments_yields_no_expressions() {
-        let (options, names) = split(&[]);
-        assert!(matches!(options, Options::Expressions(e) if e.is_empty()));
-        assert!(!names);
     }
 }

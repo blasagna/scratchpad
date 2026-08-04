@@ -27,9 +27,8 @@ typedef enum {
   LOG_ERR_CLOSE,     /* closing the log file failed; data may not be on disk */
   LOG_ERR_READ,      /* a read error occurred on the message input stream */
   LOG_ERR_BAD_LEVEL, /* the level name was not debug, info, warning, or error */
-  LOG_ERR_BAD_ESCAPE, /* a delimiter/separator escape was unrecognized */
-  LOG_ERR_BAD_TIME,   /* the epoch seconds could not be rendered */
-  LOG_ERR_NOMEM,      /* out of memory */
+  LOG_ERR_BAD_TIME,  /* the epoch seconds could not be rendered */
+  LOG_ERR_NOMEM,     /* out of memory */
 } LogResult;
 
 /* Severity tag written with each entry, ordered least to most severe. */
@@ -41,19 +40,18 @@ typedef enum {
 } LogLevel;
 
 /*
- * How an entry is laid out. Both strings are borrowed, not owned, and must
- * outlive the format. An entry is written as
+ * How an entry is laid out. An entry is written as
  *
- *   [<timestamp>]<delimiter>[<LEVEL>]<delimiter><message><separator>
+ *   [<timestamp>] [<LEVEL>] <message>\n
  *
  * with the timestamp field omitted when show_timestamp is 0 and the level field
- * omitted when show_level is 0; omitting a field drops its trailing delimiter
- * too. The separator follows every entry, including the last, so the next run
- * appends onto a fresh line.
+ * omitted when show_level is 0; omitting a field drops its trailing space too.
+ * The newline follows every entry, including the last, so the next run appends
+ * onto a fresh line. The space and the newline are fixed: making them options
+ * bought nothing that a pipe through sed could not do, and cost every port an
+ * unescaper to spell them on a command line.
  */
 typedef struct {
-  const char *delimiter;
-  const char *separator;
   LogLevel level;
   /* The flags are int, not bool, because this header is compiled in two
    * dialects. The C here is C17 (.bazelrc sets -std=c++20 as a cxxopt, which
@@ -97,21 +95,6 @@ const char *log_result_str(LogResult r);
  *         leaving buf's contents unspecified.
  */
 LogResult log_format_timestamp(time_t when, char *buf, size_t buf_size);
-
-/*
- * log_unescape - expands backslash escapes in a delimiter or separator.
- *
- * A shell cannot portably hand a program a real newline, so "\n" typed on the
- * command line has to mean one. Exactly four escapes are recognized: \n, \t,
- * \r, and \\. Any other escape, including a trailing lone backslash, is an
- * error rather than a pass-through, so the accepted set cannot drift between
- * ports.
- *
- * Output: Returns LOG_OK with a newly malloc'd, NUL-terminated string in *out
- *         that the caller must free(), LOG_ERR_BAD_ESCAPE on an unrecognized
- *         escape, or LOG_ERR_NOMEM. *out is set only on success.
- */
-LogResult log_unescape(const char *text, char **out);
 
 /*
  * log_clock_resolve - picks the timestamp for a run.

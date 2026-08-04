@@ -39,33 +39,6 @@ work in that subtree) and usually a `README.md` with the full narrative.
 
 ## Commands
 
-Bazel (C and C++):
-```sh
-bazel build //c_little_book/hello_world:hello
-bazel run //c_little_book/hello_world:hello
-bazel test //c_little_book/recursion:test_math
-bazel test //...                    # all Bazel tests
-```
-
-pixi (Python) — run from within a project directory. Task names vary per project
-(see the area docs); LeetCode problems expose `test` and `main`:
-```sh
-cd leetcode/array_shuffle
-pixi run test     # runs unittest
-pixi run main     # runs solution.py directly
-```
-
-cargo (Rust) — the Rust crates form a single workspace (root `Cargo.toml`, members
-`text_analyzer/rust`, `morse_trainer`, `copy_file/rust`, `simple_logger/rust`,
-`matrix_ops/rust`, `matrix_ops/bench/rust`, `cpp_rust_bindings/rust`,
-`rust_hosted_cpp/rust`, `rust_python_bindings/{core,bindings}`; shared `target/`
-at the repo root):
-```sh
-cargo test                    # all workspace members
-cargo test -p morse_trainer   # a single member
-cd copy_file/rust && cargo test   # or work from within the member
-```
-
 Formatting is repo-wide via `pixi run fmt` (ruff + clang-format + cargo fmt) and
 runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
 
@@ -86,19 +59,55 @@ need this.
 needs its own `BUILD`; no `MODULE.bazel` change is needed for standard targets
 since `rules_cc` and `googletest` are already declared.
 
-**Third-party dependencies** are declared in `MODULE.bazel` and used by exactly
-one package, `//matrix_ops/bench` (Eigen and xtensor, for a comparison
-benchmark). `third_party/` holds BUILD overlays for archives that are not in the
-Bazel Central Registry. Two things are worth knowing before adding another:
-`.bazelrc` sets `--features=external_include_paths` so the repo's `-Werror` does
-not apply to external headers, and `//matrix_ops/bench` is the only non-hermetic
-target here — it links a system OpenBLAS. See
+**Third-party dependencies** are declared in `MODULE.bazel` and fall into two
+groups. CLI11 parses the command line for every C++ binary — it is the C++
+counterpart to `getopt_long` in the C ports and `clap` in the Rust ones, and it
+is the only library the ports themselves depend on. Eigen, xtensor, and
+xtensor-blas are used by exactly one package, `//matrix_ops/bench`, for a
+comparison benchmark. `third_party/` holds BUILD overlays for archives that are
+not in the Bazel Central Registry (only xtensor-blas needs one; CLI11 is in the
+registry, so it is a bare `bazel_dep`). Two things are worth knowing before
+adding another: `.bazelrc` sets `--features=external_include_paths` so the
+repo's `-Werror` does not apply to external headers, and `//matrix_ops/bench` is
+the only non-hermetic target here — it links a system OpenBLAS. See
 [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md).
 
 The Rust side has the same shape: the ports themselves depend only on `clap`,
 and the linear-algebra crates (`faer`, `nalgebra`) and `criterion` are confined
 to `matrix_ops/bench/rust`. Unlike the Bazel benchmark, that one is hermetic —
 both libraries are pure Rust, so there is no system BLAS to link.
+
+**Argument parsing is the library's, and so is the grammar — where a library
+check can carry it.** Each C++ port declares its options to CLI11 and lets it
+write `--help` and reject unknown options. Whether CLI11 may also own an
+option's *grammar* depends on what the option is bound to:
+
+- **Numeric options are bound to their real type and checked with
+  `CLI::Range`** — `matrix_ops` (`int`/`double`) and `text_analyzer` (`unsigned
+  int`) both do this. CLI11's integer conversion reads base 0, strips `_` and
+  `'` group separators, and skips surrounding whitespace, so these ports accept
+  spellings (`--rows 0x10`, `--rows 1_000`, `--top-n "5 "`) that C refuses, and
+  `010` means eight here and ten there. The divergence is deliberate and
+  tabulated per area, in
+  [`matrix_ops/README.md`](matrix_ops/README.md#known-divergence-argument-parsers)
+  and
+  [`text_analyzer/README.md`](text_analyzer/README.md#known-divergence-argument-parsers).
+  Prefer `CLI::Range` over `CLI::PositiveNumber`: the latter is a
+  `Range<double>`, so `2.5` clears the check and fails later in the conversion.
+- `simple_logger` has one constrained option, `--level`, bound to a
+  `std::string` and checked with `CLI::IsMember`. Nothing converts a string, so
+  the library's own check compares the bytes as typed and accepts exactly what
+  C's `strcmp` does. The trap there is `CLI::CheckedTransformer`, the obvious way
+  to map names onto an enum: it also accepts the enum's underlying integers.
+- **A hand-written validator behind `->check()` is the last resort**, for a rule
+  no built-in can state — `matrix_ops` rejects a NaN `--scalar` by hand, since
+  `CLI::Range` tests `val < min || val > max` and both are false for a NaN.
+  `text_analyzer` used to hand-check its integers to keep them byte-identical
+  with C, and that was a mistake: the validator was stricter than C's `strtol`
+  (which skips leading whitespace and takes a `+`), so it pinned the C++ port to
+  a third dialect no port actually had.
+
+See the per-area `CLAUDE.md` files.
 
 **New pixi problems** follow the same pattern: `solution.py`, `test_solution.py`,
 and a `pixi.toml` with `test` and `main` tasks (`pixi init <directory>` to start).

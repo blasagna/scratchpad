@@ -57,6 +57,11 @@ year 10000. Both ends match the C port's `year < 0 || year > 9999` exactly.
 The C and C++ ports keep doing the arithmetic by hand, since neither has an
 equivalent to reach for. That asymmetry is the point of the note in `lib.rs`.
 
+`--level` is a `clap::ValueEnum` on `Level`, so clap both validates the four spellings
+and renders them in `--help` as `[possible values: ...]`. `Level`'s `Display` is the
+lowercase command-line spelling, which is what lets `default_value_t = DEFAULT_LEVEL`
+print `[default: info]`; `label()` is the uppercase one written to the log.
+
 ### Deliberate divergence
 
 Arguments must be valid UTF-8 in this port: `clap` gives messages and the logfile path
@@ -64,11 +69,6 @@ as `String`, so a non-UTF-8 argument is rejected with exit 2, where the C and C+
 would pass the bytes through. Stdin — the far likelier source of odd bytes — is
 byte-transparent in all three. This is the same kind of documented, deliberate gap as
 `copy_file`'s `~user`.
-
-One clap detail worth keeping: `--separator` uses `default_value = "\\n"` with a
-`value_parser`, **not** `default_value_t`. Routing the two-character `\n` through the
-same unescaper as a user-supplied value makes `--help` print `[default: \n]` instead of
-breaking its own layout with a real newline.
 
 ## Build & run
 

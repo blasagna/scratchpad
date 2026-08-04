@@ -5,6 +5,11 @@
 #include <string.h>
 #include <sys/types.h>
 
+/* The fixed entry layout: fields are separated by a space and every entry ends
+ * with a newline. Not options — see LogFormat in logger.h. */
+static const char *const kDelimiter = " ";
+static const char *const kSeparator = "\n";
+
 /*
  * Writes n bytes to out, returning 1 on success and 0 on failure. Callers stop
  * at the first failure so errno still belongs to the call that failed rather
@@ -19,9 +24,9 @@ static int put_str(FILE *out, const char *s) {
 }
 
 /* Writes "[text]" followed by the delimiter. */
-static int put_field(FILE *out, const char *text, const char *delimiter) {
+static int put_field(FILE *out, const char *text) {
   return put_str(out, "[") && put_str(out, text) && put_str(out, "]") &&
-         put_str(out, delimiter);
+         put_str(out, kDelimiter);
 }
 
 const char *log_level_str(LogLevel level) {
@@ -72,8 +77,6 @@ const char *log_result_str(LogResult r) {
     return "error reading input";
   case LOG_ERR_BAD_LEVEL:
     return "unknown log level";
-  case LOG_ERR_BAD_ESCAPE:
-    return "unknown escape sequence";
   case LOG_ERR_BAD_TIME:
     return "cannot determine the time";
   case LOG_ERR_NOMEM:
@@ -101,46 +104,6 @@ LogResult log_format_timestamp(time_t when, char *buf, size_t buf_size) {
                    parts.tm_sec);
   if (n < 0 || (size_t)n >= buf_size)
     return LOG_ERR_BAD_TIME;
-  return LOG_OK;
-}
-
-LogResult log_unescape(const char *text, char **out) {
-  /* Every escape shrinks two bytes to one, so the input length is an upper
-   * bound on the result. */
-  char *result = malloc(strlen(text) + 1);
-  if (!result)
-    return LOG_ERR_NOMEM;
-
-  size_t w = 0;
-  for (const char *p = text; *p != '\0'; p++) {
-    if (*p != '\\') {
-      result[w++] = *p;
-      continue;
-    }
-
-    char escape = *++p;
-    switch (escape) {
-    case 'n':
-      result[w++] = '\n';
-      break;
-    case 't':
-      result[w++] = '\t';
-      break;
-    case 'r':
-      result[w++] = '\r';
-      break;
-    case '\\':
-      result[w++] = '\\';
-      break;
-    default:
-      /* Includes a trailing lone backslash, where escape is the NUL. */
-      free(result);
-      return LOG_ERR_BAD_ESCAPE;
-    }
-  }
-
-  result[w] = '\0';
-  *out = result;
   return LOG_OK;
 }
 
@@ -189,14 +152,13 @@ LogResult log_clock_now(time_t *out) {
 LogResult log_write_entry(FILE *out, const LogFormat *fmt,
                           const char *timestamp, const char *message,
                           size_t message_len) {
-  if (fmt->show_timestamp && !put_field(out, timestamp, fmt->delimiter))
+  if (fmt->show_timestamp && !put_field(out, timestamp))
     return LOG_ERR_WRITE;
-  if (fmt->show_level &&
-      !put_field(out, log_level_str(fmt->level), fmt->delimiter))
+  if (fmt->show_level && !put_field(out, log_level_str(fmt->level)))
     return LOG_ERR_WRITE;
   if (!put_bytes(out, message, message_len))
     return LOG_ERR_WRITE;
-  if (!put_str(out, fmt->separator))
+  if (!put_str(out, kSeparator))
     return LOG_ERR_WRITE;
   return LOG_OK;
 }

@@ -11,6 +11,8 @@ Requirements:
 1. prepend a timestamp to each message, wrapped in square brackets, followed by a delimeter, default to space
 1. keep all previous entries; append not overwrite
 1. allow multiple entries in one run, with a default unix newline separator
+   (the delimiter and separator were configurable at first and no longer are —
+   see the entry format below for why)
 1. allow multiple log levels for later filtering: debug, info, warning, error, also wrapped in square brackets
 
 ## Contract
@@ -29,9 +31,16 @@ per line from stdin. The log file is opened for append and is created if missing
 ### Entry format
 
 ```
-[<timestamp>]<delim>[<LEVEL>]<delim><message><separator>
+[<timestamp>] [<LEVEL>] <message>\n
 ```
 
+- The **space between fields and the newline after each entry are fixed.** They were
+  options once (`-d`/`-s`), which is what the exercise asks for above. Being able to
+  spell them on a command line meant every port carried an unescaper — a shell cannot
+  portably pass a real newline, so `-s '\n'` had to mean one — and three
+  implementations of the same four escapes had to be kept from drifting apart. Nothing
+  was bought that a pipe through `sed` could not do, so the options went and the
+  unescapers went with them.
 - The **timestamp** is UTC ISO 8601 — `2026-07-30T18:22:05Z`. Always UTC: local time
   would need a timezone database in all three ports, which is a lot of machinery for a
   log line nobody greps by hour. It is read **once per run**, so every entry a single
@@ -40,7 +49,7 @@ per line from stdin. The log file is opened for append and is created if missing
 - The **level** is given in lowercase (`debug`, `info`, `warning`, `error`) and
   written in uppercase (`[INFO]`). Uppercase is the syslog and log4j convention and
   makes `grep '\[ERROR\]'` unambiguous against ordinary prose.
-- The **separator follows every entry, including the last**, so the next run starts on
+- The **newline follows every entry, including the last**, so the next run starts on
   a fresh line.
 
 ### Options
@@ -48,16 +57,14 @@ per line from stdin. The log file is opened for append and is created if missing
 | Option | Default | Meaning |
 |---|---|---|
 | `-l, --level LEVEL` | `info` | `debug`, `info`, `warning`, or `error` |
-| `-d, --delimiter STR` | `" "` | text between fields |
-| `-s, --separator STR` | `"\n"` | text after each entry |
-| `--no-timestamp` | off | omit the `[timestamp]` field and its delimiter |
-| `--no-level` | off | omit the `[LEVEL]` field and its delimiter |
+| `--no-timestamp` | off | omit the `[timestamp]` field and its trailing space |
+| `--no-level` | off | omit the `[LEVEL]` field and its trailing space |
 | `-h, --help` | — | show help |
 
-`--delimiter` and `--separator` interpret exactly four escapes: `\n`, `\t`, `\r`, and
-`\\`. A shell cannot portably hand a program a real newline, so `-s '\n'` has to mean
-one. Any other escape, including a trailing lone backslash, is an error rather than a
-pass-through — that way the accepted set cannot quietly drift between ports.
+`--level` takes those four spellings exactly: lowercase, no surrounding whitespace,
+and never the numbers behind them. Each port gets that from its own parser — a
+`strcmp` table in C, `CLI::IsMember` in C++, clap's `ValueEnum` in Rust — and the
+three accept the identical set, which `bad_level` in `check_parity.sh` holds them to.
 
 Options may appear anywhere, including after the logfile. `--` ends option parsing,
 which is how a message beginning with `-` gets through.
@@ -78,9 +85,6 @@ $ printf 'a\nb\n' | simple_logger --level debug app.txt
 [2025-07-01T00:00:00Z] [DEBUG] a
 [2025-07-01T00:00:00Z] [DEBUG] b
 
-$ simple_logger -d ' | ' app.txt hi
-[2025-07-01T00:00:00Z] | [INFO] | hi
-
 $ simple_logger --no-timestamp --no-level app.txt bare
 bare
 ```
@@ -97,7 +101,7 @@ here and covered by `check_parity.sh`.
 | Blank stdin line | Logged as an entry with an empty message — N lines in, N entries out. |
 | Empty stdin | No entries, exit 0, and the log file **is** created; the open happens before the read, like shell `>>`. |
 | Message containing a newline | Written verbatim, so the entry spans physical lines. Not escaped and not split — escaping would need a matching unescaper on the reading side, and splitting would silently multiply the user's entry count. |
-| Empty message argument | Logged, so the line ends with a trailing delimiter. Fields are unconditional; only `--no-*` removes them. |
+| Empty message argument | Logged, so the line ends with the space after `[LEVEL]`. Fields are unconditional; only `--no-*` removes them. |
 | Embedded NUL and non-ASCII bytes | Preserved. |
 | `-` as a logfile or message | Never special; it names a file called `-`. |
 | Both a write and a close error | Reported as the write error, which names the earlier and more specific stage. |
@@ -105,18 +109,21 @@ here and covered by `check_parity.sh`.
 ### Known divergences
 
 The rows above are guaranteed. These are **not**: each is a place where the three
-ports disagree, inherited from `getopt_long`, the hand-rolled C++ loop, and clap
-having different ideas about the same spelling. None is covered by
-`check_parity.sh` — which is exactly why they survived — so treat the intersection
-of the three as the supported surface and prefer the plain `--option value` form.
+parsers — `getopt_long`, CLI11, and clap — have different ideas about the same
+spelling. None is covered by `check_parity.sh`, so treat the intersection of the
+three as the supported surface and prefer the plain `--option value` form.
 
 | Case | C | C++ | Rust |
 |---|---|---|---|
-| Non-UTF-8 **argv** | passes bytes through | passes bytes through | exit 2 (clap) |
-| `--level=error`, `-lerror` (attached value) | accepted | **exit 2** | accepted |
-| `-d=` (empty attached value) | delimiter is `=` | **exit 2** | delimiter is empty |
-| `--level error --level debug` (repeated option) | last wins | last wins | **exit 2** |
-| `--lev`, `--no-time` (abbreviated long option) | accepted | **exit 2** | **exit 2** |
+| Non-UTF-8 **argv** | passes bytes through | passes bytes through | rejected (clap) |
+| `-l=error` (`=` after a short option) | level is `=error`, **rejected** | level is `=error`, **rejected** | level is `error`, accepted |
+| `--level error --level debug` (repeated option) | last wins | **rejected** | **rejected** |
+| `--lev`, `--no-time` (abbreviated long option) | accepted | **rejected** | **rejected** |
+
+Note also that **the exit code for a rejected argument is the parser's**, not the
+contract's — `2` in C and Rust, one of CLI11's in C++ — which is why
+`check_parity.sh` registers those cases with `run_case_parser_error` and requires
+only that every port reject them.
 
 Why each stands:
 
@@ -124,13 +131,16 @@ Why each stands:
   through would mean taking `OsString` everywhere for a case that barely arises;
   stdin, the far likelier source of odd bytes, is byte-transparent in all three.
   The same kind of deliberate gap as `copy_file`'s `~user`.
-- **Attached values** — `getopt_long` and clap both accept them; the C++ port
-  matches option tokens exactly, so it does not. `-d=` differs between C and Rust
-  besides, because clap strips a leading `=` after a short flag and getopt does
-  not.
-- **Repeated options** — clap 4's default action errors on a second occurrence,
-  where both C ports simply overwrite. `#[arg(overrides_with_self)]` would restore
-  last-wins if this ever matters.
+- **`-l=error`** — clap strips a leading `=` after a short flag; `getopt_long`
+  and CLI11 keep it, so those two see the level `=error` and reject it. (Attached
+  values themselves — `--level=error`, `-lerror` — used to be on this list,
+  rejected only by the hand-rolled C++ loop. CLI11 accepts them like the other
+  two, so they are shared behavior now, with `attached_level` and
+  `attached_short_level` in `check_parity.sh` to keep them that way.)
+- **Repeated options** — clap 4's default action errors on a second occurrence
+  and so does CLI11; only `getopt_long` overwrites. `#[arg(overrides_with_self)]`
+  and `->take_last()` would restore last-wins on the two respectively, if this
+  ever matters.
 - **Abbreviations** — GNU `getopt_long` accepts any unambiguous prefix and offers
   no switch to turn that off, so removing it would mean hand-checking every token
   against the full option names before handing off.
@@ -141,7 +151,8 @@ Why each stands:
 |---|---|
 | `0` | Success — and success is **silent**, unlike `copy_file`'s confirmation line. |
 | `1` | An operation failed: opening, writing, or closing the log file, or reading stdin. |
-| `2` | A usage error: missing or empty logfile, unknown option, bad `--level`, bad escape, or a malformed `SIMPLE_LOGGER_FAKE_TIME`. |
+| `2` | A usage error the program reports: missing or empty logfile, or a malformed `SIMPLE_LOGGER_FAKE_TIME`. |
+| parser's own | A malformed command line — unknown option, bad `--level`. `2` in C and Rust; CLI11 picks its own in C++. |
 
 ### Testing the clock
 
