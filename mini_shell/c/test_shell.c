@@ -24,10 +24,19 @@ static int signaled(int sig) { return sig; }
 template<typename F> static std::string captured(F body) {
   char buf[8192];
   FILE *out = fmemopen(buf, sizeof(buf), "w");
+  /* Returning early rather than running body against a NULL stream: EXPECT_ is
+   * non-fatal, so the alternative is a segfault in place of a test failure. */
   EXPECT_NE(out, nullptr);
+  if (out == nullptr)
+    return "";
   body(out);
   long written = ftell(out);
   EXPECT_EQ(fclose(out), 0);
+  /* A full buffer means fmemopen silently dropped the overflow, so the
+   * comparison downstream would be against truncated text. Fail here instead,
+   * where the message says why. */
+  EXPECT_LT(static_cast<size_t>(written < 0 ? 0 : written), sizeof(buf))
+      << "captured() buffer is too small; the output was truncated";
   return std::string(buf, static_cast<size_t>(written < 0 ? 0 : written));
 }
 
@@ -85,6 +94,8 @@ static RunOutput run_shell(const std::string &input, const ShellOptions *opts) {
   captured_run.out = captured([&](FILE *out) {
     captured_run.err = captured([&](FILE *err) {
       FILE *in = make_input(input);
+      if (in == nullptr)
+        return;
       captured_run.result = shell_run(in, out, err, opts);
       EXPECT_EQ(fclose(in), 0);
     });

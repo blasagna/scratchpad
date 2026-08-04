@@ -41,8 +41,13 @@ is the only honest option given the `system()` signature.
 
 Two smaller details:
 
-- The prompt is **flushed** before every read. The command inherits `out`'s file
-  descriptor, so an unflushed prompt would surface after the command's own output.
+- The prompt is **flushed** before every read, and `stdin` is set **unbuffered** in
+  `main`. The command inherits both of `out`'s and `in`'s file descriptors: an
+  unflushed prompt would surface after the command's own output, and a buffered `in`
+  would let stdio swallow a piped script whole before the first fork, handing `cat` an
+  empty stdin. The `setvbuf` lives in `main` rather than `shell_run`, which takes a
+  stream its caller owns — and note that no unit test can catch its absence, since the
+  suite drives the loop through `fmemopen`.
 - Errors are a `ShellResult` enum naming the stage that failed, with `errno` left in
   place by the libc-backed stages (preserved across `free` with the usual
   `int saved = errno` idiom) so `main` can pair the stage with `strerror`. A *command*

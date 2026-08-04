@@ -40,6 +40,16 @@ printf 'echo hi\nfalse\nexit\n' | bazel-bin/mini_shell/c/mini_shell --no-banner
   then have to reproduce and every test override. `--no-banner` covers scripting.
 - **The prompt is flushed before every read.** The command inherits stdout's file
   descriptor, so an unflushed prompt surfaces *after* the command's output.
+- **The command input is read unbuffered**, so a command that reads stdin gets what
+  mini_shell has not consumed yet. This is the easiest thing here to get wrong without
+  noticing: buffered, stdio pulls an entire piped script in before the first fork, and
+  `printf 'cat\necho done\n' | mini_shell` hands `cat` an empty stdin while the shell
+  goes on to run `echo done` itself. Nothing in the unit suite can catch it — the tests
+  drive `shell_run` with `fmemopen`, where buffering is invisible — so it is a
+  `setvbuf(stdin, NULL, _IONBF, 0)` in `main` plus the end-to-end check above. POSIX
+  requires it and `bash` honors it; **`dash` reads ahead**, so `/bin/sh` is not the
+  reference to check a port against. Each port needs its own spelling: unbuffered
+  reads, not a `BufReader`.
 - **A failed command never ends the loop and never changes the exit code.** The shell
   ran what it was asked to; `0` means the loop ended cleanly, `1` is the shell's own
   I/O failure, `2` is a usage error. Making the exit code the last command's status was

@@ -83,6 +83,22 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* Read stdin unbuffered, so a command inherits the input mini_shell has not
+   * consumed yet. Buffered, stdio pulls the whole pipe in before the first fork
+   * and `printf 'cat\necho done\n' | mini_shell` hands `cat` an empty stdin.
+   * POSIX requires exactly this of a shell ("It shall not read ahead in such a
+   * manner that any characters intended to be read by the invoked command are
+   * consumed by the shell"), and bash honors it; dash does not, so do not take
+   * /bin/sh as the reference here. Unconditional, not gated on isatty: a
+   * terminal read already returns a line at a time, so there is nothing to
+   * gate. It belongs here rather than in shell_run, which takes a stream its
+   * caller owns. */
+  if (setvbuf(stdin, NULL, _IONBF, 0) != 0) {
+    fprintf(stderr, "%s: cannot unbuffer stdin: %s\n", SHELL_PROGNAME,
+            strerror(errno));
+    return 1;
+  }
+
   ShellResult result = shell_run(stdin, stdout, stderr, &opts);
   if (result != SHELL_OK) {
     if (result == SHELL_ERR_NOMEM)
