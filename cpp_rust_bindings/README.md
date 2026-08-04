@@ -213,14 +213,22 @@ shortest round-tripping representation and agree on every value tested — but
 CLIs through one implementation removes the question. The invariant is enforced,
 not documented.
 
-Results, error messages, and exit codes (`0` ok, `1` runtime error, `2` usage
-error) then match byte for byte — including `exprkit: unknown option: --x`,
-which each CLI writes itself rather than letting its parser write it. Two things
-are outside that guarantee, and both are conventions rather than exprkit
-behavior:
+The *result* of evaluating an expression, the message when evaluation fails, and
+the exit code for either (`0` ok, `1` evaluation error) then match byte for byte,
+over the surface the two share: one quoted `EXPRESSION`, standard input, and
+`--names`. Both CLIs take a single expression and hand the parsing to a library —
+CLI11 here, clap there — so what falls outside the guarantee is what those
+libraries own, plus one encoding convention. None of it is exprkit behavior:
 
-- **`--help` output.** CLI11 writes one and clap the other, exactly as `statkit`
-  lets each runtime word its own OS errors.
+- **`--help` output, and the wording and exit code of an argument error.** clap
+  exits `2`; CLI11 picks from its own set (`109` for an unexpected argument).
+  Each parser words its own diagnostics, exactly as `statkit` lets each runtime
+  word its own OS errors.
+- **A leading-dash expression written without `--`.** CLI11 reads a dash
+  followed by a digit as a value, so `exprkit '-2 ^ 2'` evaluates to `-4` in C++
+  and is rejected by clap. Everything else starting with `-` is rejected by
+  both. **Write `exprkit -- '-2 ^ 2'`** and the two agree; that is the spelling
+  used throughout these docs.
 - **Input that is not valid UTF-8.** The bindings take `&str`, so the Rust CLI
   replaces a stray byte with U+FFFD before it ever reaches C++. Both CLIs fail
   on the same line with the same exit code and the same message shape; only the
@@ -309,17 +317,19 @@ diff <(printf '0.1 + 0.2\n2 ^ 3 ^ 2\n' | bazel-bin/cpp_rust_bindings/cpp/exprkit
   whole stream and fails the entire run on one stray byte, where the C++ CLI
   carries on. Lossy is the honest choice at a `&str` boundary; a binding that
   needed true byte fidelity would have to take `&[u8]` instead.
-- **Neither argument parser can be left to decide what an option is.** A leading
-  minus is arithmetic here, so both CLIs pre-scan argv and hand the library only
-  the `--` prefixed tokens. On the Rust side `allow_hyphen_values` is required
-  so `-2 ^ 2` is not an unknown flag, but it also stops clap recognizing *any*
-  option after the first positional, so `exprkit '1+1' --names` would lose the
-  flag; `split_options` in `rust/src/main.rs` puts the C-style scan back. On the
-  C++ side CLI11 classifies every `-<non-digit>` as a short option, which
-  rejects `-e` and `-pi` — exprkit's own constants — and, because `-h` is a real
-  flag, answers `exprkit '-h + 1'` by printing *help* and exiting 0. A wrong
-  answer that looks like success is what makes this a pre-scan in
-  `cpp/main.cpp` rather than a documented divergence.
+- **Neither CLI declares a `-h` alias, and that is deliberate.** Both parsers
+  classify `-<non-digit>` as a short option, so an expression like `-h + 1` used
+  to *match the help flag* — printing help and exiting `0` instead of
+  evaluating. A wrong answer that looks like success is worse than a rejection,
+  and dropping the alias turns it back into one. `--help` still works in both.
+- **A single quoted expression is what removed the pre-scan.** Both CLIs used to
+  accept a list, and both needed a hand-written `split_options` pass to decide
+  which arguments were options before handing the rest to the library. Taking
+  one `EXPRESSION` deleted that from both sides. Do not restore
+  `allow_hyphen_values` on the Rust positional to win back bare `-2 ^ 2`: it
+  also makes `-e` and `-h + 1` evaluate in Rust while CLI11 still rejects them,
+  and demotes `--bogus` from a usage error to an expression
+  (`unknown name: 'bogus'`). Two cases fixed, three broken.
 - **A message that is not valid UTF-8 is converted lossily.** The C++ tokenizer
   works in bytes, so `evaluate("1 + −")` (U+2212) quotes a lone continuation
   byte; it arrives in Rust as U+FFFD rather than failing. Do not put arbitrary

@@ -1,13 +1,14 @@
 // CLI for the C++ exprkit library.
 //
 // ../rust/src/main.rs is the same program written against the Rust bindings.
-// The two print byte-identical output for the same input -- structurally, not
-// by convention: every number they print comes from exprkit::format_value.
+// Every number the two print comes from exprkit::format_value, so results agree
+// structurally rather than by convention. They no longer agree on how many
+// expressions they take: this one accepts a single quoted argument, the Rust
+// one accepts a list. See ../README.md.
 
 #include <iostream>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include <CLI/CLI.hpp>
 
@@ -17,55 +18,6 @@ namespace {
 
 constexpr int kExitOk = 0;
 constexpr int kExitError = 1;
-constexpr int kExitUsage = 2;
-
-// What split_options found while partitioning argv.
-struct Split {
-  // Tokens to hand to CLI11, argv[0] first. Only options end up here.
-  std::vector<std::string> options;
-  // Everything else, in the order typed.
-  std::vector<std::string> expressions;
-  // The unrecognized "--" argument, when there was one.
-  std::string unknown;
-};
-
-// split_options - decides which arguments are options before CLI11 sees them.
-//
-// Only a "--" prefix marks an option; a single dash never does. That is the
-// rule ../rust/src/main.rs uses in its own split_options, and it is the one
-// this file used before it had a parser, because a leading minus is ordinary
-// arithmetic here: `-2 ^ 2` is -4, `-e` is -2.718..., and `-x + 1` reads a
-// variable. Left to itself CLI11 classifies any `-<non-digit>` as a short
-// option, which rejects all but the first -- and worse, silently prints help
-// for `-h + 1`, since -h is a real flag. Options are recognized wherever they
-// appear, so `exprkit '1+1' --names` works.
-Split split_options(int argc, char **argv) {
-  Split split;
-  split.options.emplace_back(argv[0]);
-
-  bool options_done = false;
-  for (int i = 1; i < argc; i++) {
-    std::string arg = argv[i];
-
-    // "--" ends option parsing, matching clap. This file used to report it as
-    // an unknown option, which was the one place the two CLIs disagreed about
-    // it.
-    if (!options_done && arg == "--") {
-      options_done = true;
-      continue;
-    }
-    if (!options_done && (arg == "--names" || arg == "--help" || arg == "-h")) {
-      split.options.push_back(std::move(arg));
-      continue;
-    }
-    if (!options_done && arg.starts_with("--")) {
-      split.unknown = std::move(arg);
-      return split;
-    }
-    split.expressions.push_back(std::move(arg));
-  }
-  return split;
-}
 
 // is_blank_or_comment - reports whether a line carries no expression.
 bool is_blank_or_comment(std::string_view line) {
@@ -93,68 +45,55 @@ int main(int argc, char **argv) {
   // under `bazel run` is the full runfiles path.
   CLI::App app{"Evaluates arithmetic expressions.\n"
                "\n"
-               "With one or more EXPRESSION arguments, each is evaluated in "
-               "turn;\n"
+               "With an EXPRESSION argument it is evaluated and printed;\n"
                "otherwise expressions are read one per line from standard "
-               "input.\n"
-               "Variables assigned with `name = expr` persist across "
-               "expressions.\n"
-               "Blank lines and lines whose first non-blank character is '#' "
-               "are\n"
-               "skipped.",
+               "input,\n"
+               "and variables assigned with `name = expr` persist from one "
+               "line\n"
+               "to the next. Blank lines and lines whose first non-blank\n"
+               "character is '#' are skipped.",
                "exprkit"};
 
+  // Only "--help", with no "-h" alias. CLI11 classifies any "-<non-digit>" as a
+  // short option, so with -h declared `exprkit '-h + 1'` matched the help flag
+  // and printed help with exit 0 -- a wrong answer that looks like success.
+  // Undeclared, the same argument is an ordinary unknown-option rejection.
+  app.set_help_flag("--help", "Print this help message and exit");
+
   bool want_names = false;
+  std::string expression;
 
   app.add_flag("--names", want_names,
-               "after the last expression, print every defined name and its "
+               "after the expression, print every defined name and its "
                "value, one per line, as `name = value`");
-  // Declared so it appears in --help; the expressions themselves never reach
-  // CLI11, since split_options has already taken them out of argv.
-  app.add_option("expression", "expressions to evaluate")
-      ->type_name("EXPRESSION");
+  const CLI::Option *expression_opt =
+      app.add_option("expression", expression, "the expression to evaluate")
+          ->type_name("EXPRESSION");
 
   app.footer(
-      "An expression may begin with '-' -- `exprkit '-2 ^ 2'` is -4 and\n"
-      "`exprkit -e` is -2.718... . Quote any expression containing "
-      "spaces,\n"
-      "or the shell splits it into several.");
+      "EXPRESSION is one argument, so quote it: `exprkit '1 + 2'`. Unquoted,\n"
+      "the shell splits it and the extra words are rejected.\n"
+      "\n"
+      "An expression starting with '-' looks like an option, so write\n"
+      "`exprkit -- '-e'` or `exprkit -- '-x + 1'`. A leading negative number,\n"
+      "as in `exprkit '-2 ^ 2'`, needs no separator.");
 
   // CLI11 word-wraps the description and footer by default, rewrapping prose
   // that is already laid out to fit. Print both verbatim instead.
   app.get_formatter()->enable_description_formatting(false);
   app.get_formatter()->enable_footer_formatting(false);
 
-  Split split = split_options(argc, argv);
-  if (!split.unknown.empty()) {
-    // Kept byte-identical with the same path in ../rust/src/main.rs. A hint
-    // rather than the help block, because the two CLIs cannot share help text.
-    std::cerr << "exprkit: unknown option: " << split.unknown << '\n'
-              << "Try 'exprkit --help' for more information.\n";
-    return kExitUsage;
-  }
-
-  // CLI11 parses what split_options classified as options -- the flags, the
-  // help text, and the diagnostics are still its job.
-  std::vector<char *> option_argv;
-  option_argv.reserve(split.options.size());
-  for (std::string &option : split.options)
-    option_argv.push_back(option.data());
-
   try {
-    app.parse(static_cast<int>(option_argv.size()), option_argv.data());
+    app.parse(argc, argv);
   } catch (const CLI::ParseError &e) {
     return app.exit(e);
   }
 
-  const std::vector<std::string> &expressions = split.expressions;
-
   exprkit::Evaluator evaluator;
 
-  // One try around the whole run: the first failure stops everything, which is
-  // what makes `exprkit 'x = 1/0' 'x'` fail instead of reporting twice.
+  // One try around the whole run, so a failure reports once and stops.
   try {
-    if (expressions.empty()) {
+    if (expression_opt->count() == 0) {
       std::string line;
       for (long number = 1; std::getline(std::cin, line); number++) {
         if (is_blank_or_comment(line)) {
@@ -164,15 +103,13 @@ int main(int argc, char **argv) {
           std::cout << exprkit::format_value(evaluator.eval(line)) << '\n';
         } catch (const exprkit::ExprError &err) {
           // Only stdin gets a line number; there is nothing to number when the
-          // expressions came from the command line.
+          // expression came from the command line.
           std::cerr << "exprkit: line " << number << ": " << err.what() << '\n';
           return kExitError;
         }
       }
     } else {
-      for (std::string_view expression : expressions) {
-        std::cout << exprkit::format_value(evaluator.eval(expression)) << '\n';
-      }
+      std::cout << exprkit::format_value(evaluator.eval(expression)) << '\n';
     }
 
     if (want_names) {

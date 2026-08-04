@@ -58,29 +58,35 @@ cargo run -q -p exprkit -- '2 ^ 10'
   `exprkit::format_value`, the C++ formatter, so there is no second
   implementation to keep in sync. **Do not "simplify" the Rust CLI by formatting
   floats in Rust** — `tests/evaluate.rs::the_two_clis_share_one_formatter` is
-  the tripwire. Two documented exceptions remain, both conventions rather than
-  exprkit behavior: `--help` text (CLI11 writes one, clap the other) and
-  non-UTF-8 input (spelled `'�'` rather than the raw byte). Unknown-option
-  wording and its exit code are *not* exceptions — both print
-  `exprkit: unknown option: --x` and exit 2 — and a bare `--` now ends option
-  parsing in both, which it did not before the C++ CLI had a parser. Nothing
-  else may drift.
-- **Neither CLI lets its parser decide what an option is.** Only a `--` prefix
-  marks one; a single dash never does, because a leading minus is arithmetic
-  here — `-2 ^ 2` is -4, `-e` is -2.718…, `-x + 1` reads a variable. Both ports
-  therefore pre-scan argv with a `split_options` pass and hand the library only
-  what is genuinely an option. **Do not delete either one.** Left to itself
-  clap rejects `-2 ^ 2`, and CLI11 classifies every `-<non-digit>` as a short
-  option — which rejects `-e` and `-pi`, exprkit's own constants, and silently
-  prints *help* for `-h + 1`, since `-h` is a real flag. That last one is the
-  reason this is a pre-scan and not a documented divergence: it is a wrong
-  answer with exit 0, not a rejection.
-- **The Rust CLI's option handling is not just `#[derive(Parser)]`.**
-  `allow_hyphen_values` is required so `-2 ^ 2` is arithmetic, but it also makes
-  clap ignore options after the first positional; `split_options` restores the
-  position-independent scan. Do not delete either half. Likewise, stdin is
-  read with `from_utf8_lossy`, not `BufRead::lines()`, which fails a whole run
-  on one stray byte.
+  the tripwire. What is guaranteed is the *result* of evaluating an expression
+  and the exit code for it (`0` ok, `1` evaluation error), over the shared
+  surface: one quoted EXPRESSION, stdin, and `--names`. Outside that sit the
+  things the two argument parsers own, none of them exprkit behavior:
+
+  | | C++ (CLI11) | Rust (clap) |
+  |---|---|---|
+  | `--help` text | CLI11's | clap's |
+  | argument-error wording and exit code | CLI11's, `104`/`109`/… | clap's, `2` |
+  | `-2 ^ 2`, `-.5 + 1` unquoted by `--` | evaluated; CLI11 reads a dash-then-digit as a value | rejected |
+
+  Both accept every leading-dash expression once written after `--`, and that
+  is the spelling to use in docs and examples.
+- **Each CLI takes exactly one expression, and lets its parser do the parsing.**
+  Both did accept a list, with a hand-written `split_options` pre-scan on each
+  side deciding what counted as an option. One quoted argument removed the need
+  for both. An expression beginning with `-` is written after `--`.
+- **Neither declares a `-h` alias; only `--help`.** Both parsers classify
+  `-<non-digit>` as a short option, so with `-h` declared, `exprkit '-h + 1'`
+  matched the help flag and printed help with **exit 0** — a wrong answer that
+  looks like success. Undeclared, the same argument is an ordinary rejection.
+  Do not add the alias back for symmetry with other tools.
+- **Do not put `allow_hyphen_values` back on the Rust positional.** It buys
+  `-2 ^ 2` without `--`, and costs more than it buys: `-e` and `-h + 1` then
+  evaluate in Rust while CLI11 still rejects them, and `--bogus` stops being a
+  usage error at all and is read as an expression (`unknown name: 'bogus'`).
+  Measured: two cases fixed, three broken.
+- **stdin is read with `from_utf8_lossy`, not `BufRead::lines()`**, which fails
+  a whole run on one stray byte where the C++ CLI carries on.
 - **Test the logic in C++, the seam in Rust.** `cpp/test_exprkit.cpp` owns
   precedence, parsing, and the error taxonomy. The Rust tests deliberately do
   not re-check arithmetic; they check what only they can — bit-for-bit floats,
