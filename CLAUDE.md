@@ -39,33 +39,6 @@ work in that subtree) and usually a `README.md` with the full narrative.
 
 ## Commands
 
-Bazel (C and C++):
-```sh
-bazel build //c_little_book/hello_world:hello
-bazel run //c_little_book/hello_world:hello
-bazel test //c_little_book/recursion:test_math
-bazel test //...                    # all Bazel tests
-```
-
-pixi (Python) — run from within a project directory. Task names vary per project
-(see the area docs); LeetCode problems expose `test` and `main`:
-```sh
-cd leetcode/array_shuffle
-pixi run test     # runs unittest
-pixi run main     # runs solution.py directly
-```
-
-cargo (Rust) — the Rust crates form a single workspace (root `Cargo.toml`, members
-`text_analyzer/rust`, `morse_trainer`, `copy_file/rust`, `simple_logger/rust`,
-`matrix_ops/rust`, `matrix_ops/bench/rust`, `cpp_rust_bindings/rust`,
-`rust_hosted_cpp/rust`, `rust_python_bindings/{core,bindings}`; shared `target/`
-at the repo root):
-```sh
-cargo test                    # all workspace members
-cargo test -p morse_trainer   # a single member
-cd copy_file/rust && cargo test   # or work from within the member
-```
-
 Formatting is repo-wide via `pixi run fmt` (ruff + clang-format + cargo fmt) and
 runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
 
