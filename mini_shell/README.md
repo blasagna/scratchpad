@@ -14,8 +14,9 @@ Requirements:
 
 ## Contract
 
-Only the C port (`c/`, Bazel) exists so far; C++ and Rust follow, and this section is
-what they will be checked against.
+The program is implemented twice so far — `c/` and `cpp/`, both Bazel — and this
+section is what both are checked against; Rust follows. `check_parity.sh` builds the
+two, feeds them the same scripted stdin, and diffs stdout, stderr, and the exit status.
 
 ```
 mini_shell [options]
@@ -75,10 +76,36 @@ The shell did its job: it ran what it was asked to.
 | Command not found | The interpreter prints its own `not found` message and exits 127, and mini_shell reports the 127 after it. Not special-cased: suppressing the status line would hide the one thing mini_shell actually knows. |
 | No command interpreter | `system(NULL)` is checked once at startup. Without one, exit 1 immediately rather than one errno line per command. |
 
+### Known divergences
+
+Everything above is shared by both ports. These are not, and each is deliberate:
+
+| Case | C | C++ |
+|---|---|---|
+| Unknown option, stray operand | own message, exit `2` | CLI11's message, exit `109` |
+| `--help` text | hand-written | CLI11's rendering (exit `0` in both) |
+| Abbreviated long option (`--no-ban`) | accepted — `getopt_long` matches unambiguous prefixes | rejected as an unknown option |
+| Out of memory | `getline` fails → `mini_shell: out of memory`, exit 1 | `std::bad_alloc` caught in `main` → same message, same code |
+| A read error on stdin | the error line, and nothing on stdout | one `\n` on stdout first, then the error line |
+
+Why each stands:
+
+- **Argument errors belong to the parser.** Each port takes its own — `getopt_long` in
+  C, CLI11 in C++ — and neither the wording nor the exit code is worth hand-rolling
+  back into agreement. This is the same call `simple_logger` and `matrix_ops` made.
+  `check_parity.sh` registers these as `run_case_parser_error`, which requires only
+  that both ports reject the same command line.
+- **The read-error newline** falls out of how C++ sees the failure. `std::cin` is backed
+  by a `stdio_sync_filebuf` that returns EOF on a read error without setting `badbit`,
+  so the loop cannot tell a failed read from a clean end of input and writes its closing
+  newline before `main` checks `ferror(stdin)` and reports the error. Making the two
+  agree would mean reimplementing the loop against a `FILE *`, which is the seam the C++
+  port exists to avoid.
+
 ### Exit codes
 
 | Code | When |
 |---|---|
 | `0` | The loop ended at `exit` or at end of input — **regardless of what any command did**. |
 | `1` | mini_shell's own failure: a read error on stdin, a write error on stdout or stderr, out of memory, or no command interpreter. |
-| `2` | A usage error: an unknown option, or any operand (there are none). |
+| `2` | A usage error: an unknown option, or any operand (there are none). This is the **C port's** code; in C++ a bad command line is CLI11's to report and carries its code (`109`), per the divergences above. |

@@ -2,7 +2,7 @@
 
 A prototype shell: it prints a `$` prompt, reads one command per line from stdin, runs
 it with `system()`, and reports the status of anything that did not exit 0. See the
-top-level `mini_shell/README.md` for the full contract the later ports will share.
+top-level `mini_shell/README.md` for the full contract this port shares with `cpp/`.
 
 ## Design
 
