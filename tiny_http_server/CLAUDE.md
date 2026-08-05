@@ -2,26 +2,32 @@
 
 A very small HTTP server: it binds a socket, then accepts one connection at a time,
 reads the request header block, answers `GET` and `HEAD` of `/` with a hello world page,
-and logs every event to stderr. Two ports exist, `c/` and `cpp/` (both Bazel); **Rust is
-still to come**, and the C port is the reference dialect the others are measured against.
-The full contract — the responses, the status precedence, the edge cases, the deliberate
-simplifications, and the exit codes — is in [`README.md`](README.md), and each port has
-its own design notes ([c](c/README.md), [cpp](cpp/README.md)).
+and logs every event to stderr. Three ports exist: `c/` and `cpp/` (both Bazel) and
+`rust/` (cargo workspace member `tiny_http_server`), and the C port is the reference
+dialect the others are measured against. The full contract — the responses, the status
+precedence, the edge cases, the deliberate simplifications, and the exit codes — is in
+[`README.md`](README.md), and each port has its own design notes ([c](c/README.md),
+[cpp](cpp/README.md), [rust](rust/README.md)).
 
 ## Commands
 
 ```sh
 bazel run  //tiny_http_server/c:tiny_http_server
 bazel run  //tiny_http_server/cpp:tiny_http_server
+cargo run  -p tiny_http_server
+
 bazel test //tiny_http_server/c:all
 bazel test //tiny_http_server/cpp:all
+cargo test -p tiny_http_server
 
-./tiny_http_server/check_parity.sh          # build both, run 33 cases, diff them
+./tiny_http_server/check_parity.sh          # build all three, run 33 cases, diff them
 ./tiny_http_server/check_parity.sh --keep   # keep the work dir for inspection
 
-# Run the binary directly rather than through `bazel run` whenever a relative
-# --file path matters: `bazel run` executes from the runfiles directory.
+# Run the binary directly rather than through `bazel run` or `cargo run` whenever
+# a relative --file path matters: those execute from the runfiles directory and
+# the workspace root respectively.
 bazel-bin/tiny_http_server/c/tiny_http_server --port 8080
+target/debug/tiny_http_server --port 8080
 
 curl -i http://127.0.0.1:8080/
 printf 'GET / HTTP/1.1\r\n\r\n' | nc 127.0.0.1 8080
@@ -29,7 +35,8 @@ printf 'GET / HTTP/1.1\r\n\r\n' | nc 127.0.0.1 8080
 
 **`check_parity.sh` compares the response bytes, the log, and the exit status**, and the
 whole of the contract agrees today — the only recorded divergences are the argument
-parsers'. Three things about its shape are load-bearing:
+parsers' and two things Rust's standard library will not say. Three things about its
+shape are load-bearing:
 
 - **It uses `--port 0` and `--once`, which is most of why those options exist.** A fixed
   port collides with the server somebody left running in another terminal, which is
@@ -47,16 +54,24 @@ parsers'. Three things about its shape are load-bearing:
   survive a request with an unread body, and `check_ephemeral_port` requires `--port 0` to
   report a port it really bound.
 
-**Two things no unit test reaches in either port**, both covered from the shell instead:
+**Two things no unit test reaches in the Bazel ports**, both covered from the shell
+instead:
 
 - `server_run` / `run` itself. A client has to be connected before the loop accepts it,
   and it does its own binding, so nothing single-threaded can be waiting on the queue by
   the time it starts. Its two decisions — `--once` stopping after one answered request,
   and a fatal bind failure — are checked by hand; the lists are at the bottom of
-  [`c/README.md`](c/README.md) and [`cpp/README.md`](cpp/README.md).
+  [`c/README.md`](c/README.md) and [`cpp/README.md`](cpp/README.md). **The Rust port
+  reaches both from `cargo test`**, because a Rust integration test can spawn the binary:
+  `rust/tests/cli.rs` starts a real `--port 0 --once` server, reads the port out of its
+  log, drives it over a socket, and waits for exit 0, and `rust/tests/socket.rs` covers
+  the bind failure.
 - `SIGPIPE`. `main` ignores it and the test binary does not run `main`, so the suite
   cannot observe its absence. Reproduce it by connecting, sending a request, and closing
-  with `SO_LINGER` set to zero so the peer gets an RST before reading the response.
+  with `SO_LINGER` set to zero so the peer gets an RST before reading the response. The
+  Rust port has nothing to delete here — the runtime sets the disposition — but the same
+  reproduction is still worth running against it, since an explicit `SIG_DFL` would put
+  the bug back.
 
 ## Shared behavior (keep the ports in sync)
 
@@ -89,7 +104,12 @@ parsers'. Three things about its shape are load-bearing:
   `{Stage, std::error_code}`, the code is captured into the value at the point of failure,
   and `run` judges `served.ec` rather than a global. A port whose result type carries the
   error has nothing left to get wrong here; one that leans on `errno` has to keep the rule
-  in its head.
+  in its head. **Rust goes one further and makes the fatal/per-connection split a type
+  distinction**: `accept_once` returns `Result<Outcome, ServerError>` and `ServerError` has
+  no variant a client can reach, so a setup failure cannot be returned where `run` would
+  judge it even by accident. Its transience test is `kind() == ConnectionAborted ||
+  raw_os_error() == Some(EPROTO)`, with `EPROTO` spelled as the literal `71` because this
+  crate takes no `libc` dependency — the same call `mini_shell`'s tests make for `EAGAIN`.
 - **`--once` stops after a request, not after a connection.** Browsers preconnect, so the
   first connection is often a silent one that times out; stopping on it exits having
   served nothing and the real request is refused. A timeout or a hang-up does not count,
@@ -153,7 +173,7 @@ parsers'. Three things about its shape are load-bearing:
 
 ## Gotchas
 
-- **In C, a socket needs two `FILE *`, not one — and in C++ it needs neither.**
+- **In C, a socket needs two `FILE *`, not one — and in C++ and Rust it needs neither.**
   `fdopen(fd, "r+")` requires a file-positioning call between a read and a following
   write, and a socket has none — `fseek` returns `ESPIPE` — so the transition is formally
   undefined and practically drops or duplicates bytes depending on the libc.
@@ -164,9 +184,14 @@ parsers'. Three things about its shape are load-bearing:
   stdio's and `std::basic_filebuf`'s, not `std::streambuf`'s**: the C++ port writes a
   `SocketStreambuf` with its own get and put areas over one descriptor, passes one
   `SocketStream` as both the `istream &` and the `ostream &`, and has no dup, no second
-  stream, and no cleanup table at all. A port that transliterates the C dance into C++ has
-  taken on the hazard without the constraint that caused it.
-- **`SIGPIPE` is ignored in `main` in both ports, but not for the same reason.** In C the
+  stream, and no cleanup table at all. **Rust does not have the rule either**: `&TcpStream`
+  is both `Read` and `Write`, so `accept_once` hands `serve_connection` a
+  `BufReader::new(&stream)` and a `BufWriter::new(&stream)` — two borrows of one socket —
+  and `TcpStream` owns its own descriptor, so there is no `Fd` and no cleanup either. A
+  port that transliterates the C dance has taken on the hazard without the constraint
+  that caused it.
+- **`SIGPIPE` is ignored in `main` in both Bazel ports, but not for the same reason — and
+  the Rust port gets it before `main` runs.** In C the
   `FILE *` write seam forces it: `MSG_NOSIGNAL` is a flag on `send`, `fwrite` has nowhere
   to put it, and `SO_NOSIGPIPE` is a BSD option that does not exist on Linux — so the
   choice is keep the stream seam and ignore the signal process-wide, or take
@@ -180,7 +205,10 @@ parsers'. Three things about its shape are load-bearing:
   silently, with no message and no log line**, the first time a browser navigates away
   mid-response: SIGPIPE's default action is termination. It lives in `main` and not the
   library for the same reason `mini_shell`'s `setvbuf` does, and each test binary needs
-  its own copy.
+  its own copy. **The Rust port has no call to delete** — the runtime sets `SIG_IGN`
+  before `main` — so the only way to reintroduce the bug there is to put a disposition
+  back deliberately. Its `main` says so in a comment for exactly that reason; the absence
+  of a line is not self-documenting.
 - **A `std::streambuf` cannot report "error" — only "no more bytes".** `underflow()`
   returning `eof()` is the whole vocabulary, so a receive timeout and a browser's silent
   preconnect are indistinguishable at the stream level. `SocketStreambuf` therefore keeps
@@ -188,8 +216,12 @@ parsers'. Three things about its shape are load-bearing:
   reads it: empty is `kClosed`, `EAGAIN`/`EWOULDBLOCK` is `kTimeout`, anything else is
   `kRead` — the same three cases the C port gets from `errno` after `fgetc`. Drop the
   probe and every timeout is logged as an ordinary hang-up, which no unit test that hands
-  in a string stream would notice. Any port needs its own spelling of this; Rust's
-  `io::Error` carries it on the `Err`, so that one gets it for free.
+  in a string stream would notice. **The Rust port needs no probe at all**: `io::Error`
+  carries the reason on the `Err`, so `Ok(0)`, `WouldBlock`/`TimedOut`, and anything else
+  are three arms of one `match` in `read_request`, and the stream seam stays two ordinary
+  generic parameters. It does need a fourth arm the other two have no counterpart to —
+  `Interrupted`, because a bare `read(2)` surfaces `EINTR` where stdio restarts the read
+  under `SA_RESTART`, the same arm `mini_shell/rust` needs.
 - **`last_error` inside `SocketStreambuf` is not the `errno` helper.** The class has a
   member of that name, so within its member functions `error_ = last_error()` resolves to
   the accessor and assigns `error_` to itself — it compiles, both return
@@ -202,8 +234,13 @@ parsers'. Three things about its shape are load-bearing:
   a second live listener, so `EADDRINUSE` keeps meaning "the server is already running"
   and stays useful. `SO_REUSEPORT` would allow two servers on 8080 and split connections
   between them at random, which is a memorably horrible afternoon.
-  `RealSocket.RefusesASecondListenerOnTheSamePort` is what pins the difference; without
-  it, swapping one for the other passes everything else.
+  `RealSocket.RefusesASecondListenerOnTheSamePort` is what pins the difference, and
+  `refuses_a_second_listener_on_the_same_port` in `rust/tests/socket.rs`; without them,
+  swapping one for the other passes everything else. **The Rust port sets neither option
+  by hand**: `TcpListener::bind` already sets `SO_REUSEADDR` and does not set
+  `SO_REUSEPORT`, which is exactly the behavior wanted — but it means the guarantee lives
+  in the standard library rather than in a line anybody can grep for, so that test is the
+  only thing in the port that says it.
 - **The connection is closed with `shutdown` plus a non-blocking drain, not a bare
   `close`.** Linux sends an RST rather than a FIN when a socket is closed with unread
   inbound data, and a peer may discard data it already received when it gets an RST.
@@ -262,16 +299,20 @@ parsers'. Three things about its shape are load-bearing:
   `stdin` had to be `_IONBF` so a forked child inherited unconsumed bytes. Nothing is
   forked here, so full buffering is free — and the buffer holding bytes past the blank
   line is desirable, since those are a request body nobody reads and `fclose` (or dropping
-  the streambuf's get area) throws away for free. **Do not copy the `setvbuf` line
-  across**, and in C++ do not reach for `sync_with_stdio` either — neither has anything to
-  do with a socket here.
+  the streambuf's get area, or dropping the `BufReader`) throws away for free. **Do not
+  copy the `setvbuf` line across**, in C++ do not reach for `sync_with_stdio`, and in Rust
+  do not reach for the `dup`-of-fd-0-as-a-plain-`File` dance `mini_shell/rust` needs —
+  none of the three has anything to do with a socket here.
 - **`Fd` in `cpp/server.hpp` is the repo's first RAII descriptor owner**, and it is
   deliberate rather than an oversight elsewhere: `mini_shell/cpp` keeps its pipe in a bare
   `int[2]` because that pipe lives inside one function, while a listener and every
   accepted connection here outlive the function that made them. It is also what makes the
   C port's `fdopen`-ownership table unrepresentable. `reset()` saves and restores `errno`
   around the `close`, the same care `close_quietly` takes in C — a failing `close` would
-  otherwise overwrite the error the caller is about to report.
+  otherwise overwrite the error the caller is about to report. The Rust port has no
+  counterpart because `TcpStream` and `TcpListener` already are one; do not add a wrapper
+  around a raw fd there, which would need `unsafe` to build and would close fd 0 on drop
+  if it were ever handed one.
 - **`accept4(..., SOCK_CLOEXEC)` sits behind `_GNU_SOURCE`.** Use plain `accept`; there is
   no exec here, so `FD_CLOEXEC` buys nothing. Same trap, same reasoning, as `mini_shell`'s
   `pipe2` note.
@@ -288,6 +329,25 @@ parsers'. Three things about its shape are load-bearing:
   `fread` with `EISDIR`, producing "cannot read the page file" for what is really "that is
   a directory". `server_load_page` therefore `fstat`s and requires `S_ISREG`, which also
   turns down `/dev/zero` and FIFOs before they churn through the whole 1 MiB cap.
+- **Rust's `io::Error` prints ` (os error N)` and nothing else does.** `strerror` and
+  `std::error_code::message` both stop at the message, and two of the log lines
+  `check_parity.sh` diffs directly are built from one — a missing `--file`
+  (`tiny_http_server: <path>: No such file or directory`) and `--port 80` as a non-root
+  user (`cannot bind the listening socket: Permission denied`). `os_message` in
+  `rust/src/server.rs` reconstructs the suffix from `raw_os_error` and strips it, and
+  every Rust log line and startup message that names an errno goes through it. Print an
+  `io::Error` directly anywhere in that port and the two startup cases fail. This is the
+  same wall `mini_shell` hit; it answered by writing its two reachable messages out by
+  hand, which does not work here because every errno `bind` and `open` can produce is
+  reachable.
+- **`TcpListener::bind` is four syscalls, so the Rust port has one fatal stage where the
+  others have three.** `socket`, `SO_REUSEADDR`, `bind`, and `listen` all happen inside
+  it and it returns one `io::Error`, so every failure is reported as `cannot bind the
+  listening socket`. That is right for everything reachable (`EACCES`, `EADDRINUSE`) and
+  wrong for an `EMFILE` out of `socket`. Do not try to recover the distinction by
+  pre-flighting a socket — it would be a different descriptor than the one bound. It is a
+  recorded divergence, and `local_addr()` is still separate, so `cannot listen on the
+  socket` survives for that one.
 - **`valgrind` does not run on this machine.** Use sanitizers instead:
   ```sh
   bazel test //tiny_http_server/... --config=permissive \

@@ -23,12 +23,14 @@
 #   parser_error_case  — stdout only, plus "every port must fail". These are the
 #                        failures the argument parser reports, and the ports do
 #                        not share one: C uses getopt_long and exits 2, C++ uses
-#                        CLI11 and brings its own wording and its own code. What
-#                        still has to hold is that the same command line is
-#                        rejected by all of them. See the divergence table in
-#                        README.md.
+#                        CLI11 and brings its own wording and its own code, Rust
+#                        uses clap, which happens to land on 2 as well - a
+#                        coincidence rather than a contract. What still has to
+#                        hold is that the same command line is rejected by all of
+#                        them. See the divergence table in README.md.
 #   help_case          — exit status only, for --help, whose text the C port
-#                        hand-writes and the C++ port gets from CLI11.
+#                        hand-writes and the C++ and Rust ports get from CLI11
+#                        and clap.
 #
 # The one normalization: every port binds --port 0 so a case never collides with
 # a server left running in another terminal, and the kernel's choice then shows
@@ -66,10 +68,11 @@ declare -A CASE_MUST_FAIL
 STREAMS="out log status"
 MUST_FAIL=0
 
-# Ports under test, reference first. Rust joins this list when it lands.
+# Ports under test, reference first.
 binaries() {
   echo "C|${REPO_ROOT}/bazel-bin/tiny_http_server/c/tiny_http_server"
   echo "C++|${REPO_ROOT}/bazel-bin/tiny_http_server/cpp/tiny_http_server"
+  echo "Rust|${REPO_ROOT}/target/debug/tiny_http_server"
 }
 
 build() {
@@ -77,6 +80,7 @@ build() {
   (cd "${REPO_ROOT}" && bazel build \
     //tiny_http_server/c:tiny_http_server \
     //tiny_http_server/cpp:tiny_http_server) >&2
+  (cd "${REPO_ROOT}" && cargo build --quiet -p tiny_http_server) >&2
 }
 
 # A binary that cannot be executed makes every port fail identically, so every
@@ -450,8 +454,10 @@ main() {
   parser_error_case unknown_opt   --nope
   parser_error_case stray_operand extra
   # --port 0x1F90 and --port 8_080 are NOT here: CLI11 reads base 0 and strips
-  # group separators, so the C++ port accepts spellings the C one rejects. That
-  # is the documented divergence, not something to assert jointly.
+  # group separators, so the C++ port accepts spellings the C and Rust ones
+  # reject. Neither is " 8080", which C's strtol and CLI11 both take and Rust's
+  # u16::from_str does not. Those are the documented divergences, not something
+  # to assert jointly.
 
   normalize_logs
   compare

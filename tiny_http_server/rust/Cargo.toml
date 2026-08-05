@@ -1,0 +1,15 @@
+[package]
+name = "tiny_http_server"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tiny_http_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tiny_http_server"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }

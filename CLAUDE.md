@@ -21,7 +21,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `simple_logger/` | A timestamped log-appender CLI, ported to C / C++ / Rust | [`simple_logger/CLAUDE.md`](simple_logger/CLAUDE.md) |
 | `matrix_ops/` | A 2D matrix arithmetic CLI, ported to C / C++ / Rust, benchmarked against Eigen, xtensor, faer, and nalgebra | [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md) |
 | `mini_shell/` | A prototype shell that forks and execs one program per line, ported to C / C++ / Rust | [`mini_shell/CLAUDE.md`](mini_shell/CLAUDE.md) |
-| `tiny_http_server/` | An HTTP server that serves one hello-world page, one connection at a time, ported to C / C++ with cross-port parity (Rust to follow) | [`tiny_http_server/CLAUDE.md`](tiny_http_server/CLAUDE.md) |
+| `tiny_http_server/` | An HTTP server that serves one hello-world page, one connection at a time, ported to C / C++ / Rust with cross-port parity | [`tiny_http_server/CLAUDE.md`](tiny_http_server/CLAUDE.md) |
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
@@ -107,9 +107,13 @@ option's *grammar* depends on what the option is bound to:
 - **A hand-written validator behind `->check()` is the last resort**, for a rule
   no built-in can state — `matrix_ops` rejects a NaN `--scalar` by hand, since
   `CLI::Range` tests `val < min || val > max` and both are false for a NaN, and
-  `tiny_http_server` checks `--host` with `inet_pton`, since the built-in
+  `tiny_http_server/cpp` checks `--host` with `inet_pton`, since the built-in
   `CLI::ValidIPV4` splits on `.` and range-checks four numbers of its own
-  parsing rather than asking the resolver's own parser.
+  parsing rather than asking the resolver's own parser. **The last resort is
+  per-port, not per-option**: `tiny_http_server/rust` declares that same `--host`
+  as an `Ipv4Addr` and writes no validator at all, because Rust's parser for
+  that type already *is* `inet_pton`'s grammar, leading zeros and all. A rule
+  one library cannot state is not a rule the next one cannot.
   `text_analyzer` used to hand-check its integers to keep them byte-identical
   with C, and that was a mistake: the validator was stricter than C's `strtol`
   (which skips leading whitespace and takes a `+`), so it pinned the C++ port to
