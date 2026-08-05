@@ -12,13 +12,16 @@ extern "C" {
 }
 
 /*
- * A wait status as system() returns one. The encoding is not in the standard —
+ * A wait status as waitpid reports one. The encoding is not in the standard —
  * <sys/wait.h> only promises the WIF* macros — so these two build the layout
- * every platform this runs on uses, and RealSystem.EncodingMatchesTheMacros
+ * every platform this runs on uses, and RealExec.EncodingMatchesTheMacros
  * below checks that assumption against the libc actually linked in.
  */
 static int exited(int code) { return code << 8; }
 static int signaled(int sig) { return sig; }
+
+/* One command as the runner receives it: a program and its arguments. */
+using Argv = std::vector<std::string>;
 
 /* Runs body against an in-memory output stream and returns what it wrote. */
 template<typename F> static std::string captured(F body) {
@@ -54,18 +57,28 @@ static FILE *make_input(const std::string &data) {
  */
 namespace {
   struct FakeRunner {
-    std::vector<std::string> commands;
+    std::vector<Argv> commands;
     std::vector<int> statuses;
     size_t next = 0;
+    /* The errno a canned status of -1 arrives with, since that is half of what
+     * a real runner reports when the command never started. */
+    int fail_errno = 0;
   };
 } // namespace
 
-static int fake_run(const char *command, void *ctx) {
+static int fake_run(char *const argv[], void *ctx) {
   FakeRunner *fake = static_cast<FakeRunner *>(ctx);
-  fake->commands.push_back(std::string(command));
+  Argv words;
+  for (char *const *word = argv; *word != nullptr; word++)
+    words.push_back(std::string(*word));
+  fake->commands.push_back(words);
+
+  int status = exited(0);
   if (fake->next < fake->statuses.size())
-    return fake->statuses[fake->next++];
-  return exited(0);
+    status = fake->statuses[fake->next++];
+  if (status == -1)
+    errno = fake->fail_errno;
+  return status;
 }
 
 static ShellOptions fake_options(FakeRunner *fake) {
@@ -103,44 +116,117 @@ static RunOutput run_shell(const std::string &input, const ShellOptions *opts) {
   return captured_run;
 }
 
+/* --- shell_split --- */
+
+static Argv split(const std::string &line) {
+  /* shell_split writes NULs into the line, so it gets a copy it may chew on. */
+  std::vector<char> buffer(line.begin(), line.end());
+  buffer.push_back('\0');
+
+  ShellArgv args;
+  EXPECT_EQ(shell_split(buffer.data(), &args), SHELL_OK);
+
+  Argv words;
+  for (size_t i = 0; i < args.argc; i++)
+    words.push_back(std::string(args.argv[i]));
+  /* The array execvp wants is NULL-terminated one past the last word. */
+  EXPECT_EQ(args.argv[args.argc], nullptr);
+  shell_argv_free(&args);
+  return words;
+}
+
+TEST(Split, OneWordIsTheProgramAlone) { EXPECT_EQ(split("ls"), Argv{"ls"}); }
+
+TEST(Split, LaterWordsAreArguments) {
+  EXPECT_EQ(split("echo hello world"), (Argv{"echo", "hello", "world"}));
+}
+
+TEST(Split, RunsOfWhitespaceSeparateExactlyOnce) {
+  /* Two arguments, not five: the empty strings between the spaces are not
+   * words. A shell that passed them along would hand echo blank arguments. */
+  EXPECT_EQ(split("echo   a  \t b"), (Argv{"echo", "a", "b"}));
+}
+
+TEST(Split, SurroundingWhitespaceIsDropped) {
+  EXPECT_EQ(split("  \t ls -l \t "), (Argv{"ls", "-l"}));
+}
+
+TEST(Split, VerticalTabAndFormFeedSeparateToo) {
+  /* The same set trim() uses, which is isspace in the "C" locale. */
+  EXPECT_EQ(split("echo\va\fb"), (Argv{"echo", "a", "b"}));
+}
+
+TEST(Split, NothingToSplitYieldsNoWords) {
+  EXPECT_TRUE(split("").empty());
+  EXPECT_TRUE(split("   \t ").empty());
+}
+
+TEST(Split, ShellMetacharactersAreOrdinaryWords) {
+  /* The whole of the grammar: whitespace separates, everything else is a byte
+   * in a word. There is no interpreter left to give these any meaning. */
+  EXPECT_EQ(split("echo a | wc"), (Argv{"echo", "a", "|", "wc"}));
+  EXPECT_EQ(split("echo * $HOME > out"),
+            (Argv{"echo", "*", "$HOME", ">", "out"}));
+  EXPECT_EQ(split("echo \"a b\""), (Argv{"echo", "\"a", "b\""}));
+}
+
+TEST(Split, NonAsciiBytesSurvive) {
+  EXPECT_EQ(split("echo \xc3\xa9"), (Argv{"echo", "\xc3\xa9"}));
+}
+
 /* --- shell_decode_status --- */
 
 TEST(DecodeStatus, CleanExitIsExitedZero) {
-  ShellStatus status = shell_decode_status(exited(0));
+  ShellStatus status = shell_decode_status(exited(0), 0);
   EXPECT_EQ(status.outcome, SHELL_EXITED);
   EXPECT_EQ(status.code, 0);
 }
 
 TEST(DecodeStatus, NonzeroExitKeepsItsCode) {
-  ShellStatus status = shell_decode_status(exited(3));
+  ShellStatus status = shell_decode_status(exited(3), 0);
   EXPECT_EQ(status.outcome, SHELL_EXITED);
   EXPECT_EQ(status.code, 3);
 }
 
-TEST(DecodeStatus, CommandNotFoundIsAnOrdinaryExit) {
-  /* 127 is what the interpreter exits with when it cannot find the command. It
-   * is not special-cased: the interpreter has already said so itself. */
-  ShellStatus status = shell_decode_status(exited(127));
+TEST(DecodeStatus, AnExitOf127IsNotSpecialCased) {
+  /* It used to be how the interpreter said "command not found". Nothing says
+   * that now — a missing program never reaches waitpid at all — so 127 is
+   * whatever the command chose to exit with, like any other code. */
+  ShellStatus status = shell_decode_status(exited(127), 0);
   EXPECT_EQ(status.outcome, SHELL_EXITED);
   EXPECT_EQ(status.code, 127);
 }
 
 TEST(DecodeStatus, SignalIsNotReadAsAnExitCode) {
-  ShellStatus status = shell_decode_status(signaled(9));
+  ShellStatus status = shell_decode_status(signaled(9), 0);
   EXPECT_EQ(status.outcome, SHELL_SIGNALED);
   EXPECT_EQ(status.code, 9);
 }
 
-TEST(DecodeStatus, MinusOneMeansTheCommandNeverRan) {
-  ShellStatus status = shell_decode_status(-1);
+TEST(DecodeStatus, MissingProgramIsToldApartByErrno) {
+  ShellStatus status = shell_decode_status(-1, ENOENT);
+  EXPECT_EQ(status.outcome, SHELL_NOT_FOUND);
+}
+
+TEST(DecodeStatus, UnexecutableProgramIsToldApartByErrno) {
+  ShellStatus status = shell_decode_status(-1, EACCES);
+  EXPECT_EQ(status.outcome, SHELL_NOT_EXECUTABLE);
+}
+
+TEST(DecodeStatus, AnyOtherErrnoIsUnrunnableAndIsCarried) {
+  /* A failed fork lands here, and the errno is carried rather than left in the
+   * global for the reporting to pick up later. */
+  ShellStatus status = shell_decode_status(-1, EAGAIN);
   EXPECT_EQ(status.outcome, SHELL_UNRUNNABLE);
+  EXPECT_EQ(status.code, EAGAIN);
 }
 
 /* --- shell_report_status --- */
 
-static std::string reported(ShellStatus status) {
+static std::string reported(ShellStatus status,
+                            const char *program = "acommand") {
   return captured([&](FILE *err) {
-    EXPECT_EQ(shell_report_status(err, status), SHELL_OK);
+    EXPECT_EQ(shell_report_status(err, status, program), SHELL_OK);
   });
 }
 
@@ -159,9 +245,24 @@ TEST(ReportStatus, NamesTheSignal) {
   EXPECT_EQ(reported(status), "mini_shell: command terminated by signal 9\n");
 }
 
+TEST(ReportStatus, NamesAMissingProgram) {
+  /* mini_shell's own words, not strerror's: every port writes these bytes
+   * itself, which is what keeps them byte-identical. */
+  ShellStatus status = {SHELL_NOT_FOUND, 0};
+  EXPECT_EQ(reported(status, "nosuchcmd"),
+            "mini_shell: nosuchcmd: command not found\n");
+}
+
+TEST(ReportStatus, NamesAProgramItMayNotExecute) {
+  ShellStatus status = {SHELL_NOT_EXECUTABLE, 0};
+  EXPECT_EQ(reported(status, "/etc/passwd"),
+            "mini_shell: /etc/passwd: permission denied\n");
+}
+
 TEST(ReportStatus, ReportsAnUnrunnableCommandWithErrno) {
-  ShellStatus status = {SHELL_UNRUNNABLE, 0};
-  errno = EAGAIN;
+  /* The residual case, and the only message here that borrows libc's wording.
+   */
+  ShellStatus status = {SHELL_UNRUNNABLE, EAGAIN};
   EXPECT_EQ(reported(status),
             std::string("mini_shell: failed to run command: ") +
                 strerror(EAGAIN) + "\n");
@@ -212,8 +313,42 @@ TEST(Run, PassesCommandsToTheRunnerInOrder) {
 
   EXPECT_EQ(run.result, SHELL_OK);
   ASSERT_EQ(fake.commands.size(), 2u);
-  EXPECT_EQ(fake.commands[0], "echo one");
-  EXPECT_EQ(fake.commands[1], "echo two");
+  EXPECT_EQ(fake.commands[0], (Argv{"echo", "one"}));
+  EXPECT_EQ(fake.commands[1], (Argv{"echo", "two"}));
+}
+
+TEST(Run, HandsTheRunnerASplitLineRatherThanACommandLine) {
+  FakeRunner fake;
+  ShellOptions opts = fake_options(&fake);
+  run_shell("  ls   -l  /tmp \nexit\n", &opts);
+
+  /* Surrounding and interior whitespace is gone by the time the runner sees
+   * it: splitting is mini_shell's job now, not an interpreter's. */
+  ASSERT_EQ(fake.commands.size(), 1u);
+  EXPECT_EQ(fake.commands[0], (Argv{"ls", "-l", "/tmp"}));
+}
+
+TEST(Run, TreatsShellMetacharactersAsOrdinaryArguments) {
+  FakeRunner fake;
+  ShellOptions opts = fake_options(&fake);
+  run_shell("echo a | wc\nexit\n", &opts);
+
+  /* No pipe: echo is run once, with three arguments. */
+  ASSERT_EQ(fake.commands.size(), 1u);
+  EXPECT_EQ(fake.commands[0], (Argv{"echo", "a", "|", "wc"}));
+}
+
+TEST(Run, ReportsAMissingProgramByName) {
+  FakeRunner fake;
+  /* The runner returns -1 with errno set, exactly as shell_exec_runner does
+   * when the child's execvp failed. */
+  fake.statuses = {-1};
+  fake.fail_errno = ENOENT;
+  ShellOptions opts = fake_options(&fake);
+  RunOutput run = run_shell("nosuchcmd arg\nexit\n", &opts);
+
+  EXPECT_EQ(run.result, SHELL_OK);
+  EXPECT_EQ(run.err, "mini_shell: nosuchcmd: command not found\n");
 }
 
 TEST(Run, PromptsOncePerCommandAndOnceMoreForExit) {
@@ -252,7 +387,7 @@ TEST(Run, RunsAFinalLineWithNoNewline) {
   run_shell("echo hi", &opts);
 
   ASSERT_EQ(fake.commands.size(), 1u);
-  EXPECT_EQ(fake.commands[0], "echo hi");
+  EXPECT_EQ(fake.commands[0], (Argv{"echo", "hi"}));
 }
 
 TEST(Run, ExitNeedsNoTrailingNewline) {
@@ -272,17 +407,20 @@ TEST(Run, BlankLinesArePromptedForButNotRun) {
   RunOutput run = run_shell("\n   \nls\nexit\n", &opts);
 
   ASSERT_EQ(fake.commands.size(), 1u);
-  EXPECT_EQ(fake.commands[0], "ls");
+  EXPECT_EQ(fake.commands[0], Argv{"ls"});
   EXPECT_EQ(run.out, "$ $ $ $ ");
 }
 
-TEST(Run, StripsCrlfButKeepsAnInteriorCarriageReturn) {
+TEST(Run, StripsCrlfAndSplitsOnAnInteriorCarriageReturn) {
   FakeRunner fake;
   ShellOptions opts = fake_options(&fake);
   run_shell("echo a\rb\r\n", &opts);
 
+  /* The trailing "\r\n" is a line terminator and is stripped. The interior
+   * '\r' is ASCII whitespace like any other, so it separates two arguments —
+   * where the interpreter used to receive it inside the command line. */
   ASSERT_EQ(fake.commands.size(), 1u);
-  EXPECT_EQ(fake.commands[0], "echo a\rb");
+  EXPECT_EQ(fake.commands[0], (Argv{"echo", "a", "b"}));
 }
 
 TEST(Run, ReportsAFailedCommandAndKeepsGoing) {
@@ -308,7 +446,7 @@ TEST(Run, ReportsASignaledCommand) {
 TEST(Run, RefusesALineContainingANulByte) {
   FakeRunner fake;
   ShellOptions opts = fake_options(&fake);
-  /* system() takes a NUL-terminated string, so running this would run "echo a"
+  /* execvp takes NUL-terminated strings, so running this would run "echo a"
    * and silently drop the rest. */
   RunOutput run = run_shell(std::string("echo a\0rm -rf /\nexit\n", 21), &opts);
 
@@ -323,7 +461,7 @@ TEST(Run, PassesNonAsciiBytesThrough) {
   run_shell("echo \xc3\xa9\nexit\n", &opts);
 
   ASSERT_EQ(fake.commands.size(), 1u);
-  EXPECT_EQ(fake.commands[0], "echo \xc3\xa9");
+  EXPECT_EQ(fake.commands[0], (Argv{"echo", "\xc3\xa9"}));
 }
 
 TEST(Run, EmptyInputStillPromptsOnce) {
@@ -390,8 +528,6 @@ TEST(ResultStr, LabelsEveryResult) {
   EXPECT_STREQ(shell_result_str(SHELL_ERR_READ), "error reading command input");
   EXPECT_STREQ(shell_result_str(SHELL_ERR_WRITE), "error writing output");
   EXPECT_STREQ(shell_result_str(SHELL_ERR_NOMEM), "out of memory");
-  EXPECT_STREQ(shell_result_str(SHELL_ERR_NO_SHELL),
-               "no command interpreter available");
 }
 
 TEST(ResultStr, FallsBackForAnUnknownValue) {
@@ -399,21 +535,52 @@ TEST(ResultStr, FallsBackForAnUnknownValue) {
                "unknown error");
 }
 
-/* --- shell_system_runner --- */
+/* --- shell_exec_runner --- */
 
-TEST(RealSystem, EncodingMatchesTheMacros) {
+/* Runs argv for real and decodes the result. The tests below can hand the
+ * runner an argv the splitter could never produce, which is how "exit 3"
+ * arrives as one argument here. */
+static ShellStatus really_run(std::vector<const char *> argv) {
+  argv.push_back(nullptr);
+  errno = 0;
+  int raw = shell_exec_runner(const_cast<char *const *>(argv.data()), NULL);
+  return shell_decode_status(raw, errno);
+}
+
+TEST(RealExec, EncodingMatchesTheMacros) {
   /* The one test that really forks. It pins the assumption behind exited() and
    * signaled() above: if this libc encoded a wait status differently, every
    * status this suite builds by hand would be meaningless. */
-  ShellStatus status = shell_decode_status(shell_system_runner("exit 3", NULL));
+  ShellStatus status = really_run({"/bin/sh", "-c", "exit 3"});
   EXPECT_EQ(status.outcome, SHELL_EXITED);
   EXPECT_EQ(status.code, 3);
 
-  status = shell_decode_status(shell_system_runner("exit 0", NULL));
+  status = really_run({"/bin/sh", "-c", "exit 0"});
   EXPECT_EQ(status.outcome, SHELL_EXITED);
   EXPECT_EQ(status.code, 0);
 
-  status = shell_decode_status(shell_system_runner("kill -9 $$", NULL));
+  status = really_run({"/bin/sh", "-c", "kill -9 $$"});
   EXPECT_EQ(status.outcome, SHELL_SIGNALED);
   EXPECT_EQ(status.code, 9);
+}
+
+TEST(RealExec, FindsAProgramOnPath) {
+  /* No absolute path: execvp searches PATH, which is what makes "ls" work at
+   * the prompt without the shell that used to do the looking. */
+  ShellStatus status = really_run({"true"});
+  EXPECT_EQ(status.outcome, SHELL_EXITED);
+  EXPECT_EQ(status.code, 0);
+}
+
+TEST(RealExec, ReportsAMissingProgramThroughTheErrnoPipe) {
+  /* The exec fails in the child, so this errno crossed a pipe to get here.
+   * Without that channel the parent would see only an exit status of 127 and
+   * could not tell it from a command that really exited 127. */
+  ShellStatus status = really_run({"nosuchcommand_xyzzy"});
+  EXPECT_EQ(status.outcome, SHELL_NOT_FOUND);
+}
+
+TEST(RealExec, ReportsAProgramItMayNotExecute) {
+  ShellStatus status = really_run({"/etc/passwd"});
+  EXPECT_EQ(status.outcome, SHELL_NOT_EXECUTABLE);
 }

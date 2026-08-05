@@ -3,6 +3,11 @@
 # Build the C, C++, and Rust mini_shell ports, feed each the same scripted
 # stdin, and check they agree byte for byte.
 #
+# Every port forks and execs one program per line, so there is no /bin/sh in
+# any of them to normalize away differences: the splitting, the PATH lookup's
+# outcome, and the wording of every failure are each port's own code. That is
+# what makes these comparisons worth running.
+#
 #   ./mini_shell/check_parity.sh          # build, run every case, report
 #   ./mini_shell/check_parity.sh --keep   # keep the work dir for inspection
 #
@@ -28,7 +33,7 @@
 #
 # One case does not fit the "the ports agree" mold and is checked absolutely
 # instead, by check_unbuffered below: a shell must not read ahead past the
-# command it is about to run. Both ports could regress together and every
+# command it is about to run. Every port could regress together and every
 # comparison here would still pass.
 #
 # Builds are unoptimized: there are no timings here.
@@ -177,7 +182,7 @@ compare() {
 #
 # A shell must not read ahead past the command it is about to run: `cat` has to
 # receive the input mini_shell has not consumed yet. Buffered, stdio pulls the
-# whole pipe in before the first fork, `cat` gets an empty stdin, and mini_shell
+# whole pipe in before the fork, `cat` gets an empty stdin, and mini_shell
 # runs the second line itself -- so the output says "done" instead of the
 # "echo done" that cat echoed. Every port could regress together and every diff
 # above would still be clean, which is why this is checked against a fixed
@@ -211,21 +216,42 @@ make_scripts() {
   printf 'false\nexit\n'                      >"${dir}/failing.txt"
   printf '\n   \n\t\nls /dev/null\nexit\n'    >"${dir}/blank.txt"
   printf '  exit  \n'                         >"${dir}/exit_spaced.txt"
-  # Every spelling but the bare word is a command like any other: exitx and EXIT
-  # are not found (127), `exit 3` exits the subshell with 3.
+  # Every spelling but the bare word is a command like any other, and none of
+  # them is a program on this machine -- `exit 3` included, now that there is no
+  # subshell to exit.
   printf 'exitx\nEXIT\nexit 3\nexit\n'        >"${dir}/exit_variants.txt"
   printf 'echo a\r\nexit\r\n'                 >"${dir}/crlf.txt"
   printf 'echo tail'                          >"${dir}/no_newline.txt"
   printf 'echo hi\n'                          >"${dir}/eof.txt"
   printf ''                                   >"${dir}/empty.txt"
-  printf 'kill -9 $$\nexit\n'                 >"${dir}/signal.txt"
   printf 'nosuchcommand_xyzzy\nexit\n'        >"${dir}/notfound.txt"
   printf 'echo \xc3\xa9\nexit\n'              >"${dir}/nonascii.txt"
-  # A NUL inside a command line. system() takes a NUL-terminated string, so both
-  # ports refuse the line rather than run the truncated "echo a".
+  # A NUL inside a command line. execvp takes NUL-terminated strings, so every
+  # port refuses the line rather than run the truncated "echo a".
   printf 'echo a\000rm -rf /\nexit\n'         >"${dir}/nul.txt"
-  # cd runs and appears to do nothing: every command gets a fresh subshell.
+  # cd is not a program, so it is not found. pwd is one, and runs.
   printf 'cd /\npwd\nexit\n'                  >"${dir}/cd.txt"
+
+  # A program and its arguments, and the whitespace between them: runs collapse,
+  # so echo receives exactly three arguments and prints them space-separated.
+  printf 'echo one two three\nexit\n'         >"${dir}/args.txt"
+  printf 'echo   a  \t b\nexit\n'             >"${dir}/spacing.txt"
+  # Nothing splits or expands these, so echo prints them back verbatim. This is
+  # the whole of what was given up with /bin/sh, pinned as a behavior.
+  printf 'echo a | wc\necho * $HOME > out\nexit\n' >"${dir}/metachars.txt"
+
+  # Two fixtures, because neither case can be spelled in a command line any
+  # more. A command killed by a signal needs a program that kills itself, and
+  # `kill -9 $$` at the prompt would now run /usr/bin/kill with the literal
+  # argument "$$".
+  printf '#!/bin/sh\nkill -9 $$\n'             >"${dir}/suicide.sh"
+  chmod +x "${dir}/suicide.sh"
+  printf '%s\nexit\n' "${dir}/suicide.sh"      >"${dir}/signal.txt"
+
+  # A file that exists and is not executable: execvp reports EACCES, and the
+  # port turns that into its own "permission denied" line.
+  printf 'not a program\n'                     >"${dir}/not_executable"
+  printf '%s\nexit\n' "${dir}/not_executable" >"${dir}/noexec.txt"
 }
 
 main() {
@@ -250,10 +276,16 @@ main() {
   run_case exit_spaced    exit_spaced.txt    --no-banner
   run_case exit_variants  exit_variants.txt  --no-banner
 
+  # --- splitting, which is the whole grammar ---
+  run_case arguments      args.txt           --no-banner
+  run_case whitespace_runs spacing.txt       --no-banner
+  run_case metacharacters metachars.txt      --no-banner
+
   # --- status reporting ---
   run_case failing        failing.txt        --no-banner
   run_case signaled       signal.txt         --no-banner
   run_case not_found      notfound.txt       --no-banner
+  run_case not_executable noexec.txt         --no-banner
 
   # --- byte handling ---
   run_case crlf           crlf.txt           --no-banner
@@ -261,6 +293,8 @@ main() {
   run_case nul_byte       nul.txt            --no-banner
 
   # --- documented non-behavior ---
+  # cd is not a builtin and is not a program either, so it is reported as
+  # missing; pwd still prints the directory mini_shell was started in.
   run_case cd_is_not_a_builtin cd.txt        --no-banner
 
   # --- option handling ---

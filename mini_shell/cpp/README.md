@@ -1,33 +1,45 @@
 # mini_shell (C++)
 
-A prototype shell: it prints a `$` prompt, reads one command per line from stdin, runs
-it with `std::system`, and reports the status of anything that did not exit 0. Written
-in idiomatic C++20 with the same semantics as the C port. See the top-level
-`mini_shell/README.md` for the full contract.
+A prototype shell: it prints a `$` prompt, reads one command per line from stdin,
+splits it into a program and its arguments, runs that program, and reports the status of
+anything that did not exit 0. Written in idiomatic C++20 with the same semantics as the
+C port. See the top-level `mini_shell/README.md` for the full contract, including why
+none of the ports uses `system()` as the exercise says.
 
-## Why `std::system`
+## There is no C++ way to do this
 
-Because C++ has no other answer, and does not need one here. `std::system` is `<cstdlib>`'s
-name for the same libc `system()` the C port calls; nothing in C++23/26 supersedes it,
-and there is still no standard process-launching API. The alternatives are each a
-different program:
+The standard library has never had a process API, and still does not in C++23/26.
+`std::system` is `<cstdlib>`'s name for the same libc `system()` the C port used to
+call, and now that mini_shell runs programs rather than command lines, even that is
+gone. So this port makes the same POSIX calls the C one does — `fork`, `execvp`,
+`waitpid`, `pipe`, `fcntl` — and the interesting question is only what C++ gets to wrap
+around them:
 
-- **`popen`/`pclose`** captures the command's stdout into a pipe. The contract says the
-  command inherits mini_shell's stdout and stderr, so this changes what the program
-  does, not how it is spelled.
-- **`fork` + `execvp`, or `posix_spawn`**, is what a real shell does — and it skips the
-  command interpreter, so `ls | wc -l`, `echo *`, and `exit 3` stop working. That is a
-  different exercise; this one is about `system()`.
-- **Boost.Process** would be a dependency, and the ports here take only CLI11.
+- **`std::vector<std::string>` is the argv**, converted to the `char *const []` `execvp`
+  wants at the last moment, in `exec_runner`. The `const_cast` there is not a smell:
+  `execvp` takes `char *const []` for C compatibility, not because it modifies anything.
+- **`std::error_code` renders the errno** in the one message that still borrows the
+  system's wording. The two that matter — `command not found` and `permission denied` —
+  are written out here rather than taken from `std::error_code::message()`, because
+  Rust's `io::Error` words them differently and these are the failures a parity case
+  actually reaches.
+- **Nothing else changes.** The wait status is still decoded with `<sys/wait.h>` macros,
+  `WIFSIGNALED` before `WIFEXITED`, since reading it as an exit code would report a
+  command killed by `SIGKILL` as "exited with status 0".
 
-Two things do not get easier in C++, and both are load-bearing:
+The rejected alternatives are the same three as ever, minus the one that just won:
+`popen` captures the command's stdout into a pipe and so changes what the program does;
+`posix_spawn` would hide the fork rather than show it, which is the wrong trade for an
+exercise about what a shell does; and Boost.Process would be a dependency, where the
+ports here take only CLI11.
 
-- **The return value is still a raw wait status.** The standard calls it
-  implementation-defined; POSIX makes it a wait status, so `decode_status` still includes
-  `<sys/wait.h>` and still checks `WIFSIGNALED` before `WIFEXITED`. Reading the raw value
-  as an exit code would report a command killed by `SIGKILL` as "exited with status 0".
-- **`std::system(nullptr)`** is still the startup check for whether an interpreter exists
-  at all.
+**`execvp` fails in the child**, where the parent cannot see its `errno`, so the two are
+joined by a pipe whose write end is `FD_CLOEXEC` — the child writes the errno and
+`_exit`s, a successful exec closes the pipe instead, and the parent reads either four
+bytes or end of file. The child must `_exit` and not `exit` or `return`: it shares the
+parent's stdio *and* iostream buffers, and flushing them there would print the parent's
+pending output a second time. See `c/README.md` for why the alternative — inferring it
+from an exit status of 127 — does not work.
 
 ## Design
 
@@ -40,10 +52,11 @@ port's `SHELL_ERR_NOMEM` does.
 
 The port keeps both of the C port's seams:
 
-- **A runner seam.** `run` never calls `std::system`. It calls `opts.runner(command)`,
-  a `std::function<int(const std::string &)>`, and `main` passes `shell::system_runner`
-  — the one impure function here. The tests bind a `Recorder` that returns canned wait
-  statuses, so the whole loop is exercised without forking a single process.
+- **A runner seam.** `run` never forks. It calls `opts.runner(argv)`, a
+  `std::function<int(const std::vector<std::string> &)>`, and `main` passes
+  `shell::exec_runner` — the one impure function here. The tests bind a `Recorder` that
+  returns canned wait statuses, so the whole loop is exercised without forking a single
+  process.
 - **A stream seam.** `run(in, out, err, opts)` takes three stream references rather than
   reaching for `std::cin`/`cout`/`cerr`, so the tests drive it with
   `std::istringstream` / `std::ostringstream` — which is most of why this suite is
@@ -51,10 +64,13 @@ The port keeps both of the C port's seams:
   from `out` on purpose: it is the contract that the shell's own complaints never mix
   into the command's output.
 
-`decode_status` is pure and separate from `report_status`, which is what makes the
-signal case testable without arranging for a real process to be killed.
-`RealSystem.EncodingMatchesTheMacros` is the one test that really forks, and it pins the
-hand-built wait statuses the rest of the suite uses against the libc actually linked in.
+`decode_status(raw, err)` is pure and separate from `report_status`, which is what makes
+the signal case testable without arranging for a real process to be killed. It takes the
+errno as an argument rather than reading the global, so the "never started" branches are
+testable too. `split` is the other pure function, and it is the whole grammar: a run of
+ASCII whitespace separates two words and every other byte is literal.
+`RealExec` is the one test group that really forks, and it pins both the hand-built wait
+statuses the rest of the suite uses and the errno pipe's two outcomes.
 
 Idiom differences from the C port, beyond the namespace and `enum class` spellings:
 
@@ -68,9 +84,13 @@ Idiom differences from the C port, beyond the namespace and `enum class` spellin
   principle.
 - **`std::getline` into a `std::string`** replaces POSIX `getline`. It carries its own
   length for the same reason: a line with an embedded NUL arrives intact and is
-  **refused** rather than silently truncated, since `std::system` takes a
-  NUL-terminated string and `echo a\0rm -rf /` would otherwise run as `echo a`. It also
-  removes the manual `free` and the `int saved = errno` dance around it.
+  **refused** rather than silently truncated, since `execvp` takes NUL-terminated
+  strings and `echo a\0rm -rf /` would otherwise run as `echo a`. It also removes the
+  manual `free` and the `int saved = errno` dance around it.
+- **`split` copies into a `std::vector<std::string>`**, where the C port splits its line
+  buffer in place and hands out pointers into it. The copy is what lets the runner take
+  a value type the tests can compare directly, and it is one allocation per word against
+  one `malloc` of a pointer array — a fair trade at this size.
 - **`Result::ec` is captured at the point of failure** instead of leaving `errno` in
   place for `main` to pair with `strerror`.
 - `std::getline` consumes the `'\n'` itself, so only the single trailing `'\r'` is
@@ -110,7 +130,8 @@ using a relative path resolves somewhere surprising. Run
 `bazel-bin/mini_shell/cpp/mini_shell` directly when that matters.
 
 The program exits `0` whenever the loop ended cleanly, **whatever the commands did**;
-`1` for its own failure (stdin read, stdout/stderr write, out of memory, no command
-interpreter); and, for a bad command line, whatever CLI11 returns — `109` for an unknown
+`1` for its own failure (stdin read, stdout/stderr write, out of memory) — but never
+for a command that could not be found or run, since the shell did its job by trying; and,
+for a bad command line, whatever CLI11 returns — `109` for an unknown
 option or a stray operand, where the C port exits `2`. See the divergence table in
 `mini_shell/README.md`.

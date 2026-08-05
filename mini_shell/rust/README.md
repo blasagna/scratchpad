@@ -1,59 +1,67 @@
 # mini_shell (Rust)
 
-A prototype shell: it prints a `$` prompt, reads one command per line from stdin, runs
-it through the system command interpreter, and reports the status of anything that did
-not exit 0. Written in idiomatic Rust with the same semantics as the C and C++ ports.
-See the top-level `mini_shell/README.md` for the full contract.
+A prototype shell: it prints a `$` prompt, reads one command per line from stdin,
+splits it into a program and its arguments, runs that program, and reports the status of
+anything that did not exit 0. Written in idiomatic Rust with the same semantics as the C
+and C++ ports. See the top-level `mini_shell/README.md` for the full contract, including
+why none of the ports uses `system()` as the exercise says.
 
-## What replaces `system()`
+## Where Rust ends up ahead
 
-Rust has no `system()`, deliberately — the standard library exposes process creation
-and nothing that hands a string to a shell. The equivalent is one `Command`:
+The other two ports spell out `fork`, `execvp`, `waitpid`, `pipe`, and `fcntl`. This one
+is a single expression:
 
 ```rust
-Command::new("/bin/sh").arg0("sh").arg("-c").arg(command).status()
+Command::new(argv[0]).args(&argv[1..]).status()
 ```
 
-which is what glibc's `system()` does internally (`execl("/bin/sh", "sh", "-c", line,
-NULL)`), so `ls | wc -l`, `echo *`, and `exit 3` keep working. The path is hardcoded
-rather than searched for on `$PATH`, and `arg0` is set, for the same reason: to be that
-call rather than something near it. `.status()` and not `.output()` — the command
+and it is not a shortcut past the exercise — it is *the same program*. `Command` forks
+(or `posix_spawn`s), execs, and waits; a program with no `/` is looked up on `PATH`
+exactly as `execvp` does; and `.status()` rather than `.output()` means the child
 inherits mini_shell's stdin, stdout, and stderr, which is the contract and what makes
-`cat` work.
+`cat` work. No `arg0()` either: `Command` already passes the program as `argv[0]`, which
+is what `execvp(argv[0], argv)` does with the word as typed.
 
-The alternatives were the same three the C++ port weighed, plus one:
+**Including the errno pipe.** The interesting part of the C port is that `execvp` fails
+in the *child*, so the parent needs a close-on-exec pipe to learn why — otherwise a
+missing program and a command that exited 127 are the same event. Rust's standard
+library runs that exact mechanism internally and surfaces the result as the `Err` arm of
+`io::Result<ExitStatus>`. Twenty lines of C become a `match` on `err.kind()`:
 
-- **`libc::system` through FFI** would be exact parity for free, and is C in Rust
-  clothing: a `CString` to build, an `unsafe` block, and the raw wait status back again.
-  The exercise is about what `system()` *does*, and this port has to show that in the
-  language it is written in.
+```rust
+ErrorKind::NotFound         => Status::NotFound,
+ErrorKind::PermissionDenied => Status::NotExecutable,
+_                           => Status::Unrunnable(err),
+```
+
+Two things still do not come for free:
+
+- **The wait status is decoded, but the ordering is still ours.** `ExitStatus` has
+  already done what `WIFSIGNALED`/`WTERMSIG`/`WIFEXITED`/`WEXITSTATUS` do, but
+  `decode_status` still checks `signal()` before `code()`, for the same reason the C port
+  checks the macros in that order: a status naming a signal has no exit code to report,
+  and reading one as the other would call a command killed by `SIGKILL` "exited with
+  status 0". It is still pure and still separate from `report_status`, which is what
+  makes the signal case testable without arranging for a real process to be killed.
+- **`ENOEXEC` behaves differently, and that is a real divergence.** See below.
+
+The rejected alternatives:
+
+- **`libc` through FFI** would match the C ports byte for byte, including the `ENOEXEC`
+  case, and is C in Rust clothing: `CString`s, `unsafe` blocks, and a raw wait status to
+  pick apart by hand. The point of this port is to show the same program in the language
+  it is written in.
 - **`popen`-alikes** capture the command's stdout into a pipe, which changes what the
   program does rather than how it is spelled.
-- **`fork` + `exec`** is what a real shell does, and it skips the interpreter — a
-  different exercise.
 - **A crate** (`duct`, `subprocess`) would be a dependency, and the ports here take only
   `clap`.
-
-Three things `system()` gives away for free do not come with `Command`:
-
-- **The status is already decoded.** `system()` returns a raw wait status that the C and
-  C++ ports pick apart with `WIFSIGNALED`/`WTERMSIG`/`WIFEXITED`/`WEXITSTATUS`, checking
-  signals first so a command killed by `SIGKILL` is not reported as "exited with status
-  0". `Command::status()` returns `io::Result<ExitStatus>`, so the same three outcomes
-  come out of `Err(_)`, `ExitStatus::signal()`, and `ExitStatus::code()` — in that order,
-  for the same reason, since a status naming a signal has no exit code to report.
-  `decode_status` is still pure and still separate from `report_status`, which is what
-  makes the signal case testable without arranging for a real process to be killed.
-- **`system(NULL)` has no counterpart.** glibc implements it as `do_system("exit 0")`, so
-  `interpreter_available()` runs exactly that once at startup.
-- **The `SIGINT`/`SIGQUIT` blocking is gone.** See the divergences below.
 
 ## Design
 
 The port keeps both of the C port's seams:
 
-- **A runner seam.** `run` never spawns anything. It calls `opts.runner.run(command)`
-  through a `&mut dyn Runner`, and `main` passes `SystemRunner` — the one impure type
+- **A runner seam.** `run` never spawns anything. It calls `opts.runner.run(&argv)`
+  through a `&mut dyn Runner`, and `main` passes `ExecRunner` — the one impure type
   here. A trait object rather than a `Box<dyn FnMut>`: it is the literal translation of
   C's `(ShellRunner, void *ctx)` pair, with the vtable for the function pointer and the
   data pointer for the context, and it lets the test fake be a plain struct whose
@@ -65,14 +73,21 @@ The port keeps both of the C port's seams:
   `err` is separate from `out` on purpose: it is the contract that the shell's own
   complaints never mix into the command's output.
 
-Lines are `Vec<u8>`, never `String`. The contract passes non-ASCII bytes through
-unchanged and a command line is not required to be UTF-8, so the bytes reach
-`Command::arg` through `OsStr::from_bytes` with no lossy conversion in between. A line
-containing a NUL is still **refused** rather than run: Rust would return a spawn error
-instead of truncating at the NUL the way `system()` does, but refusing keeps the message
-and the loop behavior identical across all three ports.
+Lines are `Vec<u8>`, never `String`, and so are the words `split` cuts them into. The
+contract passes non-ASCII bytes through unchanged and neither a program name nor an
+argument is required to be UTF-8, so the bytes reach `Command::new` and `Command::arg`
+through `OsStr::from_bytes` with no lossy conversion in between. `report_status` writes
+the program name with `write_all` rather than `{}` for the same reason. A line containing
+a NUL is still **refused** rather than run: Rust would return a spawn error instead of
+truncating at the NUL the way `execvp` does, but refusing keeps the message and the loop
+behavior identical across all three ports.
 
-`ShellError` has three variants where the C port's `ShellResult` has five. `getline`
+`split` is `slice::split` on the whitespace set, with the empty slices filtered out —
+they are what a run of whitespace leaves behind, and passing them on would hand the
+program blank arguments. That filter is the entire difference between this and
+`str::split_whitespace`, which is unavailable here because a word is bytes.
+
+`ShellError` has two variants where the C port's `ShellResult` has four. `getline`
 returns `-1` for end of input, a read error, and an allocation failure alike, which is
 the only reason `shell_run` consults `ferror`/`feof` and the only reason
 `SHELL_ERR_NOMEM` exists; `Read::read` separates them in the type. `Display` composes the
@@ -108,16 +123,18 @@ without that arm here, a `SIGWINCH` mid-read would be reported as
 `mini_shell: error reading command input`. `write_all` and `flush` already retry
 internally.
 
-The other thing not to undo is `trim`'s whitespace set, `b" \t\n\x0b\x0c\r"`, spelled out
+The other thing not to undo is the whitespace set, `b" \t\n\x0b\x0c\r"`, spelled out
 rather than `u8::is_ascii_whitespace`. That method omits `\v`, which C's `isspace` in the
 "C" locale and the C++ port's `" \t\n\v\f\r"` both include — so `"\x0bexit\x0b"` would end
-the loop in two ports and run as a command here.
+the loop in two ports and run as a command here. It is now the splitter's separator set
+as well as `trim`'s, so it also decides where arguments begin and end.
 
-`tests/real_system.rs` is the one test that really forks. It is stronger than the C and
-C++ ports' `RealSystem.EncodingMatchesTheMacros`: because the unit suite builds statuses
+`tests/real_exec.rs` is the one test that really forks. It is stronger than the C and
+C++ ports' `RealExec.EncodingMatchesTheMacros`: because the unit suite builds statuses
 with `ExitStatus::from_raw(3 << 8)`, it asserts that a hand-built status and a real
-`/bin/sh` status decode *identically*, rather than only that the real one decodes as
-expected.
+process's status decode *identically*, rather than only that the real one decodes as
+expected. It reaches `/bin/sh -c "exit 3"` by handing the runner a three-word argv
+directly — something the splitter could never produce, since it cannot quote.
 
 ## Deliberate divergences
 
@@ -126,8 +143,9 @@ expected.
 `mini_shell/README.md`:
 
 - **Out of memory aborts** instead of printing `mini_shell: out of memory` and exiting 1.
-  `try_reserve` on the line buffer would not cover the `Vec::push` in `read_line`, and
-  the allocator aborts before any of it. Same call `matrix_ops/rust` made.
+  `try_reserve` on the line buffer would not cover the `Vec::push` in `read_line` or the
+  `Vec` `split` collects into, and the allocator aborts before any of it. Same call
+  `matrix_ops/rust` made.
 - **Argument errors are clap's, at exit 2.** The wording is clap's, not the C port's
   `usage:` pair nor CLI11's. The *code* agrees with C and differs from C++'s `109` —
   the first time in this repo the Rust port lands on C's side of that row. `--help` is
@@ -138,18 +156,21 @@ expected.
 - **A read error on stdin behaves like C, not C++.** `Read::read` reports the failure
   directly, so there is no `stdio_sync_filebuf` blind spot: no closing `\n` on stdout
   before the diagnostic, and no `ferror(stdin)` fixup in `main`.
-- **`SIGINT` during a command kills mini_shell too.** POSIX requires `system()` to set
-  `SIGINT` and `SIGQUIT` to `SIG_IGN` in the caller while the command runs, so Ctrl-C at
-  a terminal kills only the child and the C and C++ ports report
-  `command terminated by signal 2` and prompt again. `Command::status()` does no such
-  thing, so the parent takes the signal as well and dies. Restoring it means `signal(2)`
-  in the parent, which means a `libc` dependency and an `unsafe` block, and the ports
-  here take only `clap`. Interactive only — no parity case reaches it.
+- **An executable file with no `#!` line fails here and runs there.** POSIX requires
+  `execvp` to retry through a command interpreter on `ENOEXEC`, so glibc runs such a file
+  as `execve("/bin/sh", ["/bin/sh", file, ...])` and the C and C++ ports inherit that.
+  Rust's `Command` deliberately does not, and reports
+  `failed to run command: Exec format error (os error 8)`. **This is the one behavior
+  where the C ports still reach a shell and this one does not**, which is either the
+  wart or the point depending on your reading. Closing it means resolving `PATH` by hand
+  and calling `execv` in C and C++, and a second `PATH` implementation to keep in step
+  with this one. No parity case may create such a file while it stands.
 - **Error text carries Rust's suffix.** `io::Error`'s `Display` is
-  `"<strerror> (os error N)"`, so `mini_shell: failed to run command: …` and the two
-  stream-error lines gain ` (os error 11)` where C prints a bare `strerror`. No parity
-  case exercises any of the three — they need a fork failure, an unreadable stdin, or a
-  full stdout — but it is a real byte difference.
+  `"<strerror> (os error N)"`. This is exactly why `command not found` and
+  `permission denied` are written out in `report_status` rather than taken from the
+  error: those two are the failures parity cases reach. What still carries the suffix is
+  `mini_shell: failed to run command: …` and the two stream-error lines, and reaching any
+  of them needs a fork failure, an unreadable stdin, or a full stdout.
 - **`mini_shell: cannot duplicate stdin: …`** replaces the C ports'
   `cannot unbuffer stdin: …`. Different mechanism, same exit 1, effectively unreachable.
 
@@ -166,7 +187,8 @@ Unlike `bazel run`, `cargo run` executes in your current working directory, so r
 paths in a command resolve normally.
 
 The program exits `0` whenever the loop ended cleanly, **whatever the commands did**;
-`1` for its own failure (a read error on stdin, a write error on stdout or stderr, no
-command interpreter); and `2` for a bad command line, which is clap's code and happens to
+`1` for its own failure (a read error on stdin, a write error on stdout or stderr) —
+never for a command that could not be found or run, since the shell did its job by
+trying; and `2` for a bad command line, which is clap's code and happens to
 be the C port's too, where the C++ port exits `109`. See the divergence table in
 `mini_shell/README.md`.

@@ -12,17 +12,21 @@ static void print_help(void) {
   printf("\n");
   printf("A prototype shell. Prints a '$' prompt, reads one command per "
          "line,\n");
-  printf("hands it to the system command interpreter, and reports the exit "
-         "status\n");
-  printf("of any command that does not succeed. Repeats until you type 'exit' "
-         "or\n");
-  printf("close the input.\n");
+  printf("runs it, and reports the exit status of any command that does not\n");
+  printf("succeed. Repeats until you type 'exit' or close the input.\n");
   printf("\n");
+  printf("A line is split on whitespace. The first word is a program, looked "
+         "up\n");
+  printf("on PATH and run directly; the rest are its arguments, passed "
+         "through\n");
+  printf("exactly as typed. There is no shell in between, so there are no "
+         "pipes,\n");
+  printf("no redirection, no globbing, no quoting, and no variable "
+         "expansion --\n");
   printf(
-      "Every command runs in a fresh subshell, so state a command sets --\n");
-  printf("the working directory, an environment variable -- is gone by the "
-         "next\n");
-  printf("prompt. 'cd' therefore appears to do nothing.\n");
+      "'echo a | wc' prints 'a | wc'. Each command is a fresh process, so\n");
+  printf("state it sets is gone by the next prompt, and 'cd' is not found at "
+         "all.\n");
   printf("\n");
   printf("Options:\n");
   printf("      --no-banner  skip the startup banner\n");
@@ -41,7 +45,7 @@ static void print_usage_error(void) {
 int main(int argc, char *argv[]) {
   ShellOptions opts = {
       .show_banner = 1,
-      .runner = shell_system_runner,
+      .runner = shell_exec_runner,
       .runner_ctx = NULL,
   };
 
@@ -72,15 +76,6 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "error: unexpected argument '%s'\n", argv[optind]);
     print_usage_error();
     return 2;
-  }
-
-  /* system(NULL) reports whether an interpreter exists at all. Asking once is
-   * worth it: without one, every command would fail the same way, one line of
-   * errno noise at a time. */
-  if (system(NULL) == 0) {
-    fprintf(stderr, "%s: %s\n", SHELL_PROGNAME,
-            shell_result_str(SHELL_ERR_NO_SHELL));
-    return 1;
   }
 
   /* Read stdin unbuffered, so a command inherits the input mini_shell has not

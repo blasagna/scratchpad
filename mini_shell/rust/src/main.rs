@@ -1,5 +1,5 @@
-//! CLI for the prototype shell: reads commands from stdin and runs each through
-//! the system command interpreter.
+//! CLI for the prototype shell: reads commands from stdin and runs each one as
+//! a program with its arguments.
 
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
@@ -8,20 +8,22 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use mini_shell::{Options, PROG_NAME, ShellError, SystemRunner, interpreter_available, run};
+use mini_shell::{ExecRunner, Options, PROG_NAME, ShellError, run};
 
 #[derive(Parser)]
 #[command(
     name = "mini_shell",
-    about = "A prototype shell that runs each line through the system command interpreter.",
+    about = "A prototype shell that runs one program per line.",
     long_about = "A prototype shell. Prints a '$' prompt, reads one command per line,\n\
-                  hands it to the system command interpreter, and reports the exit status\n\
-                  of any command that does not succeed. Repeats until you type 'exit' or\n\
-                  close the input.\n\
+                  runs it, and reports the exit status of any command that does not\n\
+                  succeed. Repeats until you type 'exit' or close the input.\n\
                   \n\
-                  Every command runs in a fresh subshell, so state a command sets --\n\
-                  the working directory, an environment variable -- is gone by the next\n\
-                  prompt. 'cd' therefore appears to do nothing.",
+                  A line is split on whitespace. The first word is a program, looked up\n\
+                  on PATH and run directly; the rest are its arguments, passed through\n\
+                  exactly as typed. There is no shell in between, so there are no pipes,\n\
+                  no redirection, no globbing, no quoting, and no variable expansion --\n\
+                  'echo a | wc' prints 'a | wc'. Each command is a fresh process, so\n\
+                  state it sets is gone by the next prompt, and 'cd' is not found at all.",
     after_help = "Commands come from stdin, so the prompt and banner are printed whether\n\
                   or not that is a terminal."
 )]
@@ -36,14 +38,6 @@ fn main() -> ExitCode {
     // usage-error path of its own. Commands come from stdin, never from argv, so
     // there is no positional to declare and a stray operand is clap's to reject.
     let cli = Cli::parse();
-
-    // The stand-in for the C and C++ ports' system(NULL). Asking once is worth
-    // it: without an interpreter, every command would fail the same way, one
-    // line of errno noise at a time.
-    if !interpreter_available() {
-        eprintln!("{PROG_NAME}: {}", ShellError::NoShell);
-        return ExitCode::FAILURE;
-    }
 
     // Read the command input unbuffered, so a command inherits the input
     // mini_shell has not consumed yet: `printf 'cat\necho done\n' | mini_shell`
@@ -69,7 +63,7 @@ fn main() -> ExitCode {
     let mut out = BufWriter::new(io::stdout().lock());
     let mut err = io::stderr().lock();
 
-    let mut runner = SystemRunner;
+    let mut runner = ExecRunner;
     let mut opts = Options {
         show_banner: !cli.no_banner,
         runner: &mut runner,
