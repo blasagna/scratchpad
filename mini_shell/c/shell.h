@@ -209,7 +209,9 @@ ShellResult shell_write_banner(FILE *out);
  * Input:  ctx - unused; present to satisfy the ShellRunner signature.
  *
  * Output: The wait status, undecoded, or -1 with errno set to whatever stopped
- *         the command from starting.
+ *         the command from starting. An empty argv is one of those: it is
+ *         EINVAL rather than execvp(NULL, ...), since shell_run's blank check
+ *         is no guarantee for a caller reaching this directly.
  */
 int shell_exec_runner(char *const argv[], void *ctx);
 

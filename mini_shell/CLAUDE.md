@@ -65,7 +65,15 @@ still come back clean. See the buffering bullet below.
   reproduce the ambiguity anyway, since `Command::status()` returns `Err`. Two details
   in the child are load-bearing: `_exit` and not `exit` (it shares the parent's stdio
   buffers, and flushing them would duplicate the parent's pending output), and `pipe` +
-  `fcntl(F_SETFD, FD_CLOEXEC)` rather than `pipe2`, which sits behind `__USE_GNU`.
+  `fcntl(F_SETFD, FD_CLOEXEC)` rather than `pipe2`, which sits behind `__USE_GNU`. A
+  third is the order at the end: **what the child sent is reported in preference to a
+  `waitpid` failure**, since the child's errno is the one that says why the command
+  never ran. Whoever exec'd mini_shell may have left `SIGCHLD` at `SIG_IGN`, which is
+  inherited and makes every `waitpid` here fail `ECHILD`; reading that first turns
+  "command not found" into "failed to run command: No child processes". Nothing
+  automated covers it — reproduce it with
+  `perl -e '$SIG{CHLD}="IGNORE"; exec(@ARGV)' <port> --no-banner`, where all three ports
+  still agree (Rust reports the same `ECHILD` from inside `Command::status`).
 - **`ENOENT` and `EACCES` are reported in mini_shell's own words**, not with `strerror`.
   This is parity infrastructure, not style: Rust's `io::Error` renders `ENOENT` as
   `No such file or directory (os error 2)` and C's `strerror` as `No such file or

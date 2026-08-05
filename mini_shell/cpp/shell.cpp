@@ -190,6 +190,14 @@ void close_pipe(int fds[2]) {
 } // namespace
 
 int exec_runner(const std::vector<std::string> &argv) {
+  // run's blank check guarantees a program, but this is a public entry point
+  // the tests call directly, and an empty argv would reach the child as
+  // execvp(nullptr, ...). Refuse it as a runner failure instead.
+  if (argv.empty()) {
+    errno = EINVAL;
+    return -1;
+  }
+
   // execvp wants a NULL-terminated array of pointers, and takes char *const []
   // for compatibility with C rather than because it modifies anything. The
   // const_cast is the standard way to bridge that, and the strings outlive the
@@ -246,15 +254,25 @@ int exec_runner(const std::vector<std::string> &argv) {
 
   // Reap the child either way: it exists even when the exec failed.
   int raw;
+  bool wait_failed = false;
   while (waitpid(pid, &raw, 0) < 0) {
-    if (errno != EINTR)
-      return -1;
+    if (errno != EINTR) {
+      wait_failed = true;
+      break;
+    }
   }
 
+  // The child's errno wins over a waitpid failure: it is the one that says why
+  // the command never ran. Whoever exec'd mini_shell may have left SIGCHLD at
+  // SIG_IGN, in which case every waitpid here fails ECHILD, and reporting that
+  // instead would turn "command not found" into "failed to run command: No
+  // child processes".
   if (n == static_cast<ssize_t>(sizeof child_errno)) {
     errno = child_errno;
     return -1;
   }
+  if (wait_failed)
+    return -1;
   return raw;
 }
 

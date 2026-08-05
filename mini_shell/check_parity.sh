@@ -42,6 +42,15 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${TMPDIR:-/tmp}/mini_shell_parity"
+# Two cases below put a fixture's path inside a command line, and the splitter
+# has no quoting: whitespace anywhere in this path would break the path into
+# several words, and both cases would degrade into "command not found" — in all
+# three ports at once, so the comparison would still print ok while asserting
+# nothing about signals or EACCES. Do not trust TMPDIR to be free of it.
+if [[ "${WORK}" == *[[:space:]]* ]]; then
+  echo "note: TMPDIR contains whitespace; using /tmp for fixtures" >&2
+  WORK="/tmp/mini_shell_parity"
+fi
 
 KEEP=0
 if [[ "${1:-}" == "--keep" ]]; then

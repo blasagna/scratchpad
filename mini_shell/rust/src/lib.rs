@@ -133,18 +133,28 @@ pub trait Runner {
 /// ports spell out by hand — including the close-on-exec pipe that carries a
 /// failed exec's errno back from the child, which [`Command`] runs internally
 /// and reports as `Err`.
+///
+/// An empty argv is an `Err` too, rather than a panic — [`run`]'s blank check is
+/// no guarantee for a caller reaching this directly.
 pub struct ExecRunner;
 
 impl Runner for ExecRunner {
     fn run(&mut self, argv: &[&[u8]]) -> io::Result<ExitStatus> {
+        // `run`'s blank check guarantees a program, but this is a public entry
+        // point, and indexing an empty argv would panic where the C and C++
+        // ports return their runner failure. `decode_status` turns this into
+        // the catch-all "failed to run command:" line, as EINVAL does there.
+        let Some((program, args)) = argv.split_first() else {
+            return Err(io::Error::from(ErrorKind::InvalidInput));
+        };
         // No arg0(): Command already passes the program as argv[0], which is
         // what execvp(argv[0], argv) does with the word as typed. A program with
         // no '/' is looked up on PATH, as execvp does.
         //
         // Not Strings: the contract passes non-ASCII bytes through unchanged,
         // and neither a program name nor an argument is required to be UTF-8.
-        Command::new(OsStr::from_bytes(argv[0]))
-            .args(argv[1..].iter().map(|word| OsStr::from_bytes(word)))
+        Command::new(OsStr::from_bytes(program))
+            .args(args.iter().map(|word| OsStr::from_bytes(word)))
             // status(), not output(): the command inherits our stdin, stdout,
             // and stderr, which is what makes `cat` work.
             .status()

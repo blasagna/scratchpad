@@ -150,7 +150,9 @@ using Runner = std::function<int(const std::vector<std::string> &argv)>;
 // was the alternative and was rejected: a command that really does exit 127 is
 // then indistinguishable from one that never ran.
 //
-// Returns the wait status, undecoded, or -1 with errno set.
+// Returns the wait status, undecoded, or -1 with errno set. An empty argv is
+// one of those: it is EINVAL rather than execvp(nullptr, ...), since run's
+// blank check is no guarantee for a caller reaching this directly.
 int exec_runner(const std::vector<std::string> &argv);
 
 // How the command loop behaves. runner must not be empty.

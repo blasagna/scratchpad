@@ -212,6 +212,14 @@ static void close_pipe(int fds[2]) {
 int shell_exec_runner(char *const argv[], void *ctx) {
   (void)ctx;
 
+  /* shell_run's blank check guarantees a program, but this is a public entry
+   * point the tests call directly, and an empty argv would reach the child as
+   * execvp(NULL, ...). Refuse it as a runner failure instead. */
+  if (argv[0] == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+
   /* The channel the child reports a failed exec on. pipe + fcntl rather than
    * pipe2: pipe2 sits behind __USE_GNU in glibc's <unistd.h> and would need
    * _GNU_SOURCE, while these two are plain POSIX. Only the write end needs
@@ -259,15 +267,25 @@ int shell_exec_runner(char *const argv[], void *ctx) {
 
   /* Reap the child either way: it exists even when the exec failed. */
   int raw;
+  int wait_failed = 0;
   while (waitpid(pid, &raw, 0) < 0) {
-    if (errno != EINTR)
-      return -1;
+    if (errno != EINTR) {
+      wait_failed = 1;
+      break;
+    }
   }
 
+  /* The child's errno wins over a waitpid failure: it is the one that says why
+   * the command never ran. Whoever exec'd mini_shell may have left SIGCHLD at
+   * SIG_IGN, in which case every waitpid here fails ECHILD, and reporting that
+   * instead would turn "command not found" into "failed to run command: No
+   * child processes". */
   if (n == (ssize_t)sizeof child_errno) {
     errno = child_errno;
     return -1;
   }
+  if (wait_failed)
+    return -1;
   return raw;
 }
 
@@ -353,7 +371,12 @@ ShellResult shell_run(FILE *in, FILE *out, FILE *err,
     int raw = opts->runner(args.argv, opts->runner_ctx);
     ShellStatus status = shell_decode_status(raw, errno);
     ShellResult reported = shell_report_status(err, status, args.argv[0]);
+    /* free can clobber errno - glibc's may madvise or munmap when it trims -
+     * and main reports a SHELL_ERR_WRITE with strerror(errno). Same guard as
+     * the one around free(line) below, for the same reason. */
+    int freed_errno = errno;
     shell_argv_free(&args);
+    errno = freed_errno;
     if (reported != SHELL_OK) {
       result = reported;
       break;
