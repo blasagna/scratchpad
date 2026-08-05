@@ -660,16 +660,18 @@ namespace {
     HttpResult result;
     std::string response;
     std::string log;
+    int left_unread;
   };
 } // namespace
 
 static Served serve(const std::string &input, const HttpPage &page) {
   Served s;
+  s.left_unread = -1;
   FILE *in = make_input(input);
   EXPECT_NE(in, nullptr);
   s.log = captured([&](FILE *log) {
     s.response = captured([&](FILE *out) {
-      s.result = http_serve_connection(in, out, log, &page);
+      s.result = http_serve_connection(in, out, log, &page, &s.left_unread);
     });
   });
   if (in != nullptr)
@@ -732,6 +734,25 @@ TEST(ServeConnection, AnswersFourThirtyOneWhenTheHeaderBlockIsTooLarge) {
             0u);
   EXPECT_NE(s.log.find("request header block over 8192 bytes"),
             std::string::npos);
+  /* The rest of that request is still arriving, which is what tells
+   * server_accept_once to wait for it rather than close on top of it and turn
+   * the 431 into a connection reset. */
+  EXPECT_EQ(s.left_unread, 1);
+}
+
+TEST(ServeConnection, LeavesNothingUnreadOnAnOrdinaryRequest) {
+  Served s = serve(request("GET / HTTP/1.1"), http_builtin_page());
+  EXPECT_EQ(s.left_unread, 0);
+}
+
+TEST(ServeConnection, LogsTheRequestLineAfterALeadingBlankLine) {
+  /* RFC 7230 3.5's stray CRLF, on a request that is then malformed. Logging
+   * the raw first line would report the blank one, hiding the bytes that
+   * actually caused the 400. */
+  Served s = serve("\r\nGET /x HTTP/9\r\n\r\n", http_builtin_page());
+  EXPECT_EQ(s.response.find("HTTP/1.1 400 Bad Request\r\n"), 0u);
+  EXPECT_NE(s.log.find("malformed request \"GET /x HTTP/9\""),
+            std::string::npos);
 }
 
 TEST(ServeConnection, SuppressesTheBodyForHead) {
@@ -766,8 +787,11 @@ TEST(ServeConnection, ReportsAWriteFailureToTheLog) {
   ASSERT_NE(out, nullptr);
   HttpPage page = http_builtin_page();
   HttpResult result = HTTP_OK;
-  std::string log = captured(
-      [&](FILE *f) { result = http_serve_connection(in, out, f, &page); });
+  /* NULL for left_unread, which the header allows and which nothing on a
+   * stream pair has any use for. */
+  std::string log = captured([&](FILE *f) {
+    result = http_serve_connection(in, out, f, &page, nullptr);
+  });
   EXPECT_EQ(result, HTTP_ERR_WRITE);
   EXPECT_NE(log.find("error writing the response"), std::string::npos);
   fclose(out);
@@ -796,6 +820,7 @@ TEST(ResultStr, LabelsEveryResult) {
                       HTTP_ERR_BIND,
                       HTTP_ERR_LISTEN,
                       HTTP_ERR_ACCEPT,
+                      HTTP_ERR_CONNECTION,
                       HTTP_ERR_OPEN,
                       HTTP_ERR_NOT_REGULAR,
                       HTTP_ERR_NOMEM};

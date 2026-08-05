@@ -66,6 +66,8 @@ const char *http_result_str(HttpResult r) {
     return "cannot listen on the socket";
   case HTTP_ERR_ACCEPT:
     return "cannot accept a connection";
+  case HTTP_ERR_CONNECTION:
+    return "cannot set up the accepted connection";
   case HTTP_ERR_OPEN:
     return "cannot read the page file";
   case HTTP_ERR_NOT_REGULAR:
@@ -179,6 +181,27 @@ static size_t line_prefix_len(const char *buf, size_t len) {
   return n;
 }
 
+/*
+ * Steps past one leading empty line, which RFC 7230 3.5 recommends tolerating:
+ * a client that ends its previous request with a stray CRLF is common enough
+ * that refusing it costs more than allowing it. Exactly one, so a request made
+ * entirely of blank lines is still malformed.
+ *
+ * Shared by the parser and the log rather than written twice, because the two
+ * disagreeing means the log describes a different line than the one that was
+ * rejected.
+ */
+static void skip_one_blank_line(const char **buf, size_t *len) {
+  const char *p = *buf;
+  if (*len >= 2 && p[0] == '\r' && p[1] == '\n') {
+    *buf = p + 2;
+    *len -= 2;
+  } else if (*len >= 1 && p[0] == '\n') {
+    *buf = p + 1;
+    *len -= 1;
+  }
+}
+
 /* Reports whether the field is exactly HTTP/<digit>.<digit>. */
 static int version_shape_ok(const char *field, size_t len) {
   return len == 8 && memcmp(field, "HTTP/", 5) == 0 &&
@@ -190,17 +213,7 @@ HttpResult http_parse_request(const char *buf, size_t len, HttpRequest *out) {
   const char *p = buf;
   size_t remaining = len;
 
-  /* One leading empty line is skipped, which RFC 7230 3.5 recommends: a client
-   * that ends its previous request with a stray CRLF is common enough that
-   * refusing it costs more than allowing it. Exactly one, so a request made
-   * entirely of blank lines is still malformed. */
-  if (remaining >= 2 && p[0] == '\r' && p[1] == '\n') {
-    p += 2;
-    remaining -= 2;
-  } else if (remaining >= 1 && p[0] == '\n') {
-    p += 1;
-    remaining -= 1;
-  }
+  skip_one_blank_line(&p, &remaining);
 
   const char *nl = memchr(p, '\n', remaining);
   /* No terminator means the request line never ended. It cannot be parsed as
@@ -320,6 +333,11 @@ HttpResult http_read_request(FILE *in, char *buf, size_t cap, size_t *out_len) {
   for (;;) {
     int c = fgetc(in);
     if (c == EOF) {
+      /* Snapshotted before anything else runs, ferror included: any function is
+       * allowed to set errno on a call that succeeded, and the timeout and the
+       * read failure below are told apart by this value alone - they produce
+       * different log lines. */
+      int err = errno;
       *out_len = n;
       if (!ferror(in))
         /* End of input. At the first byte this is a browser's speculative
@@ -328,7 +346,7 @@ HttpResult http_read_request(FILE *in, char *buf, size_t cap, size_t *out_len) {
         return HTTP_ERR_CLOSED;
       /* SO_RCVTIMEO surfaces as EAGAIN on the underlying read, which stdio
        * reports as an error rather than as end of input. */
-      if (errno == EAGAIN || errno == EWOULDBLOCK)
+      if (err == EAGAIN || err == EWOULDBLOCK)
         return HTTP_ERR_TIMEOUT;
       return HTTP_ERR_READ;
     }
@@ -394,11 +412,14 @@ HttpResult http_write_response(FILE *out, const HttpResponse *resp,
 }
 
 HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
-                                 const HttpPage *page) {
+                                 const HttpPage *page, int *left_unread) {
   char buf[HTTP_REQUEST_MAX];
   char scratch[HTTP_ERROR_PAGE_MAX];
   char safe[HTTP_LOG_LINE_MAX];
   size_t len = 0;
+
+  if (left_unread != NULL)
+    *left_unread = 0;
 
   HttpResult read_result = http_read_request(in, buf, sizeof buf, &len);
   /* Every read failure but one leaves nobody to answer: the client is gone, or
@@ -414,14 +435,25 @@ HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
   if (read_result == HTTP_ERR_TOO_LARGE) {
     fprintf(log, "%s: request header block over %d bytes\n", HTTP_PROGNAME,
             HTTP_REQUEST_MAX);
+    /* The rest of that request is still on its way, and the 431 below is worth
+     * nothing if the close beats it there. */
+    if (left_unread != NULL)
+      *left_unread = 1;
     resp = http_error_response(431, scratch, sizeof scratch);
   } else {
     HttpRequest req;
     HttpResult parsed = http_parse_request(buf, len, &req);
     if (parsed != HTTP_OK) {
       /* Sanitized before it is written, and quoted so an empty request line is
-       * visible as one. These are a stranger's bytes on somebody's terminal. */
-      http_sanitize(safe, sizeof safe, buf, line_prefix_len(buf, len));
+       * visible as one. These are a stranger's bytes on somebody's terminal.
+       * Located the way the parser locates it, one leading empty line and all:
+       * taking the raw first line logs `malformed request ""` for a request
+       * that opened with a stray CRLF - hiding the bytes that caused the 400,
+       * in exactly the case the skip was added for. */
+      const char *line = buf;
+      size_t line_len = len;
+      skip_one_blank_line(&line, &line_len);
+      http_sanitize(safe, sizeof safe, line, line_prefix_len(line, line_len));
       fprintf(log, "%s: malformed request \"%s\"\n", HTTP_PROGNAME, safe);
       resp = http_error_response(400, scratch, sizeof scratch);
     } else {

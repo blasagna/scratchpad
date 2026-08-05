@@ -57,6 +57,19 @@ it by PID); both options exist for that reason as much as for their own.
   accept. Logging and continuing on every `accept` failure is the tempting alternative
   and it turns `EMFILE` or `EBADF` into an unkillable loop spinning at 100% CPU writing
   the same line forever — far worse than exiting with it.
+- **`accept` and nothing else.** Setting an accepted connection up (`set_timeouts`,
+  `dup`, `fdopen`) fails against that connection, not against the listening socket, so
+  those are `HTTP_ERR_CONNECTION` and the loop moves on; folding them into the accept
+  result lets a one-off `ENOMEM` on one connection end the server. It also protects the
+  `errno` the fatal-or-not decision reads: the accept result is returned by the statement
+  right after the failing `accept`, with **no logging or cleanup in between**, because
+  even a successful `fprintf` may set `errno` — and a fatal `EMFILE` misread as a
+  transient `ECONNABORTED` is exactly the 100% CPU spin above. Every port needs its own
+  spelling of "capture the failure before doing anything else with it".
+- **`--once` stops after a request, not after a connection.** Browsers preconnect, so the
+  first connection is often a silent one that times out; stopping on it exits having
+  served nothing and the real request is refused. A timeout or a hang-up does not count,
+  the `431` does, and so does a response the client left before reading.
 - **Reading is split from parsing, because EOF never arrives.** A client holds the
   connection open after sending, so anything that reads to end of input — `fread` of a
   large count, `getdelim`, Rust's `read_to_end` — blocks until the timeout.
@@ -145,7 +158,13 @@ it by PID); both options exist for that reason as much as for their own.
   instead of showing the `405` that really was sent. The drain uses `MSG_DONTWAIT` on
   purpose — **a blocking drain sits there until the peer closes**, which costs the accept
   loop a round trip on every connection and lets a client that reads its response and
-  keeps the socket open stall the whole server for the timeout.
+  keeps the socket open stall the whole server for the timeout. **One case is exempt**: a
+  header block over `HTTP_REQUEST_MAX`, where the server stopped reading at 8 KiB with the
+  rest of a much larger request still arriving, and where the bytes a close would cost are
+  a `431` the client is owed rather than a body nobody read. That one drains blocking up
+  to 1 MiB, bounded by `SO_RCVTIMEO` like every other read. `http_serve_connection`
+  reports it through an out-parameter rather than its result, because a `431` is a
+  response and that connection is `HTTP_OK` like any other.
 - **Browsers open sockets they never write to.** Chrome and Firefox preconnect: they
   complete a handshake and then send nothing, sometimes for seconds. On a sequential
   accept loop that is a wedged server, which is why `SO_RCVTIMEO` exists and why

@@ -34,6 +34,16 @@ static const int kIoTimeoutSeconds = 5;
  */
 static const size_t kDrainMax = 64 * 1024;
 
+/*
+ * The same bound for the one connection that is owed a response it might not
+ * get: an oversized header block, answered with a 431 that a close on unread
+ * data would turn into an RST. A request that reaches this and keeps going has
+ * stopped being a request, so the cap stays - it is the page cap, since a
+ * header block a megabyte past the 8 KiB limit is already far past arguing
+ * with.
+ */
+static const size_t kDrainOverflowMax = 1024 * 1024;
+
 /* First allocation when reading a page, then doubled. */
 static const size_t kPageChunk = 8192;
 
@@ -134,7 +144,9 @@ HttpResult server_load_page(const char *path, size_t max_bytes, HttpPage *out) {
 
   /* An empty file is a page of zero bytes, not an error: it is served with
    * Content-Length: 0 and renders as a blank page, which is what was asked
-   * for. buf is NULL in that case and nothing ever dereferences it, since
+   * for. buf is not NULL in that case - the loop allocates before its first
+   * read, so an empty file leaves one chunk holding nothing, which the caller
+   * still frees - and nothing dereferences it either way, since
    * http_write_response skips a zero-length body. */
   out->body = buf;
   out->len = len;
@@ -205,19 +217,27 @@ void server_close(ServerListener *l) {
  * of the stream: bytes sitting in the stream's buffer are already off the
  * socket, and fclose discards them for free.
  *
- * MSG_DONTWAIT, so this takes what has already arrived and never waits for
- * more. A blocking drain would sit here until the peer closed, which costs the
- * accept loop a round trip on every connection and lets a client that reads
- * its response but keeps the socket open stall the whole server for the
- * timeout. What is left is a narrow race - a body that arrives between the
- * drain and the close still provokes an RST - and that is the right trade for
- * a server that handles one connection at a time.
+ * flags is MSG_DONTWAIT for every ordinary connection, so this takes what has
+ * already arrived and never waits for more. A blocking drain everywhere would
+ * sit here until the peer closed, which costs the accept loop a round trip on
+ * every connection and lets a client that reads its response but keeps the
+ * socket open stall the whole server for the timeout. What is left is a narrow
+ * race - a body that arrives between the drain and the close still provokes an
+ * RST - and that is the right trade for a server that handles one connection at
+ * a time.
+ *
+ * The exception, and the only caller that passes 0, is a header block over
+ * HTTP_REQUEST_MAX. There the server stopped reading at 8 KiB with the rest of
+ * a much larger request still in flight, so what has already arrived is nowhere
+ * near all of it - and unlike a body nobody read, that client was answered,
+ * with a 431 the RST would throw away. SO_RCVTIMEO bounds the wait exactly as
+ * it bounds every other read on this socket.
  */
-static void drain(int fd) {
+static void drain(int fd, int flags, size_t max) {
   char scrap[4096];
   size_t total = 0;
-  while (total < kDrainMax) {
-    ssize_t n = recv(fd, scrap, sizeof scrap, MSG_DONTWAIT);
+  while (total < max) {
+    ssize_t n = recv(fd, scrap, sizeof scrap, flags);
     if (n < 0 && errno == EINTR)
       continue;
     if (n <= 0)
@@ -251,6 +271,11 @@ HttpResult server_accept_once(const ServerListener *l,
   do {
     fd = accept(l->fd, (struct sockaddr *)&peer, &peer_len);
   } while (fd < 0 && errno == EINTR);
+  /* Nothing between the failed accept and this return, deliberately: server_run
+   * ends the server or not by reading errno, and even a log line here could
+   * leave it holding fprintf's errno instead of accept's - turning a fatal
+   * EMFILE into a "transient" ECONNABORTED and back into the 100% CPU spin the
+   * classification exists to prevent. This is the only HTTP_ERR_ACCEPT. */
   if (fd < 0)
     return HTTP_ERR_ACCEPT;
 
@@ -265,12 +290,19 @@ HttpResult server_accept_once(const ServerListener *l,
   fprintf(log, "%s: connection from %s:%d\n", HTTP_PROGNAME, peer_host,
           ntohs(peer.sin_port));
 
+  /*
+   * Everything from here down is this connection's own failure, not the
+   * listening socket's, so it comes back as HTTP_ERR_CONNECTION and the loop
+   * moves on. Returning HTTP_ERR_ACCEPT would put a one-off ENOMEM on one
+   * connection in front of server_run's fatal-or-not decision, which is a
+   * client's request ending the server.
+   */
   if (!set_timeouts(fd, opts->io_timeout_seconds)) {
     fprintf(log, "%s: cannot set the connection timeouts: %s\n", HTTP_PROGNAME,
             strerror(errno));
     close_quietly(fd);
     fprintf(log, "%s: connection closed\n", HTTP_PROGNAME);
-    return HTTP_ERR_ACCEPT;
+    return HTTP_ERR_CONNECTION;
   }
 
   /*
@@ -285,36 +317,42 @@ HttpResult server_accept_once(const ServerListener *l,
    */
   int fd2 = dup(fd);
   if (fd2 < 0) {
+    /* Snapshotted before the log write, not after: fprintf is allowed to set
+     * errno even when it succeeds, and does when stderr is closed or full. The
+     * same order applies everywhere below. */
+    int saved = errno;
     fprintf(log, "%s: cannot duplicate the connection: %s\n", HTTP_PROGNAME,
-            strerror(errno));
+            strerror(saved));
     close_quietly(fd);
     fprintf(log, "%s: connection closed\n", HTTP_PROGNAME);
-    return HTTP_ERR_ACCEPT;
+    return HTTP_ERR_CONNECTION;
   }
 
   FILE *in = fdopen(fd, "r");
   if (in == NULL) {
+    int saved = errno;
     fprintf(log, "%s: cannot open the connection for reading: %s\n",
-            HTTP_PROGNAME, strerror(errno));
+            HTTP_PROGNAME, strerror(saved));
     close_quietly(fd);
     close_quietly(fd2);
     fprintf(log, "%s: connection closed\n", HTTP_PROGNAME);
-    return HTTP_ERR_ACCEPT;
+    return HTTP_ERR_CONNECTION;
   }
   FILE *out = fdopen(fd2, "w");
   if (out == NULL) {
-    fprintf(log, "%s: cannot open the connection for writing: %s\n",
-            HTTP_PROGNAME, strerror(errno));
-    /* in owns fd now, so closing fd here as well would be a double close. */
     int saved = errno;
+    fprintf(log, "%s: cannot open the connection for writing: %s\n",
+            HTTP_PROGNAME, strerror(saved));
+    /* in owns fd now, so closing fd here as well would be a double close. */
     fclose(in);
     close(fd2);
-    errno = saved;
     fprintf(log, "%s: connection closed\n", HTTP_PROGNAME);
-    return HTTP_ERR_ACCEPT;
+    return HTTP_ERR_CONNECTION;
   }
 
-  HttpResult result = http_serve_connection(in, out, log, &opts->page);
+  int left_unread = 0;
+  HttpResult result =
+      http_serve_connection(in, out, log, &opts->page, &left_unread);
 
   /*
    * A lingering close, not a bare one. Linux sends an RST rather than a FIN
@@ -322,10 +360,20 @@ HttpResult server_accept_once(const ServerListener *l,
    * throw away data it already received when it gets an RST - so `curl -d x`,
    * whose request body this server deliberately never reads, would report a
    * connection reset instead of showing the 405 that really was sent.
+   *
+   * An oversized header block is the one case where what is left unread is not
+   * a body the client already finished sending but the remainder of a request
+   * still on its way, so that one waits for it; see drain.
    */
+  int flags = MSG_DONTWAIT;
+  size_t drain_max = kDrainMax;
+  if (left_unread) {
+    flags = 0;
+    drain_max = kDrainOverflowMax;
+  }
   int saved = errno;
   shutdown(fd, SHUT_WR);
-  drain(fd);
+  drain(fd, flags, drain_max);
   fclose(out);
   fclose(in);
   errno = saved;
@@ -341,6 +389,21 @@ HttpResult server_accept_once(const ServerListener *l,
  */
 static int accept_is_transient(int err) {
   return err == ECONNABORTED || err == EPROTO;
+}
+
+/*
+ * Reports whether a connection got far enough to be answered, which is what
+ * --once is waiting for.
+ *
+ * Breaking on any connection at all is the obvious rule and it makes --once
+ * useless against a browser: Chrome and Firefox preconnect, so the first
+ * connection is a silent one that times out after five seconds, and the server
+ * would exit having served nothing while the request the user actually made
+ * gets refused. HTTP_ERR_WRITE counts - the response was written, the client
+ * left before taking it - and so does the 431 path, which is HTTP_OK.
+ */
+static int connection_was_answered(HttpResult r) {
+  return r == HTTP_OK || r == HTTP_ERR_WRITE;
 }
 
 HttpResult server_run(const ServerOptions *opts, FILE *log) {
@@ -371,7 +434,7 @@ HttpResult server_run(const ServerOptions *opts, FILE *log) {
       continue;
     }
 
-    if (opts->serve_once)
+    if (opts->serve_once && connection_was_answered(served))
       break;
   }
 

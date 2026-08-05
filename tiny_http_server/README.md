@@ -48,7 +48,7 @@ that is logged and moved past. Only the listening socket's own failures end the 
 | `-p, --port <n>` | `8080` | Port to listen on. `0` asks the kernel for a free one, which is then reported in the `listening on` line. |
 | `--host <addr>` | `127.0.0.1` | IPv4 address to bind. A dotted quad only — names are not resolved. |
 | `--file <path>` | the built-in page | Serve this file's bytes instead of the compiled-in page. |
-| `--once` | off | Serve exactly one connection, then exit `0`. |
+| `--once` | off | Serve exactly one request, then exit `0`. A connection that never sends one — a browser's silent preconnect — does not count, or `--once` against a browser would exit having served nothing. |
 | `-h, --help` | — | Show help. |
 
 `--port`'s grammar is `strtol` with base 10 fixed, and it is the reference dialect. It
@@ -176,6 +176,7 @@ is the one thing the method exists to report.
 | A client that connects and sends nothing | Dropped after the receive timeout (5s), logged as such, **no response**. This is what a browser's speculative connection looks like and it is ordinary — but on a sequential server it is also a stall, which is the whole reason the timeout exists. |
 | A client that hangs up mid-response | Logged as a write failure; the loop continues. Requires `SIGPIPE` to be ignored, or the process dies silently. |
 | A request body (`curl -d x`) | Never read. The connection is closed with a `shutdown` and a bounded non-blocking drain so the client sees a FIN rather than an RST — an RST lets a peer discard the response it already received, so a bare `close` makes `curl -d x` report a connection reset instead of showing the `405`. |
+| A header block far over 8 KiB | `431`, and that one connection drains **blocking** (up to 1 MiB, bounded by the receive timeout) before closing. Everywhere else the unread bytes are a body the client finished sending; here the rest of the request is still on its way, and closing on top of it risks an RST taking the `431` with it. |
 | `--file` that is empty | Served, `Content-Length: 0`. A blank page is what was asked for. |
 | `--file` that is a directory | Startup error, exit `1`. `fopen` on a directory *succeeds* on Linux and only fails inside `fread` with `EISDIR`, so this is caught with an `fstat` and `S_ISREG` rather than reported as a read error. |
 | `--file` over 1 MiB | Startup error, exit `1`. Refused rather than truncated: half a page served as a whole one is worse than a refusal that says why. |
@@ -236,8 +237,8 @@ rows are already expected:
 
 | Code | When |
 |---|---|
-| `0` | `--once` served its connection and the server stopped cleanly — **regardless of what status it answered with**. A `404` is the server working. |
-| `1` | The server's own failure: `socket`, `bind`, `listen`, a non-transient `accept`, an unreadable `--file`, or a failed `SIGPIPE` disposition. **Not** anything a client did. |
+| `0` | `--once` answered its request and the server stopped cleanly — **regardless of what status it answered with**. A `404` is the server working. |
+| `1` | The server's own failure: `socket`, `bind`, `listen`, a non-transient `accept`, an unreadable `--file`, or a failed `SIGPIPE` disposition. **Not** anything a client did — an accepted connection that could not be set up included, since that is one connection's failure and not the listening socket's. |
 | `2` | A usage error: an unknown option, an invalid `--port` or `--host`, or any operand — there are none. |
 
 Ctrl-C is not one of these. There is no handler, so `SIGINT` terminates the process and

@@ -49,8 +49,10 @@ typedef struct {
 typedef struct {
   const char *host;
   int port;
-  /* Serve exactly one connection, then return. What an end-to-end check uses
-   * instead of backgrounding the server and killing it by PID. */
+  /* Serve exactly one request, then return. What an end-to-end check uses
+   * instead of backgrounding the server and killing it by PID. One request and
+   * not one connection: a browser's silent preconnect is a connection, and
+   * stopping on it exits having served nothing. */
   int serve_once;
   /* Seconds a connection may spend waiting for bytes, in either direction.
    * Not a command-line option: its most obvious setting, 0, means "no timeout"
@@ -80,8 +82,9 @@ ServerOptions server_options_default(void);
  *         out->body). Untouched unless the result is HTTP_OK.
  *
  * Output: HTTP_OK, or HTTP_ERR_OPEN with errno intact, HTTP_ERR_NOT_REGULAR,
- *         or HTTP_ERR_NOMEM. An empty file is not an error: it is a page of
- *         zero bytes and is served as one.
+ *         HTTP_ERR_TOO_LARGE for a file over max_bytes, or HTTP_ERR_NOMEM. An
+ *         empty file is not an error: it is a page of zero bytes and is served
+ *         as one.
  */
 HttpResult server_load_page(const char *path, size_t max_bytes, HttpPage *out);
 
@@ -133,8 +136,11 @@ void server_close(ServerListener *l);
  *
  * Output: HTTP_OK when a response was written, whatever its status. Everything
  *         a client can do comes back as a per-connection failure the caller
- *         logs and moves past; only HTTP_ERR_ACCEPT is worth ending the server
- *         over, and server_run decides which accept failures are.
+ *         logs and moves past, HTTP_ERR_CONNECTION included - an accepted
+ *         connection that could not be set up is this connection's failure and
+ *         is logged here. Only HTTP_ERR_ACCEPT is worth ending the server
+ *         over, it comes from the accept alone, and server_run decides which
+ *         accept failures are.
  */
 HttpResult server_accept_once(const ServerListener *l,
                               const ServerOptions *opts, FILE *log);
@@ -152,11 +158,13 @@ HttpResult server_accept_once(const ServerListener *l,
  * Logging and continuing on every accept error was the alternative and was
  * rejected: EMFILE would then spin at 100% CPU writing one line forever.
  *
- * Input:  opts - everything, including whether to stop after one connection.
+ * Input:  opts - everything, including whether to stop after one request.
  *         log - where every event goes.
  *
- * Output: HTTP_OK only when opts->serve_once served its connection; otherwise
- *         the fatal result, with errno as the failing call left it.
+ * Output: HTTP_OK only when opts->serve_once answered a request; a connection
+ *         that sent nothing does not count, or --once against a browser exits
+ *         on the preconnect. Otherwise the fatal result, with errno as the
+ *         failing call left it.
  */
 HttpResult server_run(const ServerOptions *opts, FILE *log);
 

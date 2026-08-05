@@ -49,6 +49,13 @@
  * the caller may pair the result with strerror(errno). The remaining stages
  * carry no errno.
  *
+ * HTTP_ERR_ACCEPT holds that contract more tightly than the rest, because
+ * server_run decides whether to end the server by looking at errno: it is
+ * returned from exactly one place, the statement after the accept that failed.
+ * Anything that logs or cleans up before returning it - and every other result
+ * here does - would hand the caller some later call's errno to judge, since
+ * even a successful fprintf may set one.
+ *
  * A request the server answers with a 4xx or 5xx is not one of these: the
  * server did its job by answering. Those are an HttpResponse, and the
  * connection they arrived on is HTTP_OK.
@@ -60,16 +67,24 @@
  */
 typedef enum {
   HTTP_OK = 0,
-  HTTP_ERR_CLOSED,      /* the client hung up without sending a request */
-  HTTP_ERR_TIMEOUT,     /* nothing arrived before the receive timeout */
-  HTTP_ERR_READ,        /* a read error occurred on the connection */
-  HTTP_ERR_WRITE,       /* a write error occurred on the connection */
-  HTTP_ERR_TOO_LARGE,   /* the header block hit HTTP_REQUEST_MAX */
-  HTTP_ERR_MALFORMED,   /* the request line is not one this server can parse */
-  HTTP_ERR_SOCKET,      /* socket() or setsockopt() failed */
-  HTTP_ERR_BIND,        /* bind() failed */
-  HTTP_ERR_LISTEN,      /* listen() or getsockname() failed */
-  HTTP_ERR_ACCEPT,      /* accept() failed other than transiently */
+  HTTP_ERR_CLOSED,    /* the client hung up without sending a request */
+  HTTP_ERR_TIMEOUT,   /* nothing arrived before the receive timeout */
+  HTTP_ERR_READ,      /* a read error occurred on the connection */
+  HTTP_ERR_WRITE,     /* a write error occurred on the connection */
+  HTTP_ERR_TOO_LARGE, /* the header block hit HTTP_REQUEST_MAX */
+  HTTP_ERR_MALFORMED, /* the request line is not one this server can parse */
+  HTTP_ERR_SOCKET,    /* socket() or setsockopt() failed */
+  HTTP_ERR_BIND,      /* bind() failed */
+  HTTP_ERR_LISTEN,    /* listen() or getsockname() failed */
+  HTTP_ERR_ACCEPT,    /* accept() failed other than transiently */
+  /*
+   * An accepted connection could not be set up: its timeouts, its dup, or one
+   * of its streams. Deliberately not HTTP_ERR_ACCEPT, which would let a
+   * one-off ENOMEM on one connection end a server the listening socket is
+   * still perfectly able to serve from. Reported where it happens, so it
+   * carries no errno.
+   */
+  HTTP_ERR_CONNECTION,
   HTTP_ERR_OPEN,        /* the --file page could not be opened or read */
   HTTP_ERR_NOT_REGULAR, /* the --file page is not a regular file */
   HTTP_ERR_NOMEM,       /* out of memory */
@@ -325,12 +340,17 @@ HttpResult http_write_response(FILE *out, const HttpResponse *resp,
  *         has none.
  *         log - where the request and response lines go.
  *         page - the bytes to serve at a known path.
+ *         left_unread - set to nonzero when the server stopped reading with
+ *         the request still arriving, which is the 431 path and only that one.
+ *         The caller needs it because the result cannot say so: a 431 is a
+ *         response, so that connection is HTTP_OK like any other. May be NULL,
+ *         which the streams-only tests pass.
  *
  * Output: HTTP_OK when a response was written, whatever its status - a 404 is
  *         the server working. Otherwise the read or write failure, none of
  *         which ends the server.
  */
 HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
-                                 const HttpPage *page);
+                                 const HttpPage *page, int *left_unread);
 
 #endif

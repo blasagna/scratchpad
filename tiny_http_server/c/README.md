@@ -97,10 +97,10 @@ descriptor and the server dies of `EMFILE` after a few thousand requests.
 The connection is then closed with a **lingering close**:
 
 ```c
-shutdown(fd, SHUT_WR);   /* FIN now, so the client stops waiting */
-drain(fd);               /* MSG_DONTWAIT, capped at 64 KiB       */
-fclose(out);             /* closes fd2                            */
-fclose(in);              /* closes fd — the socket dies here      */
+shutdown(fd, SHUT_WR);        /* FIN now, so the client stops waiting */
+drain(fd, flags, drain_max);  /* MSG_DONTWAIT and 64 KiB, normally    */
+fclose(out);                  /* closes fd2                           */
+fclose(in);                   /* closes fd — the socket dies here     */
 ```
 
 Linux sends an **RST rather than a FIN** when a socket is closed with unread inbound
@@ -115,6 +115,16 @@ that reads its response but keeps the socket open stall the whole server for the
 What is left is a narrow race — a body arriving between the drain and the close still
 provokes an RST — and on a server that handles one connection at a time that is the right
 trade.
+
+**One connection drains blocking, up to 1 MiB**: an oversized header block, the `431`.
+Everywhere else the unread bytes are a body the client finished sending long ago, so
+whatever has already arrived is all there is; there the server stopped reading at 8 KiB
+with the rest of a much larger request still on its way, and it is also the only case
+where the bytes at risk are a response the client is owed. `http_serve_connection` reports
+it through `left_unread` rather than through its result, because a `431` is a response and
+that connection is `HTTP_OK` like any other. `SO_RCVTIMEO` bounds the wait exactly as it
+bounds every other read, so the worst case is one connection holding the loop for the
+timeout — the same worst case as any slow client.
 
 ## The socket, and what is fatal
 
@@ -143,6 +153,16 @@ that gets logged and moved past. The one exception is `accept`, where a failure 
 unless `errno` is `ECONNABORTED` or `EPROTO`. Logging and continuing on every `accept`
 failure is the tempting alternative and turns `EMFILE` or `EBADF` into an unkillable loop
 spinning at 100% CPU writing the same line forever.
+
+That exception is `accept` and nothing else. The three calls that set an accepted
+connection up — `set_timeouts`, `dup`, `fdopen` — fail against *that connection*, not
+against the listening socket, so they return `HTTP_ERR_CONNECTION` and the loop moves on;
+reporting them as `HTTP_ERR_ACCEPT` would let a one-off `ENOMEM` on one connection end a
+server that is still perfectly able to serve. It also keeps the `errno` `server_run`
+judges honest: `HTTP_ERR_ACCEPT` is returned by the statement right after the failing
+`accept`, with nothing in between, because even a successful `fprintf` may set `errno` —
+and a fatal `EMFILE` misread as a transient `ECONNABORTED` is precisely the 100% CPU spin
+above.
 
 ## `--file`, read once
 
@@ -179,7 +199,13 @@ relative `--file` path resolves somewhere surprising. Run the binary directly wh
 matters — and note that this is exactly why the default page is compiled in rather than
 being a `data` dependency.
 
-The program exits `0` when `--once` served its connection or the loop ended cleanly,
+`--once` stops after a connection that was **answered**, not after any connection at all.
+A browser preconnects — it completes a handshake and then sends nothing — so stopping on
+the first connection exits the server having served nothing, and the request the user
+actually made is then refused. A connection that times out or hangs up without sending
+does not count; the `431` does, and so does a response the client left before reading.
+
+The program exits `0` when `--once` served its request or the loop ended cleanly,
 **whatever status any request was answered with**; `1` for its own failure (`socket`,
 `bind`, `listen`, a non-transient `accept`, an unreadable `--file`); and `2` for a usage
 error. Ctrl-C is none of those: there is no handler, so the shell reports `130` and no
@@ -205,6 +231,18 @@ $SRV --port 18081 --once & curl -s -o /dev/null http://127.0.0.1:18081/; wait
 
 # the drain: shows the 405, not "Recv failure: Connection reset by peer"
 $SRV --port 8080 & curl -si -d x http://127.0.0.1:8080/
+
+# --once survives a browser's silent preconnect and still serves the real request
+$SRV --port 18082 --once &
+python3 -c 'import socket, time
+p = socket.create_connection(("127.0.0.1", 18082)); time.sleep(6); p.close()'
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18082/   # 200, then exit 0
+
+# the blocking drain: a header block far over 8 KiB still gets its 431
+python3 -c 'import socket
+s = socket.create_connection(("127.0.0.1", 8080))
+s.sendall(b"GET / HTTP/1.1\r\nHost: x\r\nX-Pad: " + b"a" * 200000 + b"\r\n\r\n")
+print(s.recv(4096).split(b"\r\n")[0])'
 
 # SIGPIPE: hang up before reading, then check the server is still answering
 python3 -c 'import socket
