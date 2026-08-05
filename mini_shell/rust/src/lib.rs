@@ -1,6 +1,6 @@
-//! A prototype shell: print a prompt, read one command per line, hand it to the
-//! system command interpreter, and report the status of anything that did not
-//! exit 0.
+//! A prototype shell: print a prompt, read one command per line, split it into
+//! a program and its arguments, run that program, and report the status of
+//! anything that did not exit 0.
 //!
 //! The library half of the port. `main.rs` owns the command line and the real
 //! streams; everything here takes its streams and its runner as parameters, so
@@ -12,7 +12,7 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, ExitStatus};
 
 /// Written before every read, and flushed.
@@ -33,7 +33,7 @@ const BANNER: [&str; 8] = [
     "| |  | || || | | || |  ___) || | | ||  __/| || |",
     "|_|  |_||_||_| |_||_| |____/ |_| |_| \\___||_||_|",
     "",
-    "commands run through the system shell; type 'exit' to quit",
+    "commands run directly, one program per line; type 'exit' to quit",
     "",
 ];
 
@@ -51,12 +51,12 @@ const SPACE: &[u8] = b" \t\n\x0b\x0c\r";
 /// A failing *command* is not one of these: that is a [`Status`], reported per
 /// command, and it never ends the loop nor changes the exit code.
 ///
-/// Three variants where the C port's `ShellResult` has five. `getline` returns
+/// Two variants where the C port's `ShellResult` has four. `getline` returns
 /// `-1` for end of input, a read error, and an allocation failure alike, which
 /// is the only reason `shell_run` has to consult `ferror`/`feof` and the only
 /// reason `SHELL_ERR_NOMEM` exists. [`Read::read`] separates them in the type:
-/// `Ok(0)` is end of input and `Err(_)` is a read error. The third case never
-/// arrives here at all, because allocation failure aborts the process — a
+/// `Ok(0)` is end of input and `Err(_)` is a read error. The allocation case
+/// never arrives here at all, because allocation failure aborts the process — a
 /// deliberate divergence, recorded in `README.md`.
 #[derive(Debug)]
 pub enum ShellError {
@@ -64,29 +64,23 @@ pub enum ShellError {
     Read(io::Error),
     /// A write error on the output or error stream.
     Write(io::Error),
-    /// No command interpreter is available.
-    NoShell,
 }
 
 impl ShellError {
-    /// The C port's `shell_result_str` labels, minus the two that have no
+    /// The C port's `shell_result_str` labels, minus the ones that have no
     /// variant here.
     pub fn label(&self) -> &'static str {
         match self {
             ShellError::Read(_) => "error reading command input",
             ShellError::Write(_) => "error writing output",
-            ShellError::NoShell => "no command interpreter available",
         }
     }
 }
 
 impl fmt::Display for ShellError {
-    /// Composes the two shapes `main` prints in the C port, so its caller needs
-    /// one arm rather than two.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ShellError::Read(err) | ShellError::Write(err) => write!(f, "{}: {err}", self.label()),
-            ShellError::NoShell => f.write_str(self.label()),
         }
     }
 }
@@ -95,23 +89,29 @@ impl std::error::Error for ShellError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ShellError::Read(err) | ShellError::Write(err) => Some(err),
-            ShellError::NoShell => None,
         }
     }
 }
 
 /// How one command ended.
 ///
-/// The same three cases the C and C++ ports decode out of a raw wait status.
-/// The error behind `Unrunnable` is carried rather than left in a global
-/// `errno` for the reporting code to pick up later.
+/// The first two come out of the wait status; the last three are the ways a
+/// command can fail to start at all. The C and C++ ports tell those apart by
+/// the errno `execvp` left behind, which reaches their parent through a
+/// close-on-exec pipe; here they arrive as an [`io::Error`] because
+/// [`Command::status`] runs that same pipe internally.
 #[derive(Debug)]
 pub enum Status {
     /// The command ran and exited with this code.
     Exited(i32),
     /// The command was killed by this signal.
     Signaled(i32),
-    /// The command never ran: the interpreter could not be started.
+    /// No such program (`ENOENT`).
+    NotFound,
+    /// The program exists but could not be executed (`EACCES`).
+    NotExecutable,
+    /// The command never started for some other reason, carried here rather
+    /// than left in a global `errno` for the reporting code to pick up later.
     Unrunnable(io::Error),
 }
 
@@ -120,40 +120,35 @@ pub enum Status {
 /// The C port spells it as a function pointer plus a `void *` context and the
 /// C++ port as a `std::function`; here it is a trait, so the recording fake the
 /// tests use is a plain struct whose fields they read afterwards.
+///
+/// `argv[0]` is the program; the rest are its arguments.
 pub trait Runner {
-    fn run(&mut self, command: &[u8]) -> io::Result<ExitStatus>;
+    fn run(&mut self, argv: &[&[u8]]) -> io::Result<ExitStatus>;
 }
 
-/// The one impure `Runner`: `/bin/sh -c <command>`, which is what libc's
-/// `system()` does internally.
-pub struct SystemRunner;
+/// The one impure `Runner`: runs `argv[0]` directly, with `argv[1..]` as its
+/// arguments.
+///
+/// This is `fork` + `execvp` + `waitpid`, which is exactly what the C and C++
+/// ports spell out by hand — including the close-on-exec pipe that carries a
+/// failed exec's errno back from the child, which [`Command`] runs internally
+/// and reports as `Err`.
+pub struct ExecRunner;
 
-impl Runner for SystemRunner {
-    fn run(&mut self, command: &[u8]) -> io::Result<ExitStatus> {
-        Command::new("/bin/sh")
-            // glibc's system() execs "/bin/sh" with argv[0] of "sh", so `echo $0`
-            // agrees across the ports. Hardcoding the path rather than searching
-            // $PATH is also what system() does.
-            .arg0("sh")
-            .arg("-c")
-            // Not a String: the contract passes non-ASCII bytes through
-            // unchanged, and a command line is not required to be UTF-8.
-            .arg(OsStr::from_bytes(command))
+impl Runner for ExecRunner {
+    fn run(&mut self, argv: &[&[u8]]) -> io::Result<ExitStatus> {
+        // No arg0(): Command already passes the program as argv[0], which is
+        // what execvp(argv[0], argv) does with the word as typed. A program with
+        // no '/' is looked up on PATH, as execvp does.
+        //
+        // Not Strings: the contract passes non-ASCII bytes through unchanged,
+        // and neither a program name nor an argument is required to be UTF-8.
+        Command::new(OsStr::from_bytes(argv[0]))
+            .args(argv[1..].iter().map(|word| OsStr::from_bytes(word)))
             // status(), not output(): the command inherits our stdin, stdout,
-            // and stderr, which is what makes `cat` and `ls | wc -l` work.
+            // and stderr, which is what makes `cat` work.
             .status()
     }
-}
-
-/// Whether a command interpreter exists at all, asked once at startup.
-///
-/// The stand-in for `system(NULL)`, which has no counterpart in Rust's standard
-/// library. glibc implements that call as `do_system("exit 0")`, so this runs
-/// the same thing. Worth the one fork: without an interpreter, every command
-/// would fail the same way, one line of errno noise at a time.
-pub fn interpreter_available() -> bool {
-    let mut runner = SystemRunner;
-    matches!(runner.run(b"exit 0"), Ok(status) if status.success())
 }
 
 /// What [`run`] needs beyond its three streams.
@@ -162,7 +157,7 @@ pub struct Options<'a> {
     pub runner: &'a mut dyn Runner,
 }
 
-/// Reduces what the runner reported to the three outcomes worth naming.
+/// Reduces what the runner reported to the outcomes worth naming.
 ///
 /// Pure, and separate from [`report_status`], which is what makes the signal
 /// case testable without arranging for a real process to be killed.
@@ -175,9 +170,17 @@ pub struct Options<'a> {
 pub fn decode_status(raw: io::Result<ExitStatus>) -> Status {
     let status = match raw {
         Ok(status) => status,
-        // The C port's -1: the interpreter could not be started, so the error is
-        // about the shell rather than about the command, which never ran.
-        Err(err) => return Status::Unrunnable(err),
+        // The C port's -1: the command never started, so the error is about the
+        // shell rather than about the command. Which error it was is the
+        // difference between the two messages a user can act on and the
+        // catch-all one they cannot.
+        Err(err) => {
+            return match err.kind() {
+                ErrorKind::NotFound => Status::NotFound,
+                ErrorKind::PermissionDenied => Status::NotExecutable,
+                _ => Status::Unrunnable(err),
+            };
+        }
     };
     if let Some(signal) = status.signal() {
         return Status::Signaled(signal);
@@ -188,13 +191,30 @@ pub fn decode_status(raw: io::Result<ExitStatus>) -> Status {
 }
 
 /// Writes one line about a command that did not succeed. A clean exit is silent.
-pub fn report_status<W: Write>(err: &mut W, status: &Status) -> io::Result<()> {
+///
+/// The two common ways to fail to start name `program` in mini_shell's own
+/// words rather than borrowing [`io::Error`]'s. That is deliberate and
+/// load-bearing for cross-port parity: every port writes these bytes itself,
+/// where the text of an errno differs between them — Rust's carries an
+/// ` (os error N)` suffix the C ports' `strerror` does not.
+pub fn report_status<W: Write>(err: &mut W, status: &Status, program: &[u8]) -> io::Result<()> {
+    // The program is written as bytes rather than through `{}`: a program name
+    // is whatever the user typed, and need not be UTF-8.
+    let mut name = |suffix: &str| {
+        err.write_all(PROG_NAME.as_bytes())?;
+        err.write_all(b": ")?;
+        err.write_all(program)?;
+        err.write_all(suffix.as_bytes())
+    };
+
     match status {
         Status::Exited(0) => Ok(()),
         Status::Exited(code) => writeln!(err, "{PROG_NAME}: command exited with status {code}"),
         Status::Signaled(signal) => {
             writeln!(err, "{PROG_NAME}: command terminated by signal {signal}")
         }
+        Status::NotFound => name(": command not found\n"),
+        Status::NotExecutable => name(": permission denied\n"),
         Status::Unrunnable(cause) => writeln!(err, "{PROG_NAME}: failed to run command: {cause}"),
     }
 }
@@ -220,6 +240,26 @@ pub fn trim(line: &[u8]) -> &[u8] {
         .rposition(|byte| !SPACE.contains(byte))
         .map_or(start, |last| last + 1);
     &line[start..end]
+}
+
+/// Splits a command line into words on ASCII whitespace, using the same set as
+/// [`trim`].
+///
+/// This is the whole of mini_shell's grammar. There is no quoting, no escaping,
+/// and no expansion of any kind: a run of whitespace separates two words and
+/// every other byte is literal, so `echo a | wc` runs `echo` with the three
+/// arguments `a`, `|`, and `wc`. Splitting is the job `/bin/sh -c` used to do,
+/// and taking it back is the point of this port.
+///
+/// A line that is empty or entirely whitespace yields no words; callers skip
+/// such lines before getting here.
+pub fn split(line: &[u8]) -> Vec<&[u8]> {
+    line.split(|byte| SPACE.contains(byte))
+        // A run of whitespace splits into empty slices between the separators.
+        // They are not words: passing them on would hand the program blank
+        // arguments it never asked for.
+        .filter(|word| !word.is_empty())
+        .collect()
 }
 
 /// Whether this line is the one builtin. `EXIT`, `exitx`, and `exit 3` are not:
@@ -324,17 +364,21 @@ pub fn run<R: Read, O: Write, E: Write>(
         }
 
         if line.contains(&0) {
-            // The interpreter takes a NUL-terminated string, so running this
-            // would run `echo a` and silently drop the rest of
-            // `echo a\0rm -rf /`. Refused rather than truncated.
+            // execvp takes NUL-terminated strings, so running this would run
+            // `echo a` and silently drop the rest of `echo a\0rm -rf /`.
+            // Refused rather than truncated.
             writeln!(err, "{PROG_NAME}: command contains a NUL byte").map_err(ShellError::Write)?;
             continue;
         }
 
-        // The untrimmed line, as in C: trimming is how `exit` is recognized, not
-        // something done to a command on its way to the interpreter.
-        let status = decode_status(opts.runner.run(&line));
-        report_status(err, &status).map_err(ShellError::Write)?;
+        // Splitting is mini_shell's whole grammar, and it is done here rather
+        // than by an interpreter: the runner is handed a program and its
+        // arguments, not a command line. The line is blank-checked above, so
+        // there is always at least one word and a program to name in any
+        // diagnostic.
+        let argv = split(&line);
+        let status = decode_status(opts.runner.run(&argv));
+        report_status(err, &status, argv[0]).map_err(ShellError::Write)?;
     }
 }
 
@@ -344,8 +388,8 @@ mod tests {
 
     /// A wait status as the runner returns one. The encoding is not something
     /// the standard library promises, so these build the layout every platform
-    /// this runs on uses, and `tests/real_system.rs` checks that assumption
-    /// against a real `/bin/sh`.
+    /// this runs on uses, and `tests/real_exec.rs` checks that assumption
+    /// against a real process.
     fn exited(code: i32) -> ExitStatus {
         ExitStatus::from_raw(code << 8)
     }
@@ -364,18 +408,36 @@ mod tests {
     /// succeeds.
     #[derive(Default)]
     struct FakeRunner {
-        commands: Vec<Vec<u8>>,
-        statuses: Vec<ExitStatus>,
+        commands: Vec<Vec<Vec<u8>>>,
+        statuses: Vec<io::Result<ExitStatus>>,
         next: usize,
     }
 
     impl Runner for FakeRunner {
-        fn run(&mut self, command: &[u8]) -> io::Result<ExitStatus> {
-            self.commands.push(command.to_vec());
-            let status = self.statuses.get(self.next).copied().unwrap_or(exited(0));
+        fn run(&mut self, argv: &[&[u8]]) -> io::Result<ExitStatus> {
+            self.commands
+                .push(argv.iter().map(|word| word.to_vec()).collect());
+            let status = match self.statuses.get(self.next) {
+                Some(Ok(status)) => Ok(*status),
+                // io::Error is not Clone, so a canned failure is rebuilt rather
+                // than handed out twice — from its raw errno when it has one,
+                // and otherwise from its kind, which is what decode_status
+                // matches on.
+                Some(Err(err)) => Err(match err.raw_os_error() {
+                    Some(code) => io::Error::from_raw_os_error(code),
+                    None => io::Error::from(err.kind()),
+                }),
+                None => Ok(exited(0)),
+            };
             self.next += 1;
-            Ok(status)
+            status
         }
+    }
+
+    /// One command as the runner receives it, spelled the way the assertions
+    /// below read best.
+    fn argv(words: &[&str]) -> Vec<Vec<u8>> {
+        words.iter().map(|word| word.as_bytes().to_vec()).collect()
     }
 
     /// An input stream that fails rather than yielding anything, standing in for
@@ -452,8 +514,12 @@ mod tests {
     }
 
     fn reported(status: &Status) -> String {
+        reported_for(status, b"acommand")
+    }
+
+    fn reported_for(status: &Status, program: &[u8]) -> String {
         let mut err = Vec::new();
-        report_status(&mut err, status).expect("writing to a Vec cannot fail");
+        report_status(&mut err, status, program).expect("writing to a Vec cannot fail");
         text(err)
     }
 
@@ -470,10 +536,10 @@ mod tests {
     }
 
     #[test]
-    fn command_not_found_is_an_ordinary_exit() {
-        // 127 is what the interpreter exits with when it cannot find the
-        // command. It is not special-cased: the interpreter has already said so
-        // itself.
+    fn an_exit_of_127_is_not_special_cased() {
+        // It used to be how the interpreter said "command not found". Nothing
+        // says that now — a missing program never reaches a wait status at all —
+        // so 127 is whatever the command chose to exit with, like any other.
         assert!(matches!(
             decode_status(Ok(exited(127))),
             Status::Exited(127)
@@ -489,7 +555,21 @@ mod tests {
     }
 
     #[test]
-    fn a_runner_error_means_the_command_never_ran() {
+    fn a_missing_program_is_told_apart_by_its_error_kind() {
+        let failed = Err(io::Error::from(ErrorKind::NotFound));
+        assert!(matches!(decode_status(failed), Status::NotFound));
+    }
+
+    #[test]
+    fn an_unexecutable_program_is_told_apart_by_its_error_kind() {
+        let failed = Err(io::Error::from(ErrorKind::PermissionDenied));
+        assert!(matches!(decode_status(failed), Status::NotExecutable));
+    }
+
+    #[test]
+    fn any_other_error_is_unrunnable_and_is_carried() {
+        // A failed fork lands here, and the error is carried rather than left
+        // in a global for the reporting to pick up later.
         let failed = Err(io::Error::from_raw_os_error(EAGAIN));
         assert!(matches!(decode_status(failed), Status::Unrunnable(_)));
     }
@@ -514,6 +594,24 @@ mod tests {
         assert_eq!(
             reported(&Status::Signaled(9)),
             "mini_shell: command terminated by signal 9\n"
+        );
+    }
+
+    #[test]
+    fn report_names_a_missing_program() {
+        // mini_shell's own words, not io::Error's: every port writes these
+        // bytes itself, which is what keeps them byte-identical.
+        assert_eq!(
+            reported_for(&Status::NotFound, b"nosuchcmd"),
+            "mini_shell: nosuchcmd: command not found\n"
+        );
+    }
+
+    #[test]
+    fn report_names_a_program_it_may_not_execute() {
+        assert_eq!(
+            reported_for(&Status::NotExecutable, b"/etc/passwd"),
+            "mini_shell: /etc/passwd: permission denied\n"
         );
     }
 
@@ -576,6 +674,64 @@ mod tests {
         assert_eq!(trim(b"  echo a\0b  "), b"echo a\0b");
     }
 
+    // --- split ---
+
+    #[test]
+    fn one_word_is_the_program_alone() {
+        assert_eq!(split(b"ls"), [b"ls"]);
+    }
+
+    #[test]
+    fn later_words_are_arguments() {
+        assert_eq!(
+            split(b"echo hello world"),
+            [&b"echo"[..], b"hello", b"world"]
+        );
+    }
+
+    #[test]
+    fn runs_of_whitespace_separate_exactly_once() {
+        // Two arguments, not five: the empty slices between the separators are
+        // not words. A shell that passed them along would hand echo blank
+        // arguments.
+        assert_eq!(split(b"echo   a  \t b"), [&b"echo"[..], b"a", b"b"]);
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_dropped_by_splitting() {
+        assert_eq!(split(b"  \t ls -l \t "), [&b"ls"[..], b"-l"]);
+    }
+
+    #[test]
+    fn a_vertical_tab_and_form_feed_separate_too() {
+        // The same set trim uses, and the reason it is spelled out:
+        // u8::is_ascii_whitespace omits \v.
+        assert_eq!(split(b"echo\x0ba\x0cb"), [&b"echo"[..], b"a", b"b"]);
+    }
+
+    #[test]
+    fn nothing_to_split_yields_no_words() {
+        assert!(split(b"").is_empty());
+        assert!(split(b"   \t ").is_empty());
+    }
+
+    #[test]
+    fn shell_metacharacters_are_ordinary_words() {
+        // The whole of the grammar: whitespace separates, everything else is a
+        // byte in a word. There is no interpreter left to give these meaning.
+        assert_eq!(split(b"echo a | wc"), [&b"echo"[..], b"a", b"|", b"wc"]);
+        assert_eq!(
+            split(b"echo * $HOME > out"),
+            [&b"echo"[..], b"*", b"$HOME", b">", b"out"]
+        );
+        assert_eq!(split(b"echo \"a b\""), [&b"echo"[..], b"\"a", b"b\""]);
+    }
+
+    #[test]
+    fn splitting_keeps_non_ascii_bytes() {
+        assert_eq!(split(b"echo \xc3\xa9"), [&b"echo"[..], b"\xc3\xa9"]);
+    }
+
     // --- run ---
 
     #[test]
@@ -584,7 +740,10 @@ mod tests {
         let run = run_shell(b"echo one\necho two\nexit\n", &mut fake);
 
         assert!(run.result.is_ok());
-        assert_eq!(fake.commands, [b"echo one".to_vec(), b"echo two".to_vec()]);
+        assert_eq!(
+            fake.commands,
+            [argv(&["echo", "one"]), argv(&["echo", "two"])]
+        );
     }
 
     #[test]
@@ -623,7 +782,7 @@ mod tests {
         let mut fake = FakeRunner::default();
         run_shell(b"echo hi", &mut fake);
 
-        assert_eq!(fake.commands, [b"echo hi".to_vec()]);
+        assert_eq!(fake.commands, [argv(&["echo", "hi"])]);
     }
 
     #[test]
@@ -642,31 +801,58 @@ mod tests {
         let mut fake = FakeRunner::default();
         let run = run_shell(b"\n   \nls\nexit\n", &mut fake);
 
-        assert_eq!(fake.commands, [b"ls".to_vec()]);
+        assert_eq!(fake.commands, [argv(&["ls"])]);
         assert_eq!(run.out, "$ $ $ $ ");
     }
 
     #[test]
-    fn strips_crlf_but_keeps_an_interior_carriage_return() {
+    fn strips_crlf_and_splits_on_an_interior_carriage_return() {
         let mut fake = FakeRunner::default();
         run_shell(b"echo a\rb\r\n", &mut fake);
 
-        assert_eq!(fake.commands, [b"echo a\rb".to_vec()]);
+        // The trailing "\r\n" is a line terminator and is stripped. The
+        // interior '\r' is ASCII whitespace like any other, so it separates two
+        // arguments — where the interpreter used to receive it inside the
+        // command line.
+        assert_eq!(fake.commands, [argv(&["echo", "a", "b"])]);
     }
 
     #[test]
-    fn hands_the_interpreter_the_untrimmed_line() {
-        // Trimming is how `exit` is recognized, not something done to a command.
+    fn hands_the_runner_a_split_line_rather_than_a_command_line() {
+        // Surrounding and interior whitespace is gone by the time the runner
+        // sees it: splitting is mini_shell's job now, not an interpreter's.
         let mut fake = FakeRunner::default();
-        run_shell(b"  ls  \nexit\n", &mut fake);
+        run_shell(b"  ls   -l  /tmp \nexit\n", &mut fake);
 
-        assert_eq!(fake.commands, [b"  ls  ".to_vec()]);
+        assert_eq!(fake.commands, [argv(&["ls", "-l", "/tmp"])]);
+    }
+
+    #[test]
+    fn treats_shell_metacharacters_as_ordinary_arguments() {
+        // No pipe: echo is run once, with three arguments.
+        let mut fake = FakeRunner::default();
+        run_shell(b"echo a | wc\nexit\n", &mut fake);
+
+        assert_eq!(fake.commands, [argv(&["echo", "a", "|", "wc"])]);
+    }
+
+    #[test]
+    fn reports_a_missing_program_by_name() {
+        // The runner fails the way ExecRunner does when the exec failed.
+        let mut fake = FakeRunner {
+            statuses: vec![Err(io::Error::from(ErrorKind::NotFound))],
+            ..FakeRunner::default()
+        };
+        let run = run_shell(b"nosuchcmd arg\nexit\n", &mut fake);
+
+        assert!(run.result.is_ok());
+        assert_eq!(run.err, "mini_shell: nosuchcmd: command not found\n");
     }
 
     #[test]
     fn reports_a_failed_command_and_keeps_going() {
         let mut fake = FakeRunner {
-            statuses: vec![exited(3), exited(0)],
+            statuses: vec![Ok(exited(3)), Ok(exited(0))],
             ..FakeRunner::default()
         };
         let run = run_shell(b"false\ntrue\nexit\n", &mut fake);
@@ -679,7 +865,7 @@ mod tests {
     #[test]
     fn reports_a_signaled_command() {
         let mut fake = FakeRunner {
-            statuses: vec![signaled(9)],
+            statuses: vec![Ok(signaled(9))],
             ..FakeRunner::default()
         };
         let run = run_shell(b"sleep 100\nexit\n", &mut fake);
@@ -690,8 +876,8 @@ mod tests {
     #[test]
     fn refuses_a_line_containing_a_nul_byte() {
         let mut fake = FakeRunner::default();
-        // The interpreter takes a NUL-terminated string, so running this would
-        // run "echo a" and silently drop the rest.
+        // execvp takes NUL-terminated strings, so running this would run
+        // "echo a" and silently drop the rest.
         let run = run_shell(b"echo a\0rm -rf /\nexit\n", &mut fake);
 
         assert!(run.result.is_ok());
@@ -704,7 +890,7 @@ mod tests {
         let mut fake = FakeRunner::default();
         run_shell(b"echo \xc3\xa9\nexit\n", &mut fake);
 
-        assert_eq!(fake.commands, [b"echo \xc3\xa9".to_vec()]);
+        assert_eq!(fake.commands, [argv(&["echo", "\u{e9}"])]);
     }
 
     #[test]
@@ -738,7 +924,7 @@ mod tests {
         let run = drive(&mut input, &mut fake, false);
 
         assert!(run.result.is_ok());
-        assert_eq!(fake.commands, [b"echo hi".to_vec()]);
+        assert_eq!(fake.commands, [argv(&["echo", "hi"])]);
     }
 
     #[test]
@@ -777,10 +963,6 @@ mod tests {
             "error reading command input"
         );
         assert_eq!(ShellError::Write(failed()).label(), "error writing output");
-        assert_eq!(
-            ShellError::NoShell.label(),
-            "no command interpreter available"
-        );
     }
 
     #[test]
@@ -792,11 +974,6 @@ mod tests {
                 "error reading command input: {}",
                 io::Error::from_raw_os_error(EAGAIN)
             )
-        );
-        // No trailing colon: there is no errno behind a missing interpreter.
-        assert_eq!(
-            ShellError::NoShell.to_string(),
-            "no command interpreter available"
         );
     }
 }

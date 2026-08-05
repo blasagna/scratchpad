@@ -29,19 +29,21 @@ int main(int argc, char *argv[]) {
   // under `bazel run` is the full runfiles path.
   CLI::App app{
       "A prototype shell. Prints a '$' prompt, reads one command per line,\n"
-      "hands it to the system command interpreter, and reports the exit "
-      "status\n"
-      "of any command that does not succeed. Repeats until you type 'exit' "
-      "or\n"
-      "close the input.\n"
+      "runs it, and reports the exit status of any command that does not\n"
+      "succeed. Repeats until you type 'exit' or close the input.\n"
       "\n"
-      "Every command runs in a fresh subshell, so state a command sets --\n"
-      "the working directory, an environment variable -- is gone by the next\n"
-      "prompt. 'cd' therefore appears to do nothing.",
+      "A line is split on whitespace. The first word is a program, looked up\n"
+      "on PATH and run directly; the rest are its arguments, passed through\n"
+      "exactly as typed. There is no shell in between, so there are no "
+      "pipes,\n"
+      "no redirection, no globbing, no quoting, and no variable expansion --\n"
+      "'echo a | wc' prints 'a | wc'. Each command is a fresh process, so\n"
+      "state it sets is gone by the next prompt, and 'cd' is not found at "
+      "all.",
       "mini_shell"};
 
   shell::Options opts;
-  opts.runner = shell::system_runner;
+  opts.runner = shell::exec_runner;
 
   // The '!' prefix is CLI11's negated flag: --no-banner sets show_banner to
   // false. Same spelling as simple_logger's --no-timestamp.
@@ -61,14 +63,6 @@ int main(int argc, char *argv[]) {
     app.parse(argc, argv);
   } catch (const CLI::ParseError &e) {
     return app.exit(e);
-  }
-
-  // std::system(nullptr) reports whether an interpreter exists at all. Asking
-  // once is worth it: without one, every command would fail the same way, one
-  // line of errno noise at a time.
-  if (std::system(nullptr) == 0) {
-    report({shell::Stage::kNoShell, {}});
-    return kExitFailure;
   }
 
   // Read stdin unbuffered, so a command inherits the input mini_shell has not

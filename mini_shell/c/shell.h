@@ -17,28 +17,32 @@
  * failing call's errno is left in place, so the caller may pair the result with
  * strerror(errno). The remaining stages carry no errno.
  *
- * A command that fails is not one of these: the command ran, so the shell did
- * its job. Those are reported per command as a ShellStatus and never end the
- * loop.
+ * A command that fails is not one of these: the shell did its job by running
+ * it. Those are reported per command as a ShellStatus and never end the loop.
  */
 typedef enum {
   SHELL_OK = 0,
-  SHELL_ERR_READ,     /* a read error occurred on the command input stream */
-  SHELL_ERR_WRITE,    /* a write error occurred on the output stream */
-  SHELL_ERR_NOMEM,    /* out of memory */
-  SHELL_ERR_NO_SHELL, /* system() reported no command interpreter is available
-                       */
+  SHELL_ERR_READ,  /* a read error occurred on the command input stream */
+  SHELL_ERR_WRITE, /* a write error occurred on the output stream */
+  SHELL_ERR_NOMEM, /* out of memory */
 } ShellResult;
 
 /*
- * How a command ended, decoded from the raw value system() returns. The raw
- * value is a wait status, not an exit code: reading it as one would report a
- * command killed by SIGKILL as "exited with status 0".
+ * How a command ended.
+ *
+ * The first two are decoded from the wait status waitpid reports, which is not
+ * an exit code: reading it as one would report a command killed by SIGKILL as
+ * "exited with status 0". The last three are the ways a command can fail to
+ * start at all, and are told apart by the errno execvp left behind - which
+ * reaches the parent through the errno pipe in shell_exec_runner, since execvp
+ * fails in the child.
  */
 typedef enum {
-  SHELL_EXITED,     /* ran to completion; code is the exit status */
-  SHELL_SIGNALED,   /* killed by a signal; code is the signal number */
-  SHELL_UNRUNNABLE, /* system() could not fork or wait; code is unused */
+  SHELL_EXITED,         /* ran to completion; code is the exit status */
+  SHELL_SIGNALED,       /* killed by a signal; code is the signal number */
+  SHELL_NOT_FOUND,      /* execvp: ENOENT; code is unused */
+  SHELL_NOT_EXECUTABLE, /* execvp: EACCES; code is unused */
+  SHELL_UNRUNNABLE,     /* any other failure to start; code is the errno */
 } ShellOutcome;
 
 typedef struct {
@@ -47,17 +51,51 @@ typedef struct {
 } ShellStatus;
 
 /*
- * Runs one command and returns exactly what system() returns.
- *
- * This is the seam that keeps the command loop testable: shell_run never calls
- * system() itself, so a test can supply a runner that records the command and
- * returns a canned status without forking anything.
- *
- * Input:  command - a NUL-terminated command line.
- *         ctx - the runner's own state, passed through from
- *         ShellOptions.runner_ctx and ignored by shell_system_runner.
+ * A command line split into words, laid out the way execvp wants it: argc
+ * pointers into the caller's line buffer, followed by a NULL terminator.
  */
-typedef int (*ShellRunner)(const char *command, void *ctx);
+typedef struct {
+  char **argv;
+  size_t argc;
+} ShellArgv;
+
+/*
+ * shell_split - splits a command line into words on ASCII whitespace.
+ *
+ * This is the whole of mini_shell's grammar. There is no quoting, no escaping,
+ * and no expansion of any kind: a run of whitespace separates two words and
+ * every other byte is literal, so `echo a | wc` runs echo with the three
+ * arguments "a", "|", and "wc". Splitting is the job system() used to hand to
+ * /bin/sh, and taking it back is the point of this port.
+ *
+ * Input:  line - a NUL-terminated line, modified in place: the whitespace
+ *         between words is overwritten with NUL terminators. It must outlive
+ *         *out, whose members point into it.
+ *
+ * Output: SHELL_OK with *out filled in, or SHELL_ERR_NOMEM. A line that is
+ *         empty or entirely whitespace yields argc 0 and an argv holding only
+ *         the NULL terminator; callers skip such lines before getting here.
+ *         Release *out with shell_argv_free.
+ */
+ShellResult shell_split(char *line, ShellArgv *out);
+
+/* Frees what shell_split allocated. The line it pointed into is untouched. */
+void shell_argv_free(ShellArgv *args);
+
+/*
+ * Runs one command and returns the wait status waitpid reported, or -1 with
+ * errno set if the command could not be started at all.
+ *
+ * This is the seam that keeps the command loop testable: shell_run never forks
+ * anything itself, so a test can supply a runner that records the argv and
+ * returns a canned status without spawning a process.
+ *
+ * Input:  argv - the words of the command, NULL-terminated, as shell_split
+ *         produced them. argv[0] is the program.
+ *         ctx - the runner's own state, passed through from
+ *         ShellOptions.runner_ctx and ignored by shell_exec_runner.
+ */
+typedef int (*ShellRunner)(char *const argv[], void *ctx);
 
 /*
  * How the command loop behaves.
@@ -79,37 +117,48 @@ typedef struct {
 const char *shell_result_str(ShellResult r);
 
 /*
- * shell_decode_status - splits system()'s return value into outcome and code.
+ * shell_decode_status - splits a runner's return value into outcome and code.
  *
- * Pure, so every case is testable without arranging for a real process to be
- * killed. system() returns -1 when it could not run the command at all, and
- * otherwise a wait status in the layout <sys/wait.h> describes.
+ * Pure - the errno is passed in rather than read from the global, so every
+ * case is testable without arranging for a real process to be killed or for a
+ * fork to fail.
  *
- * Input:  raw - the value system() returned.
+ * Input:  raw - what the runner returned: a wait status in the layout
+ *         <sys/wait.h> describes, or -1 if the command never started.
+ *         err - the errno the runner left behind. Read only when raw is -1.
  *
- * Output: SHELL_UNRUNNABLE for -1; SHELL_SIGNALED with the signal number for a
- *         command killed by a signal; SHELL_EXITED with the exit status
- *         otherwise. A status that is neither an exit nor a signal (a stop,
- *         which system() waits past) is reported as SHELL_EXITED with code 0,
- *         since there is no code to name.
+ * Output: For raw of -1, SHELL_NOT_FOUND for ENOENT, SHELL_NOT_EXECUTABLE for
+ *         EACCES, and SHELL_UNRUNNABLE carrying err for anything else.
+ *         Otherwise SHELL_SIGNALED with the signal number for a command killed
+ *         by a signal, and SHELL_EXITED with the exit status for one that ran.
+ *         A status that is neither an exit nor a signal (a stop, which the
+ *         runner waits past) is reported as SHELL_EXITED with code 0, since
+ *         there is no code to name.
  */
-ShellStatus shell_decode_status(int raw);
+ShellStatus shell_decode_status(int raw, int err);
 
 /*
  * shell_report_status - writes one line about a command that did not succeed.
  *
  * A clean exit 0 writes nothing: the shell is silent when there is nothing to
- * say, so the only output between prompts is the command's own. Status 127 is
- * not special-cased either - the interpreter has already printed its own
- * "command not found", and this line names the status behind it.
+ * say, so the only output between prompts is the command's own.
+ *
+ * The two common ways to fail to start - the program does not exist, and it
+ * exists but cannot be executed - are named in mini_shell's own words rather
+ * than with strerror. That is deliberate and load-bearing for cross-port
+ * parity: every port writes these bytes itself, where the text of an errno
+ * differs between them.
  *
  * Input:  err - open, writable FILE* the caller retains ownership of.
  *         status - as returned by shell_decode_status.
+ *         program - argv[0], named in the messages about a command that never
+ *         started.
  *
  * Output: Returns SHELL_OK, or SHELL_ERR_WRITE with errno as the failing call
  *         left it.
  */
-ShellResult shell_report_status(FILE *err, ShellStatus status);
+ShellResult shell_report_status(FILE *err, ShellStatus status,
+                                const char *program);
 
 /*
  * shell_is_exit_command - reports whether a line asks the shell to quit.
@@ -142,17 +191,27 @@ int shell_is_blank(const char *line, size_t len);
 ShellResult shell_write_banner(FILE *out);
 
 /*
- * shell_system_runner - the ShellRunner that actually runs commands.
+ * shell_exec_runner - the ShellRunner that actually runs commands.
  *
- * The only impure function here; everything else is a transformation of its
- * arguments or of the streams it is handed. Pass it from main, not from
- * library code.
+ * Forks, execvp's argv in the child, and waits. The only impure function here;
+ * everything else is a transformation of its arguments or of the streams it is
+ * handed. Pass it from main, not from library code.
+ *
+ * execvp fails in the child, where the parent cannot see its errno, so the two
+ * are joined by a close-on-exec pipe: the child writes the errno and _exits, a
+ * successful exec closes the pipe instead, and the parent tells the cases apart
+ * by whether the read returned anything. This is the same mechanism Rust's
+ * std::process::Command uses internally, and it is what lets all three ports
+ * report a missing program identically. Inferring it from an exit status of
+ * 127 was the alternative and was rejected: a command that really does exit 127
+ * is then indistinguishable from one that never ran.
  *
  * Input:  ctx - unused; present to satisfy the ShellRunner signature.
  *
- * Output: system()'s return value, undecoded.
+ * Output: The wait status, undecoded, or -1 with errno set to whatever stopped
+ *         the command from starting.
  */
-int shell_system_runner(const char *command, void *ctx);
+int shell_exec_runner(char *const argv[], void *ctx);
 
 /*
  * shell_run - the command loop.
@@ -164,10 +223,10 @@ int shell_system_runner(const char *command, void *ctx);
  *
  * One trailing '\n' is stripped from each line, then one trailing '\r', so CRLF
  * input runs the same commands as LF input. A blank line is skipped, "exit"
- * ends the loop, and a line containing an embedded NUL is refused: system()
- * takes a NUL-terminated string, so the alternative is silently running a
- * truncated command. Everything else goes to opts->runner and its status is
- * reported to err.
+ * ends the loop, and a line containing an embedded NUL is refused: execvp takes
+ * NUL-terminated strings, so the alternative is silently running a truncated
+ * command. Everything else is split into words by shell_split, handed to
+ * opts->runner, and its status reported to err.
  *
  * A command that fails does not end the loop and does not change the result;
  * only the shell's own I/O can.

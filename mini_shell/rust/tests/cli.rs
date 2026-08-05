@@ -114,6 +114,27 @@ fn a_failing_command_is_reported_but_does_not_change_the_exit_code() {
 }
 
 #[test]
+fn a_missing_program_is_named_not_found() {
+    // End to end, this is the message the exec errno pipe exists to produce,
+    // and it must be the same bytes the C and C++ ports write.
+    let out = run_with_stdin(&["--no-banner"], "nosuchcommand_xyzzy\nexit\n");
+
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "mini_shell: nosuchcommand_xyzzy: command not found\n"
+    );
+}
+
+#[test]
+fn shell_metacharacters_reach_the_program_as_arguments() {
+    // No interpreter in between, so the pipe is just a word echo prints.
+    let out = stdout_of(&["--no-banner"], "echo a | wc\nexit\n");
+
+    assert_eq!(out, "$ a | wc\n$ ");
+}
+
+#[test]
 fn a_command_that_reads_stdin_gets_the_unconsumed_input() {
     // The one behavior no unit test can reach: the suite in src/lib.rs drives
     // the loop with an in-memory stream, where buffering is invisible. Reading
