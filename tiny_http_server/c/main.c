@@ -33,7 +33,7 @@ static void print_help(void) {
   printf("      --host <addr> IPv4 address to bind (default %s)\n",
          SERVER_DEFAULT_HOST);
   printf("      --file <path> serve this file instead of the built-in page\n");
-  printf("      --once        serve one connection, then exit\n");
+  printf("      --once        serve one request, then exit\n");
   printf("  -h, --help        show this help\n");
   printf("\n");
   printf(

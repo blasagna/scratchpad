@@ -224,7 +224,8 @@ Everything above is shared by every port, and `check_parity.sh` diffs all of it.
 listed here is what the ports' argument parsers do differently, which is all of it so
 far: **every response byte and every log line agrees.**
 
-Both rows were predicted before the C++ port existed, and both landed.
+The first two were predicted before the C++ port existed, and both landed. The third was
+not, and turned up in review.
 
 **`--port`'s grammar.** C uses `strtol` with base 10 fixed, as spelled out under
 [Options](#options). C++ binds the option to an `int` and checks it with
@@ -247,9 +248,26 @@ differently, so it fails quietly rather than as an error.
 **Each parser's own diagnostics and exit code.** `getopt_long` reports an unknown option,
 a bad value, or a stray operand itself at exit `2`. CLI11 brings its own wording and its
 own codes — `105` for a `--port` or `--host` it rejects, `109` for an unknown option or a
-stray operand. `--help` exits `0` in both. That is the same call `simple_logger` and
-`matrix_ops` made, and it is not worth reconciling; `check_parity.sh` covers these cases
-by requiring only that every port rejects the same command line.
+stray operand, `114` for a repeated one. `--help` exits `0` in both. That is the same call
+`simple_logger` and `matrix_ops` made, and it is not worth reconciling; `check_parity.sh`
+covers these cases by requiring only that every port rejects the same command line.
+
+**A repeated option.** `getopt_long` hands each occurrence to the loop in turn and the
+last one wins, because each `case` just overwrites what the previous stored. CLI11's
+default multi-option policy rejects the command line instead:
+
+| command | C | C++ |
+|---|---|---|
+| `--port 9090 --port 0` | binds port 0 | exit `114`, `--port: At most 1 required but received 2` |
+| `--host 127.0.0.1 --host 9.9.9.9` | binds 9.9.9.9 | exit `114` |
+| `--file a --file b` | loads `b` | exit `114` |
+| `--once --once` | on | on — a flag is exempt from the policy |
+
+This is the one divergence `check_parity.sh` cannot be extended to cover in its existing
+shape: `parser_error_case` asserts that *every* port rejects the command line, and here
+the C port succeeds and then serves. Catching it would mean a case that runs a server to
+completion under one port and expects a usage error from the other, which is a different
+kind of case than the file has.
 
 Nothing else diverges. In particular the C++ port's single bidirectional stream — where
 C needs a `dup` and two `FILE *` — changes no observable byte, and neither does its
