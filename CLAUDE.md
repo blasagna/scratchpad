@@ -21,7 +21,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `simple_logger/` | A timestamped log-appender CLI, ported to C / C++ / Rust | [`simple_logger/CLAUDE.md`](simple_logger/CLAUDE.md) |
 | `matrix_ops/` | A 2D matrix arithmetic CLI, ported to C / C++ / Rust, benchmarked against Eigen, xtensor, faer, and nalgebra | [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md) |
 | `mini_shell/` | A prototype shell that forks and execs one program per line, ported to C / C++ / Rust | [`mini_shell/CLAUDE.md`](mini_shell/CLAUDE.md) |
-| `tiny_http_server/` | An HTTP server that serves one hello-world page, one connection at a time (C so far; C++ and Rust to follow) | [`tiny_http_server/CLAUDE.md`](tiny_http_server/CLAUDE.md) |
+| `tiny_http_server/` | An HTTP server that serves one hello-world page, one connection at a time, ported to C / C++ with cross-port parity (Rust to follow) | [`tiny_http_server/CLAUDE.md`](tiny_http_server/CLAUDE.md) |
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
@@ -85,15 +85,18 @@ write `--help` and reject unknown options. Whether CLI11 may also own an
 option's *grammar* depends on what the option is bound to:
 
 - **Numeric options are bound to their real type and checked with
-  `CLI::Range`** — `matrix_ops` (`int`/`double`) and `text_analyzer` (`unsigned
-  int`) both do this. CLI11's integer conversion reads base 0, strips `_` and
+  `CLI::Range`** — `matrix_ops` (`int`/`double`), `text_analyzer` (`unsigned
+  int`), and `tiny_http_server` (`--port`, an `int`) all do this. CLI11's
+  integer conversion reads base 0, strips `_` and
   `'` group separators, and skips surrounding whitespace, so these ports accept
   spellings (`--rows 0x10`, `--rows 1_000`, `--top-n "5 "`) that C refuses, and
   `010` means eight here and ten there. The divergence is deliberate and
   tabulated per area, in
   [`matrix_ops/README.md`](matrix_ops/README.md#known-divergence-argument-parsers)
   and
-  [`text_analyzer/README.md`](text_analyzer/README.md#known-divergence-argument-parsers).
+  [`text_analyzer/README.md`](text_analyzer/README.md#known-divergence-argument-parsers),
+  and
+  [`tiny_http_server/README.md`](tiny_http_server/README.md#known-divergences).
   Prefer `CLI::Range` over `CLI::PositiveNumber`: the latter is a
   `Range<double>`, so `2.5` clears the check and fails later in the conversion.
 - `simple_logger` has one constrained option, `--level`, bound to a
@@ -103,7 +106,10 @@ option's *grammar* depends on what the option is bound to:
   to map names onto an enum: it also accepts the enum's underlying integers.
 - **A hand-written validator behind `->check()` is the last resort**, for a rule
   no built-in can state — `matrix_ops` rejects a NaN `--scalar` by hand, since
-  `CLI::Range` tests `val < min || val > max` and both are false for a NaN.
+  `CLI::Range` tests `val < min || val > max` and both are false for a NaN, and
+  `tiny_http_server` checks `--host` with `inet_pton`, since the built-in
+  `CLI::ValidIPV4` splits on `.` and range-checks four numbers of its own
+  parsing rather than asking the resolver's own parser.
   `text_analyzer` used to hand-check its integers to keep them byte-identical
   with C, and that was a mistake: the validator was stricter than C's `strtol`
   (which skips leading whitespace and takes a `+`), so it pinned the C++ port to
