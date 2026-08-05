@@ -1,36 +1,45 @@
 # mini_shell
 
 A prototype shell: it prints a `$` prompt, reads one command per line, hands it to the
-system command interpreter with `system()`, and reports the status of anything that did
-not exit 0. Two ports exist: `c/` and `cpp/`, both Bazel; Rust follows. The full
-contract — the loop, the reporting format, edge cases, exit codes, and the handful of
-places the two ports deliberately differ — is in [`README.md`](README.md), and each port
-has its own design notes ([c](c/README.md), [cpp](cpp/README.md)).
+system command interpreter, and reports the status of anything that did not exit 0.
+Three ports exist: `c/` and `cpp/` (Bazel, both calling `system()`), and `rust/` (cargo
+workspace member `mini_shell`, calling `/bin/sh -c` — which is what `system()` does
+internally). The full contract — the loop, the reporting format, edge cases, exit codes,
+and the handful of places the ports deliberately differ — is in [`README.md`](README.md),
+and each port has its own design notes ([c](c/README.md), [cpp](cpp/README.md),
+[rust](rust/README.md)).
 
 ## Commands
 
 ```sh
 bazel run  //mini_shell/c:mini_shell
 bazel run  //mini_shell/cpp:mini_shell
+cargo run  -p mini_shell
 
 bazel test //mini_shell/c:all
 bazel test //mini_shell/cpp:all
+cargo test -p mini_shell
 
-./mini_shell/check_parity.sh   # build both, run 21 scripted sessions, diff them
+./mini_shell/check_parity.sh   # build all three, run 21 scripted sessions, diff them
 
 printf 'echo hi\nfalse\nexit\n' | bazel-bin/mini_shell/c/mini_shell --no-banner
 ```
 
 **`check_parity.sh` compares stdout, stderr, *and* the exit status** — unlike
 `matrix_ops`, which gave up on stderr. Here the per-command status lines are the
-reporting contract and both ports write the same bytes, so a case that skipped stderr
+reporting contract and every port writes the same bytes, so a case that skipped stderr
 would assert nothing at all about a failing command. Only the argument parser's own
-diagnostics are exempt (`run_case_parser_error`, which requires just that both ports
-reject the command line) and `--help` (`run_case_status_only`).
+diagnostics are exempt (`run_case_parser_error`, which requires just that every port
+rejects the command line) and `--help` (`run_case_status_only`).
+
+**All three ports are in that script**, unlike `matrix_ops`, where the Rust port had to
+stay out because it accepts a different set of command lines. Nothing here diverges on
+what the *loop* does, so `binaries()` lists Rust alongside the other two and `build()`
+runs `cargo build` after `bazel build`.
 
 **One case in that script is not a comparison**, and must stay that way:
 `check_unbuffered` asserts against a fixed expectation rather than against the reference
-port, because both ports could regress into reading ahead together and every diff would
+port, because every port could regress into reading ahead together and every diff would
 still come back clean. See the buffering bullet below.
 
 ## Shared behavior (keep the ports in sync)
@@ -40,7 +49,10 @@ still come back clean. See the buffering bullet below.
   ran) is checked before either. Reading the raw value as a code is the bug this
   ordering prevents: it reports a command killed by `SIGKILL` as "exited with status 0".
   Any port that gets a decoded status from its standard library for free still has to
-  produce the same three cases.
+  produce the same three cases: Rust's `Command::status()` gives back an
+  `io::Result<ExitStatus>`, and `decode_status` maps `Err(_)`, `ExitStatus::signal()`,
+  and `ExitStatus::code()` onto them — in the same order, since a status that names a
+  signal has no exit code to report.
 - **The decoding is pure and separate from the reporting** (`shell_decode_status` /
   `decode_status` vs `shell_report_status` / `report_status`). That is what makes the
   signal branch testable without arranging for a real process to be killed, and it is
@@ -49,12 +61,15 @@ still come back clean. See the buffering bullet below.
   linked in.
 - **`system()` is behind a runner seam**, so the loop is tested with a recording fake
   and never forks: a function pointer (`ShellRunner`) in C, a
-  `std::function<int(const std::string &)>` in C++, a trait or `fn` in Rust. Without it
-  the command loop is untestable.
+  `std::function<int(const std::string &)>` in C++, a `&mut dyn Runner` in Rust — a
+  trait object rather than a boxed closure, so the fake is a plain struct the test reads
+  afterwards instead of an `Rc<RefCell<_>>` it has to borrow at every assertion. Without
+  the seam the command loop is untestable.
 - **The stream seam is three parameters, not three globals.** `shell_run` /
   `shell::run` take `(in, out, err)` — `FILE *` in C, `std::istream &`/`std::ostream &`
-  in C++ — so the tests drive them with `fmemopen` and `std::istringstream`
-  respectively. `err` is separate from `out` on purpose: it is the contract that the
+  in C++, generic `Read`/`Write` in Rust — so the tests drive them with `fmemopen`,
+  `std::istringstream`, and plain `&[u8]`/`Vec<u8>` respectively. `err` is separate from
+  `out` on purpose: it is the contract that the
   shell's own complaints never mix into the command's output.
 - **The banner and prompt always print**, TTY or not. Do not add an `isatty` branch:
   it makes the output depend on how the program was invoked, which every port would
@@ -69,12 +84,18 @@ still come back clean. See the buffering bullet below.
   drive `shell_run` with `fmemopen`, where buffering is invisible — so it is a
   `setvbuf(stdin, NULL, _IONBF, 0)` in `main` plus the end-to-end check above. POSIX
   requires it and `bash` honors it; **`dash` reads ahead**, so `/bin/sh` is not the
-  reference to check a port against. Each port needs its own spelling: unbuffered
-  reads, not a `BufReader`. In C++ the `setvbuf` reaches `std::cin` only because
+  reference to check a port against. Each port needs its own spelling. In Rust there is
+  no `setvbuf` to reach for at all — `io::stdin()` is always a `BufReader` and cannot be
+  told otherwise — so `main` takes a `dup` of fd 0 as a plain `File`
+  (`File::from(io::stdin().as_fd().try_clone_to_owned()?)`) and `read_line` reads **one
+  byte at a time**. **`BufRead::read_until`, which is how `simple_logger/rust` reads
+  stdin, puts the bug straight back**, and it is that port's exact counterpart of the
+  `sync_with_stdio(false)` hazard below. In C++ the `setvbuf` reaches `std::cin` only because
   `sync_with_stdio` is true by default — **`std::ios::sync_with_stdio(false)` puts the
   bug straight back**, and it is the kind of line someone adds for speed without
   suspecting it does anything else. `check_parity.sh`'s `check_unbuffered` is the only
-  guard either port has.
+  guard the C and C++ ports have; the Rust one additionally pins it from `cargo test`,
+  in `rust/tests/cli.rs`, by spawning the binary.
 - **A failed command never ends the loop and never changes the exit code.** The shell
   ran what it was asked to; `0` means the loop ended cleanly, `1` is the shell's own
   I/O failure, `2` is a usage error. Making the exit code the last command's status was
@@ -82,15 +103,22 @@ still come back clean. See the buffering bullet below.
 - **Each port's argument parser writes its own diagnostics, and that is not shared
   behavior.** C uses `getopt_long` and reports an unknown option or a stray operand
   itself at exit `2`; C++ hands the job to CLI11 and takes CLI11's wording and CLI11's
-  exit code (`109` for both). Do not try to reconcile them — the parity script covers
-  these with `run_case_parser_error`, which asserts only that both reject the same
-  command line, and the table is in [`README.md`](README.md#known-divergences). Which
-  spellings are accepted differs too: `getopt_long` matches unambiguous long-option
-  prefixes, so `--no-ban` works in C and is an error in C++.
-- **Out of memory reports the same line and the same exit code in both**, by different
-  routes: C gets a `getline` failure and returns `SHELL_ERR_NOMEM`, C++ catches
-  `std::bad_alloc` around the loop in `main`. Any port that lets an allocation failure
-  abort instead has diverged.
+  exit code (`109` for both); Rust hands it to clap, which happens to exit `2` as well —
+  a coincidence, not something to rely on. Do not try to reconcile them — the parity
+  script covers these with `run_case_parser_error`, which asserts only that every port
+  rejects the same command line, and the table is in
+  [`README.md`](README.md#known-divergences). Which spellings are accepted differs too:
+  `getopt_long` matches unambiguous long-option prefixes, so `--no-ban` works in C and
+  is an error in C++ and Rust.
+- **Out of memory reports the same line and the same exit code in C and C++**, by
+  different routes: C gets a `getline` failure and returns `SHELL_ERR_NOMEM`, C++
+  catches `std::bad_alloc` around the loop in `main`. **The Rust port aborts instead**,
+  which this file used to call a divergence in advance and now records as one: Rust's
+  allocator aborts before any `try_reserve` dance could see it, and the same call is
+  already made and documented in `matrix_ops/rust`. It is in the divergence table in
+  [`README.md`](README.md#known-divergences); `ShellError` accordingly has three
+  variants where C's `ShellResult` has five, since `Read::read` also separates end of
+  input from a read error in the type where `getline` needs `ferror`/`feof` to.
 - **`exit` is the only builtin**, matched as the bare word after trimming ASCII
   whitespace. `EXIT`, `exitx`, and `exit 3` go to the interpreter. **`cd` is
   deliberately absent** — every command gets a fresh subshell, so `cd` appears to do
@@ -108,12 +136,20 @@ still come back clean. See the buffering bullet below.
 ## Gotchas
 
 - **ASCII art in a string literal.** Every backslash in the banner must be doubled in
-  both ports — the compiler reads `\_` as an unknown escape, and `-Werror` makes that
-  fatal. The other two hazards are C-only: a `??` pair is a trigraph in C but not in
-  C++17 and later, and the C banner is written with `fputs` rather than `printf` so a
-  `%` is not a format specifier (the C++ one goes through `ostream::write`, where the
-  question never arises). Check all three before changing the art, and keep the two
-  copies identical — `check_parity.sh`'s `banner` case diffs them.
+  all three ports — every one of these compilers reads `\_` as an unknown escape, and
+  `-Werror` makes that fatal in the two Bazel ones. Two more hazards are C-only: a `??`
+  pair is a trigraph in C but not in C++17 and later, and the C banner is written with
+  `fputs` rather than `printf` so a `%` is not a format specifier (the C++ one goes
+  through `ostream::write`, where the question never arises). Rust has the same shape of
+  hazard with a different character: the banner goes out through `write_all`, **never
+  `write!`**, so a `{` in future art is not a format hole. Check all of them before
+  changing the art, and keep the three copies identical — `check_parity.sh`'s `banner`
+  case diffs them.
+- **The whitespace set is written out, not delegated.** C uses `isspace` in the "C"
+  locale and C++ spells `" \t\n\v\f\r"`; Rust must spell it too, because
+  `u8::is_ascii_whitespace` **omits `\v`**. Reaching for that method makes `"\x0bexit"`
+  end the loop in two ports and run as a command in the third — a divergence no parity
+  case would catch, since none feeds a vertical tab.
 - **`bazel run` and relative paths.** `bazel run` executes from Bazel's runfiles
   directory, not your shell's cwd, so a command using a relative path resolves
   somewhere surprising. Run `bazel-bin/mini_shell/c/mini_shell` directly when that
@@ -128,6 +164,18 @@ still come back clean. See the buffering bullet below.
   an unreadable stdin as a clean end of input. `main.cpp` checks `std::ferror(stdin)`
   afterwards to recover it — the same fixup, for the same reason, as
   `simple_logger/cpp/main.cpp`. Deleting it makes the program exit 0 on a failed read.
+- **`Command::status()` does not block `SIGINT`, and `system()` does.** POSIX requires
+  `system()` to set `SIGINT`/`SIGQUIT` to `SIG_IGN` in the caller while the command
+  runs, so Ctrl-C at a terminal kills only the child in C and C++ and the shell prompts
+  again — the Rust port dies with it. This is a documented divergence rather than a bug
+  to fix: the fix is `signal(2)`, which means a `libc` dependency and an `unsafe` block,
+  and the ports here take only `clap`. It is interactive-only, so nothing in
+  `check_parity.sh` or either suite will ever tell you about it.
+- **A bare `read(2)` must retry `EINTR` by hand.** `impl Read for File` surfaces
+  `ErrorKind::Interrupted` where stdio restarts the read under `SA_RESTART`, so the Rust
+  `read_line` has a retry arm the C and C++ loops need no counterpart to. Delete it and
+  a `SIGWINCH` during a read is reported as `mini_shell: error reading command input`.
+  `write_all` and `flush` already retry internally.
 - **Tests that assert on the prompt count are asserting on the loop shape.** `ls\nexit\n`
   produces `"$ $ "` — one prompt per line read, including the one `exit` answered. If a
   refactor changes when the prompt is written, those are the tests that will say so.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build the C and C++ mini_shell ports, feed each the same scripted stdin, and
-# check they agree byte for byte.
+# Build the C, C++, and Rust mini_shell ports, feed each the same scripted
+# stdin, and check they agree byte for byte.
 #
 #   ./mini_shell/check_parity.sh          # build, run every case, report
 #   ./mini_shell/check_parity.sh --keep   # keep the work dir for inspection
@@ -12,17 +12,19 @@
 #   run_case              — stdout, stderr, and exit status. The default, and
 #                           where the contract lives. Unlike matrix_ops, stderr
 #                           IS compared here: the per-command status lines are
-#                           the reporting contract, both ports write the same
+#                           the reporting contract, every port writes the same
 #                           bytes, and a case that only checked stdout would
 #                           check nothing at all for a failing command.
-#   run_case_parser_error — stdout only, plus "both ports must fail". These are
+#   run_case_parser_error — stdout only, plus "every port must fail". These are
 #                           the failures the argument parser reports, and the
-#                           two ports do not share one: C uses getopt_long, C++
-#                           uses CLI11, so neither the wording nor the exit code
-#                           is shared. What still has to hold is that the same
-#                           command line is rejected by both.
+#                           three ports do not share one: C uses getopt_long,
+#                           C++ uses CLI11, Rust uses clap, so neither the
+#                           wording nor the exit code is shared. clap does land
+#                           on C's exit 2, but that is a coincidence rather than
+#                           a contract. What still has to hold is that the same
+#                           command line is rejected by all of them.
 #   run_case_status_only  — exit status only, for --help, whose text is CLI11's
-#                           on the C++ side.
+#                           on the C++ side and clap's on the Rust one.
 #
 # One case does not fit the "the ports agree" mold and is checked absolutely
 # instead, by check_unbuffered below: a shell must not read ahead past the
@@ -61,12 +63,14 @@ MUST_FAIL=0
 binaries() {
   echo "C|${REPO_ROOT}/bazel-bin/mini_shell/c/mini_shell"
   echo "C++|${REPO_ROOT}/bazel-bin/mini_shell/cpp/mini_shell"
+  echo "Rust|${REPO_ROOT}/target/debug/mini_shell"
 }
 
 build() {
   echo "building..." >&2
   (cd "${REPO_ROOT}" && bazel build \
     //mini_shell/c:mini_shell //mini_shell/cpp:mini_shell) >&2
+  (cd "${REPO_ROOT}" && cargo build --quiet -p mini_shell) >&2
 }
 
 # A binary that cannot be executed makes every port fail identically, so every
@@ -175,12 +179,14 @@ compare() {
 # receive the input mini_shell has not consumed yet. Buffered, stdio pulls the
 # whole pipe in before the first fork, `cat` gets an empty stdin, and mini_shell
 # runs the second line itself -- so the output says "done" instead of the
-# "echo done" that cat echoed. Both ports could regress together and every diff
+# "echo done" that cat echoed. Every port could regress together and every diff
 # above would still be clean, which is why this is checked against a fixed
 # expectation rather than against the reference port.
 #
-# This is also the one behavior no unit suite can reach: both suites drive the
-# loop with an in-memory stream, where buffering is invisible.
+# This is also the one behavior no unit suite can reach: every suite drives the
+# loop with an in-memory stream, where buffering is invisible. (The Rust port
+# additionally pins it from cargo test, in rust/tests/cli.rs, by spawning the
+# binary -- which is the same trick as this, not a unit test.)
 check_unbuffered() {
   local port bin out
   while IFS='|' read -r port bin; do
@@ -262,16 +268,16 @@ main() {
   run_case_parser_error unknown_opt   -  --nope
   run_case_parser_error unknown_short -  -z
   run_case_parser_error stray_operand -  ls
-  # getopt_long accepts an abbreviated long option and CLI11 does not, so this
-  # is not a shared spelling either -- but both must still not silently ignore
-  # it. Only the C port accepts it, so there is nothing to assert jointly; see
-  # the divergence table in README.md.
+  # getopt_long accepts an abbreviated long option and neither CLI11 nor clap
+  # does, so this is not a shared spelling either -- but no port may silently
+  # ignore it. Only the C port accepts it, so there is nothing to assert
+  # jointly; see the divergence table in README.md.
 
   compare
   check_unbuffered
 
   if [[ "${failed}" == "0" ]]; then
-    echo "all ${#CASES[@]} cases agree, and both ports read unbuffered" >&2
+    echo "all ${#CASES[@]} cases agree, and every port reads unbuffered" >&2
   else
     echo "PARITY CHECK FAILED" >&2
   fi
