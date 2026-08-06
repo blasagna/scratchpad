@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build the C and C++ tiny_http_server ports, drive each with the same requests
-# over a real socket, and check they agree byte for byte.
+# Build the C, C++, and Rust tiny_http_server ports, drive each with the same
+# requests over a real socket, and check they agree byte for byte.
 #
 # Nothing here is mocked: each case starts a real server on an ephemeral port,
 # opens a real TCP connection to it, and compares the bytes that came back. The
@@ -214,9 +214,9 @@ startup_case() {
 # parser_error_case <name> [server args...]
 #
 # For a command line the argument parser rejects. getopt_long reports it in the
-# C port and CLI11 in the C++ one, so the message and the exit code are each
-# parser's own; what is asserted is that stdout agrees (empty in both) and that
-# every port rejected it.
+# C port, CLI11 in the C++ one, and clap in the Rust one, so the message and the
+# exit code are each parser's own; what is asserted is that stdout agrees (empty
+# in all three) and that every port rejected it.
 parser_error_case() {
   local name="$1"
   shift
@@ -238,8 +238,8 @@ parser_error_case() {
 
 # help_case <name> [server args...]
 #
-# Only the exit status is compared: the help text is the C port's own and
-# CLI11's respectively.
+# Only the exit status is compared: the help text is the C port's own, CLI11's,
+# and clap's respectively.
 help_case() {
   local name="$1"
   shift

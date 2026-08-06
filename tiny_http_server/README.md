@@ -291,8 +291,13 @@ Rust port cannot report which of them failed and calls every one `cannot bind th
 listening socket`. That is the right label for every failure reachable without exhausting
 file descriptors — `EACCES` on a privileged port, `EADDRINUSE` when the server is already
 running — and the wrong one for an `EMFILE` out of `socket`, which no case here reaches.
-The same call fixes the backlog at std's 128 rather than the 16 the other two pass, which
-nothing can observe.
+The same call fixes the backlog at std's 128 rather than the 16 the other two pass, and
+that one *is* observable: with the server busy on a connection, C and C++ complete 17
+further handshakes before a client stalls and Rust completes 129. That is exactly the
+trade `kBacklog` picks 16 for — a refusal a browser retries immediately, rather than a
+wait it does not — made the other way. There is no fixing it from here: `TcpListener::bind`
+hard-codes the 128 and this crate takes no `libc` or `socket2` dependency to call `listen`
+itself.
 
 **Out of memory.** C returns `HTTP_ERR_NOMEM` and C++ catches `std::bad_alloc`, both
 reporting `out of memory` and exiting `1`. Rust's allocator aborts before anything in the
