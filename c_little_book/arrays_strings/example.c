@@ -2,7 +2,7 @@
 
 #include "example.h"
 
-int sum_array(int arr[], size_t len) {
+int sum_array(const int arr[], size_t len) {
   int sum = 0;
   for (size_t i = 0; i < len; i++) {
     sum += arr[i];
@@ -19,6 +19,7 @@ size_t func_sizeof_array(int arr[]) {
   // getting the wrong answer here is the whole point of the exercise.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsizeof-array-argument"
+  // cppcheck-suppress sizeofwithsilentarraypointer
   return sizeof(arr) / sizeof(arr[0]);
 #pragma GCC diagnostic pop
 }

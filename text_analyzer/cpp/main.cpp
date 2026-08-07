@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -116,11 +117,11 @@ int main(int argc, char *argv[]) {
   if (filenames.empty()) {
     if (!feed_named(analyzer, kStdinArg))
       return 1;
-  } else {
-    for (const std::string &name : filenames) {
-      if (!feed_named(analyzer, name))
-        return 1;
-    }
+  } else if (std::any_of(filenames.begin(), filenames.end(),
+                         [&analyzer](const std::string &name) {
+                           return !feed_named(analyzer, name);
+                         })) {
+    return 1;
   }
 
   const text_analyzer::TextStats stats = analyzer.finish();

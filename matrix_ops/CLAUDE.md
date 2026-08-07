@@ -160,14 +160,18 @@ script can only assert agreement. Its surface is pinned by
   directory, not your shell's cwd, so a relative `--file` path resolves somewhere
   surprising. Pass an absolute path or run `bazel-bin/matrix_ops/c/matrix_ops`
   directly. (Same trap as `copy_file` and `simple_logger`.)
-- **`valgrind` does not run on this machine.** The pixi-provided build fails at
-  startup against the system's stripped `ld.so` ("a function redirection which is
-  mandatory for this platform-tool combination cannot be set up"). Use the
-  sanitizers instead:
+- **`valgrind` needs `libc6-dbg` installed** (see root [`README.md`](../README.md)) or
+  it fails at startup against the system's stripped `ld.so` ("a function redirection
+  which is mandatory for this platform-tool combination cannot be set up"):
 
   ```sh
-  bazel test //matrix_ops/c:all //matrix_ops/cpp:all --config=permissive \
-    --copt=-fsanitize=address --copt=-g --linkopt=-fsanitize=address
+  bazel test //matrix_ops/c:all //matrix_ops/cpp:all --config=valgrind
+  ```
+
+  `--config=asan` is the faster alternative for iterating:
+
+  ```sh
+  bazel test //matrix_ops/c:all //matrix_ops/cpp:all --config=asan
   ```
 
 - **`bench/` is the only non-hermetic target in the repo.** xtensor-blas links

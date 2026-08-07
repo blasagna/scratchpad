@@ -188,7 +188,7 @@ LogResult log_write_lines(FILE *out, const LogFormat *fmt,
     size_t len = (size_t)n;
     /* Strip one '\n', then one '\r', so CRLF input logs the same bytes as LF
      * input. A '\r' anywhere else belongs to the message. */
-    if (len > 0 && line[len - 1] == '\n')
+    if (line[len - 1] == '\n')
       len--;
     if (len > 0 && line[len - 1] == '\r')
       len--;

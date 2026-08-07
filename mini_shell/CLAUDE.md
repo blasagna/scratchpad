@@ -195,10 +195,14 @@ still come back clean. See the buffering bullet below.
   directory, not your shell's cwd, so a command using a relative path resolves
   somewhere surprising. Run `bazel-bin/mini_shell/c/mini_shell` directly when that
   matters. (Same trap as `copy_file` and `simple_logger`.)
-- **`valgrind` does not run on this machine.** Use sanitizers instead:
+- **`valgrind` needs `libc6-dbg` installed** (see root [`README.md`](../README.md)) or
+  it fails at startup instead of running memcheck:
   ```sh
-  bazel test //mini_shell/c:all //mini_shell/cpp:all --config=permissive \
-    --copt=-fsanitize=address --copt=-g --linkopt=-fsanitize=address
+  bazel test //mini_shell/c:all //mini_shell/cpp:all --config=valgrind
+  ```
+  `--config=asan` is the faster alternative for iterating:
+  ```sh
+  bazel test //mini_shell/c:all //mini_shell/cpp:all --config=asan
   ```
 - **`std::cin` cannot see a read error.** It is backed by a `stdio_sync_filebuf` whose
   `underflow()` returns EOF on failure without setting `badbit`, so the C++ loop reads

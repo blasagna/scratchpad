@@ -468,7 +468,7 @@ TEST(Route, ServesTheConfiguredPageRatherThanTheBuiltInOne) {
 /* --- http_error_response --- */
 
 TEST(ErrorResponse, NamesEveryStatusItCanSend) {
-  struct {
+  const struct {
     int status;
     const char *reason;
   } cases[] = {{400, "Bad Request"},
@@ -477,7 +477,7 @@ TEST(ErrorResponse, NamesEveryStatusItCanSend) {
                {431, "Request Header Fields Too Large"},
                {505, "HTTP Version Not Supported"}};
   char scratch[HTTP_ERROR_PAGE_MAX];
-  for (auto &c : cases) {
+  for (const auto &c : cases) {
     HttpResponse r = http_error_response(c.status, scratch, sizeof(scratch));
     EXPECT_EQ(r.status, c.status);
     EXPECT_STREQ(r.reason, c.reason);
@@ -655,10 +655,10 @@ TEST(Sanitize, HandlesAOneByteDestination) {
  * went to the client and what went to the log. */
 namespace {
   struct Served {
-    HttpResult result;
+    HttpResult result = HTTP_OK;
     std::string response;
     std::string log;
-    int left_unread;
+    int left_unread = 0;
   };
 } // namespace
 

@@ -11,8 +11,8 @@ int main(void) {
   printf("sum: %d\n", sum);
 
   size_t wrong_len = func_sizeof_array(arr);
-  printf("main scoped array length: %lu\n", len);
-  printf("function scoped array length: %lu\n", wrong_len);
+  printf("main scoped array length: %zu\n", len);
+  printf("function scoped array length: %zu\n", wrong_len);
 
   return 0;
 }

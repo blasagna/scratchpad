@@ -432,7 +432,7 @@ TEST(Route, ServesTheConfiguredPageRatherThanTheBuiltInOne) {
 
 TEST(ErrorResponse, NamesEveryStatusItCanSend) {
   struct Case {
-    int status;
+    int status = 0;
     std::string_view reason;
   };
   constexpr Case kCases[] = {{400, "Bad Request"},

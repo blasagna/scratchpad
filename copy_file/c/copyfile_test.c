@@ -11,7 +11,7 @@ extern "C" {
 }
 
 static FILE *make_read_stream(const char *data, size_t len) {
-  return fmemopen((void *)data, len, "rb");
+  return fmemopen(const_cast<char *>(data), len, "rb");
 }
 
 /* Builds a path under the test's writable temp dir. Bazel sets TEST_TMPDIR. */
@@ -23,13 +23,17 @@ static std::string tmp_path(const char *name) {
 static void write_file(const std::string &path, const char *data, size_t len) {
   FILE *f = fopen(path.c_str(), "wb");
   ASSERT_NE(f, nullptr);
-  ASSERT_EQ(fwrite(data, 1, len, f), len);
-  ASSERT_EQ(fclose(f), 0);
+  const size_t written = fwrite(data, 1, len, f);
+  const int closed = fclose(f);
+  ASSERT_EQ(written, len);
+  ASSERT_EQ(closed, 0);
 }
 
 static std::string read_file(const std::string &path) {
   FILE *f = fopen(path.c_str(), "rb");
   EXPECT_NE(f, nullptr);
+  if (!f)
+    return {};
   std::string out;
   char buf[4096];
   size_t n;

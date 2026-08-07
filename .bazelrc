@@ -24,6 +24,17 @@ build:permissive --copt=-Wno-error
 # fastbuild (-O0), so timings taken without this are not meaningful.
 build:opt --compilation_mode=opt
 
+# Config 'asan': Build and run under AddressSanitizer. Implies 'permissive' since
+# sanitizer diagnostics matter more than warnings-as-errors here.
+build:asan --config=permissive
+build:asan --copt=-fsanitize=address --copt=-g --linkopt=-fsanitize=address
+
+# Config 'valgrind': Run test binaries under valgrind's memcheck. Requires the
+# system package libc6-dbg (see README.md). Bazel's test sandbox does not
+# inherit PATH, so this points at the pixi-managed valgrind binary directly
+# rather than relying on `valgrind` being findable at test-run time.
+build:valgrind --run_under="/home/bob/code/scratchpad/.pixi/envs/default/bin/valgrind --error-exitcode=1 --leak-check=full"
+
 # Config 'native': Compile for this machine's actual instruction set.
 #
 # NOT implied by 'opt', which builds for baseline x86-64 -- SSE2, two doubles

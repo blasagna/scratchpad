@@ -379,6 +379,7 @@ int analyzer_finish(Analyzer *a, TextStats *out) {
   /* Rank the printable characters that occurred at least once, sorted by count
    * descending with ties broken ascending by character. */
   CharFreq chars[PRINTABLE_ASCII_MAX - PRINTABLE_ASCII_MIN + 1];
+  memset(chars, 0, sizeof(chars));
   int char_count = 0;
   for (int i = PRINTABLE_ASCII_MIN; i <= PRINTABLE_ASCII_MAX; i++) {
     if (a->char_counts[i] > 0) {

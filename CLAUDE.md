@@ -44,6 +44,11 @@ work in that subtree) and usually a `README.md` with the full narrative.
 Formatting is repo-wide via `pixi run fmt` (ruff + clang-format + cargo fmt) and
 runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
 
+`pixi run lint-c` runs cppcheck over the 7 Bazel C/C++ areas. Memory checking for a
+given area is `bazel test <targets> --config=valgrind` (needs the system package
+`libc6-dbg`, see [`README.md`](README.md)) or `--config=asan` for a faster
+alternative; see the per-area `CLAUDE.md` for exact invocations.
+
 ## Repo-wide conventions
 
 **Bazel builds are strict by default** (`.bazelrc`): `-Wall -Werror -Wextra

@@ -380,7 +380,6 @@ HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
                                  const HttpPage *page, int *left_unread) {
   char buf[HTTP_REQUEST_MAX];
   char scratch[HTTP_ERROR_PAGE_MAX];
-  char safe[HTTP_LOG_LINE_MAX];
   size_t len = 0;
 
   if (left_unread != NULL)
@@ -407,6 +406,7 @@ HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
   } else {
     HttpRequest req;
     HttpResult parsed = http_parse_request(buf, len, &req);
+    char safe[HTTP_LOG_LINE_MAX];
     if (parsed != HTTP_OK) {
       /* Sanitized and quoted, so an empty line is visible as one. Located the
        * way the parser locates it: the raw first line would log `malformed

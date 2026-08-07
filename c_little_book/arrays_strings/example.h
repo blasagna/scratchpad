@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-int sum_array(int arr[], size_t len);
+int sum_array(const int arr[], size_t len);
 
 size_t func_sizeof_array(int arr[]);
 

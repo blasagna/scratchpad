@@ -41,8 +41,10 @@ static std::string tmp_path(const char *name) {
 static void write_file(const std::string &path, const std::string &contents) {
   FILE *f = fopen(path.c_str(), "wb");
   ASSERT_NE(f, nullptr);
-  ASSERT_EQ(fwrite(contents.data(), 1, contents.size(), f), contents.size());
-  ASSERT_EQ(fclose(f), 0);
+  const size_t written = fwrite(contents.data(), 1, contents.size(), f);
+  const int closed = fclose(f);
+  ASSERT_EQ(written, contents.size());
+  ASSERT_EQ(closed, 0);
 }
 
 /* --- server_load_page --- */
@@ -61,6 +63,9 @@ TEST(LoadPage, ReadsAnEmptyFile) {
   /* Not an error: a page of zero bytes is served with Content-Length: 0. */
   std::string path = tmp_path("empty.html");
   write_file(path, "");
+  // A deliberately bogus non-null sentinel: proves server_load_page
+  // overwrites a prior page rather than leaving it untouched.
+  // cppcheck-suppress intToPointerCast
   HttpPage page = {reinterpret_cast<const char *>(1), 99};
   ASSERT_EQ(server_load_page(path.c_str(), SERVER_MAX_PAGE_BYTES, &page),
             HTTP_OK);

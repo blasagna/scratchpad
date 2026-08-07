@@ -348,10 +348,14 @@ instead:
   pre-flighting a socket — it would be a different descriptor than the one bound. It is a
   recorded divergence, and `local_addr()` is still separate, so `cannot listen on the
   socket` survives for that one.
-- **`valgrind` does not run on this machine.** Use sanitizers instead:
+- **`valgrind` needs `libc6-dbg` installed** (see root [`README.md`](../README.md)) or
+  it fails at startup instead of running memcheck:
   ```sh
-  bazel test //tiny_http_server/... --config=permissive \
-    --copt=-fsanitize=address --copt=-g --linkopt=-fsanitize=address
+  bazel test //tiny_http_server/... --config=valgrind
+  ```
+  `--config=asan` is the faster alternative for iterating:
+  ```sh
+  bazel test //tiny_http_server/... --config=asan
   ```
 
 C-test-with-GoogleTest wrapping (`extern "C"` + `copts = ["-x", "c++"]`), strict

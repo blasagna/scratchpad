@@ -6,7 +6,7 @@ extern "C" {
 }
 
 static FILE *make_stream(const char *text) {
-  return fmemopen((void *)text, strlen(text), "r");
+  return fmemopen(const_cast<char *>(text), strlen(text), "r");
 }
 
 TEST(AnalyzerTest, EmptyFile) {
