@@ -16,8 +16,8 @@ Create a very simple http server which responds to web requests. Once running, t
 
 ## Contract
 
-The program is implemented in `c/` and `cpp/` (both Bazel); a Rust port will follow, and
-this section is what all of them are checked against. The C port is the **reference
+The program is implemented in `c/` and `cpp/` (both Bazel) and `rust/` (cargo), and this
+section is what all three are checked against. The C port is the **reference
 dialect**: where a later port's library gives it different behavior for free, the
 difference is recorded under [Known divergences](#known-divergences) rather than
 hand-rolled back into agreement. [`check_parity.sh`](check_parity.sh) is what enforces
@@ -66,7 +66,9 @@ is the kernel's.
 a blocking network lookup — into the startup of a program that binds exactly one socket,
 and would hand back a list of candidates to choose between. So `localhost` is rejected,
 with a message saying what was wanted. `inet_pton` also turns down `127.1` and
-`0177.0.0.1`, which the older `inet_aton` would have read as `127.0.0.1`.
+`0177.0.0.1`, which the older `inet_aton` would have read as `127.0.0.1`. This is the one
+grammar every port agrees on byte for byte, and the Rust port gets it without a validator
+of its own: `Ipv4Addr`'s parser accepts and rejects exactly what `inet_pton` does.
 
 **The default binds loopback only.** The exercise says to open a browser at
 `localhost:8080`, which loopback satisfies completely. This server has no
@@ -218,61 +220,127 @@ edge:
   browser and `curl` do. Dual-stack means `AF_INET6` with `IPV6_V6ONLY=0`, and then every
   IPv4 client logs as `::ffff:127.0.0.1`.
 
+### The parity harness
+
+[`check_parity.sh`](check_parity.sh) builds all three ports, drives each with the same
+bytes over a real socket, and diffs the results against the C port. Nothing is mocked:
+every case starts a real server on an ephemeral port and opens a real TCP connection to
+it. What gets compared depends on who reports the outcome:
+
+| case kind | compared |
+|---|---|
+| `serve_case` | the response bytes, the log, and the exit status. The default, and where the contract lives — the log is part of the contract, so it is diffed too. |
+| `startup_case` | the log and the exit status, for a server that never gets as far as listening (an unreadable `--file`). |
+| `parser_error_case` | stdout only, plus "every port must fail". The parsers are `getopt_long`, CLI11, and clap, and only the rejection is shared; see [Known divergences](#known-divergences). |
+| `help_case` | the exit status only. The help text is each parser's own. |
+
+**The only normalization is the port number.** Every port binds `--port 0`, so a case
+never collides with a server left running in another terminal, and the kernel's choice
+shows up in `listening on 127.0.0.1:<port>` and the client's source port in `connection
+from 127.0.0.1:<port>`. Both become `:PORT` before the diff; nothing else is touched, and
+the response bytes are compared raw.
+
+**Every case must be one the server answers**, because `--once` stops after an *answered*
+request — a case the server does not answer would leave it running until the script's
+timeout. The deliberately unanswered ones (a client that sends nothing, one that hangs up
+mid-header) live in the unit suites instead. The client is a few lines of Python rather
+than `curl`, which would normalize a malformed request line before it reached the socket,
+and it half-closes after sending so the drain sees end of input rather than the timeout.
+
+**Two checks are absolute rather than comparisons**, because every port could regress
+together and every diff would still be clean: `check_drain` requires the `405` to survive
+a request with an unread body, and `check_ephemeral_port` requires `--port 0` to report a
+port it really bound. Builds are unoptimized; there are no timings here.
+
 ### Known divergences
 
-Everything above is shared by every port, and `check_parity.sh` diffs all of it. What is
-listed here is what the ports' argument parsers do differently, which is all of it so
-far: **every response byte and every log line agrees.**
-
-The first two were predicted before the C++ port existed, and both landed. The third was
-not, and turned up in review.
+Everything above is shared by every port, and `check_parity.sh` diffs all of it: **every
+response byte and every log line agrees.** What is listed here is what is left, which is
+each port's argument parser plus, for Rust, two things its standard library does not let
+it say.
 
 **`--port`'s grammar.** C uses `strtol` with base 10 fixed, as spelled out under
 [Options](#options). C++ binds the option to an `int` and checks it with
-`CLI::Range(0, 65535)`, per the root [`CLAUDE.md`](../CLAUDE.md); hand-writing a
-validator to match C instead is the mistake
+`CLI::Range(0, 65535)` and Rust binds it to a `u16`, both per the root
+[`CLAUDE.md`](../CLAUDE.md) rule that a library check carries an option's grammar
+wherever it can; hand-writing a validator to match C instead is the mistake
 [`text_analyzer`](../text_analyzer/README.md#known-divergence-argument-parsers)
-documented. CLI11 converts with base 0 and strips group separators, so:
+documented. CLI11 converts with base 0, strips group separators, and trims surrounding
+whitespace; `u16::from_str` does none of the three:
 
-| `--port` | C | C++ |
-|---|---|---|
-| `8080`, `+8080`, `" 8080"` | 8080 | 8080 |
-| `0x1F90` | usage error | 8080 |
-| `8_080` | usage error | 8080 |
-| `02000` | 2000 | **1024** — a leading zero is octal here and decimal there |
-| `""`, `abc`, `"8080 "`, `-1`, `65536` | usage error | usage error |
+| `--port` | C | C++ | Rust |
+|---|---|---|---|
+| `8080`, `+8080` | 8080 | 8080 | 8080 |
+| `" 8080"` | 8080 | 8080 | usage error |
+| `"8080 "` | usage error | 8080 | usage error |
+| `0x1F90`, `8_080` | usage error | 8080 | usage error |
+| `02000` | 2000 | **1024** — a leading zero is octal there and decimal here | 2000 |
+| `08080` | 8080 | usage error — invalid octal | 8080 |
+| `""`, `abc`, `-1`, `65536` | usage error | usage error | usage error |
 
-The `02000` row is the one to watch: it is the only spelling both ports accept and act on
-differently, so it fails quietly rather than as an error.
+The `02000` row is the one to watch: it is the only spelling every port accepts and acts
+on differently, so it fails quietly rather than as an error. Every other row is somebody
+refusing a command line the others take.
+
+**`--host` does not diverge at all**, which is worth stating because it is the only
+option grammar that does not. All three accept exactly what `inet_pton` accepts — C and
+C++ by calling it, Rust because `Ipv4Addr`'s parser is the same grammar down to rejecting
+`010.0.0.1` for its leading zero.
 
 **Each parser's own diagnostics and exit code.** `getopt_long` reports an unknown option,
 a bad value, or a stray operand itself at exit `2`. CLI11 brings its own wording and its
 own codes — `105` for a `--port` or `--host` it rejects, `109` for an unknown option or a
-stray operand, `114` for a repeated one. `--help` exits `0` in both. That is the same call
-`simple_logger` and `matrix_ops` made, and it is not worth reconciling; `check_parity.sh`
-covers these cases by requiring only that every port rejects the same command line.
+stray operand, `114` for a repeated one. clap brings its own wording and lands on `2` as
+well, which is a coincidence and not a contract. `--help` exits `0` in all three. That is
+the same call `simple_logger`, `matrix_ops`, and `mini_shell` made, and it is not worth
+reconciling; `check_parity.sh` covers these cases by requiring only that every port
+rejects the same command line.
+
+`getopt_long` also matches unambiguous long-option prefixes, so `--onc` works in C and is
+an error in the other two.
 
 **A repeated option.** `getopt_long` hands each occurrence to the loop in turn and the
-last one wins, because each `case` just overwrites what the previous stored. CLI11's
-default multi-option policy rejects the command line instead:
+last one wins, because each `case` just overwrites what the previous stored; clap's
+default action does the same. CLI11's default multi-option policy rejects the command
+line instead, so here it is the C++ port standing alone:
 
-| command | C | C++ |
-|---|---|---|
-| `--port 9090 --port 0` | binds port 0 | exit `114`, `--port: At most 1 required but received 2` |
-| `--host 127.0.0.1 --host 9.9.9.9` | binds 9.9.9.9 | exit `114` |
-| `--file a --file b` | loads `b` | exit `114` |
-| `--once --once` | on | on — a flag is exempt from the policy |
+| command | C | C++ | Rust |
+|---|---|---|---|
+| `--port 9090 --port 0` | binds port 0 | exit `114`, `--port: At most 1 required but received 2` | binds port 0 |
+| `--host 127.0.0.1 --host 9.9.9.9` | binds 9.9.9.9 | exit `114` | binds 9.9.9.9 |
+| `--file a --file b` | loads `b` | exit `114` | loads `b` |
+| `--once --once` | on | on — a flag is exempt from the policy | on |
 
 This is the one divergence `check_parity.sh` cannot be extended to cover in its existing
 shape: `parser_error_case` asserts that *every* port rejects the command line, and here
-the C port succeeds and then serves. Catching it would mean a case that runs a server to
-completion under one port and expects a usage error from the other, which is a different
+two of them succeed and then serve. Catching it would mean a case that runs a server to
+completion under two ports and expects a usage error from the third, which is a different
 kind of case than the file has.
 
-Nothing else diverges. In particular the C++ port's single bidirectional stream — where
-C needs a `dup` and two `FILE *` — changes no observable byte, and neither does its
-`std::error_code` replacing a global `errno`. Both are in
-[`cpp/README.md`](cpp/README.md).
+**Two things Rust's standard library will not say.** `TcpListener::bind` is `socket`,
+`SO_REUSEADDR`, `bind`, and `listen` in a single call returning one `io::Error`, so the
+Rust port cannot report which of them failed and calls every one `cannot bind the
+listening socket`. That is the right label for every failure reachable without exhausting
+file descriptors — `EACCES` on a privileged port, `EADDRINUSE` when the server is already
+running — and the wrong one for an `EMFILE` out of `socket`, which no case here reaches.
+The same call fixes the backlog at std's 128 rather than the 16 the other two pass, and
+that one *is* observable: with the server busy on a connection, C and C++ complete 17
+further handshakes before a client stalls and Rust completes 129. That is exactly the
+trade `kBacklog` picks 16 for — a refusal a browser retries immediately, rather than a
+wait it does not — made the other way. There is no fixing it from here: `TcpListener::bind`
+hard-codes the 128 and this crate takes no `libc` or `socket2` dependency to call `listen`
+itself.
+
+**Out of memory.** C returns `HTTP_ERR_NOMEM` and C++ catches `std::bad_alloc`, both
+reporting `out of memory` and exiting `1`. Rust's allocator aborts before anything in the
+port could see the failure, so that one exits with a signal and no log line. The same
+call, already recorded, as [`mini_shell`](../mini_shell/README.md) and `matrix_ops`.
+
+Nothing else diverges. In particular the C++ port's single bidirectional stream and the
+Rust port's two borrows of one `TcpStream` — where C needs a `dup` and two `FILE *` —
+change no observable byte, and neither does a `std::error_code` or an `io::Error`
+replacing a global `errno`. Those are in [`cpp/README.md`](cpp/README.md) and
+[`rust/README.md`](rust/README.md).
 
 ### Exit codes
 
@@ -284,6 +352,6 @@ C needs a `dup` and two `FILE *` — changes no observable byte, and neither doe
 
 Ctrl-C is not one of these. There is no handler, so `SIGINT` terminates the process and
 the shell reports `130`; installing one buys a tidy log line in exchange for a global, an
-async-signal-safety discussion, and a Rust port that would need a `libc` dependency when
-the Rust ports here take only `clap`. The same call
+async-signal-safety discussion, and a `libc` dependency and an `unsafe` block in the Rust
+port, which takes only `clap` like every other Rust port here. The same call
 [`mini_shell`](../mini_shell/CLAUDE.md) made about `SIGINT`.

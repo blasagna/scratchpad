@@ -50,17 +50,9 @@ static void print_usage_error(void) {
   fprintf(stderr, "       tiny_http_server --help\n");
 }
 
-/*
- * Parses value as a TCP port. On success stores it in *out and returns 0. On
- * failure prints an error and returns -1.
- *
- * Base 10 is explicit, so "08080" is eight thousand and eighty rather than an
- * octal anything. strtol saturates at LONG_MAX on overflow, which the range
- * check already rejects, so there is no separate ERANGE branch to write. Ports
- * 1-1023 are accepted here and fail later at bind with EACCES for a non-root
- * user: naming what is a port is this function's job, and deciding who may have
- * one is the kernel's.
- */
+/* Parses value as a TCP port into *out; returns 0, or -1 after printing an
+ * error. Base 10 is explicit, so "08080" is not octal, and privileged ports are
+ * accepted here and fail later at bind, which is the kernel's call. */
 static int parse_port(const char *value, int *out) {
   char *endp;
   long n = strtol(value, &endp, 10);
@@ -74,13 +66,9 @@ static int parse_port(const char *value, int *out) {
   return 0;
 }
 
-/*
- * Checks that value is a dotted quad. Names are not resolved: getaddrinfo
- * would bring DNS and a blocking network lookup into the startup of a program
- * that binds exactly one socket, and would hand back a list of candidates to
- * choose between. inet_pton also turns down "127.1" and "0177.0.0.1", which
- * the older inet_aton would have accepted as 127.0.0.1.
- */
+/* Checks that value is a dotted quad. Names are not resolved: DNS is a blocking
+ * lookup returning a list of candidates, for a program that binds one socket.
+ * inet_pton also turns down "127.1" and "0177.0.0.1". */
 static int check_host(const char *value) {
   struct in_addr addr;
   if (inet_pton(AF_INET, value, &addr) == 1)
@@ -152,42 +140,25 @@ int main(int argc, char *argv[]) {
   }
 
   /* Requests arrive over the socket, never from argv, so a stray operand is a
-   * mistake worth naming rather than something to ignore. */
+   * mistake worth naming. */
   if (optind < argc) {
     fprintf(stderr, "error: unexpected argument '%s'\n", argv[optind]);
     print_usage_error();
     return 2;
   }
 
-  /*
-   * Writing to a socket whose peer has already gone raises SIGPIPE, whose
-   * default action is to terminate the process with no message at all - so
-   * without this the server vanishes the first time somebody navigates away
-   * mid-response, and the symptom is "it just disappears sometimes". Ignoring
-   * it turns the same event into an EPIPE the write path reports and the loop
-   * survives.
-   *
-   * It is here rather than in the library because it is process-global state,
-   * and the library takes streams its caller owns. It has to be a signal
-   * disposition rather than MSG_NOSIGNAL on the send, because the responses go
-   * out through a FILE * - which is what makes them testable with fmemopen, and
-   * fwrite has nowhere to put a flag. (SO_NOSIGPIPE is a BSD socket option and
-   * does not exist here.) signal rather than sigaction is enough for SIG_IGN,
-   * which has no handler and so raises no SA_RESTART question.
-   */
+  /* Without this the server vanishes with no message the first time somebody
+   * navigates away mid-response. A disposition and not MSG_NOSIGNAL, because
+   * responses go out through a FILE *, which takes no flag. See README. */
   if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
     fprintf(stderr, "%s: cannot ignore SIGPIPE: %s\n", HTTP_PROGNAME,
             strerror(errno));
     return 1;
   }
 
-  /*
-   * The page is read once, here, before the socket exists. A file that cannot
-   * be read is then a startup failure with a message, rather than a 500 that
-   * turns up later depending on which path somebody visits - and routing stays
-   * pure, with no I/O and no failure path, which is why this server has no 500
-   * at all. The cost is that the page cannot change while the server runs.
-   */
+  /* The page is read once, before the socket exists, so an unreadable file is a
+   * startup failure rather than a 500 later - and routing stays pure, which is
+   * why this server has no 500 at all. */
   if (page_path != NULL) {
     HttpResult loaded =
         server_load_page(page_path, SERVER_MAX_PAGE_BYTES, &opts.page);
@@ -199,8 +170,8 @@ int main(int argc, char *argv[]) {
 
   HttpResult result = server_run(&opts, stderr);
 
-  /* free can clobber errno - glibc's may madvise or munmap when it trims - and
-   * the report below pairs the failed stage with strerror(errno). */
+  /* free can clobber errno, and the report below pairs the failed stage with
+   * strerror(errno). */
   int saved = errno;
   if (page_path != NULL)
     free((void *)opts.page.body);

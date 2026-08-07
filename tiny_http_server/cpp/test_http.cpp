@@ -69,8 +69,8 @@ TEST(ReadRequest, AcceptsAMixedCrlfAndLfTerminator) {
 }
 
 TEST(ReadRequest, DoesNotStopAtTheEndOfTheRequestLine) {
-  // The whole point of requiring a '\n' before the terminator: the CRLF ending
-  // the request line must not look like a blank line.
+  // The point of requiring a '\n' before the terminator: the request line's own
+  // CRLF must not look like a blank line.
   std::string data = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
   std::istringstream in(data);
   std::string block;
@@ -132,10 +132,9 @@ TEST(ReadRequest, ReportsAReadError) {
 }
 
 TEST(ReadRequest, ReportsATimeoutWhenTheProbeSaysTheReadWouldBlock) {
-  // SO_RCVTIMEO surfaces as EAGAIN on the underlying recv. A streambuf has no
-  // way to say "failure, not end of input", so the probe is what carries it -
-  // and this is the one case that would otherwise be logged as an ordinary
-  // hang-up.
+  // SO_RCVTIMEO surfaces as EAGAIN on the recv, and a streambuf cannot say
+  // "failure, not end of input" - so without the probe this is logged as an
+  // ordinary hang-up.
   std::istringstream in("");
   std::string block;
   EXPECT_EQ(http_server::read_request(
@@ -169,9 +168,8 @@ TEST(ReadRequest, ReportsAClosedConnectionWhenTheProbeHasNothingToReport) {
 // --- parse_request -------------------------------------------------------
 
 TEST(ParseRequest, AcceptsAMinimalGetLine) {
-  // The block is a named local, not a temporary: a Request is all views into it
-  // and nothing is copied, so the bytes have to outlive the parse. That is the
-  // header's contract and it is easy to break by accident here.
+  // A named local, not a temporary: a Request is all views into it, so the
+  // bytes have to outlive the parse.
   std::string raw = request("GET / HTTP/1.1");
   std::optional<Request> req = http_server::parse_request(raw);
   ASSERT_TRUE(req.has_value());
@@ -192,8 +190,7 @@ TEST(ParseRequest, SplitsThePathFromTheQuery) {
 }
 
 TEST(ParseRequest, KeepsTheTargetVerbatim) {
-  // Not percent-decoded: nothing here reaches the filesystem, so there is no
-  // path to normalize and no decoding to get wrong.
+  // Nothing here reaches the filesystem, so there is no path to normalize.
   std::string raw = request("GET /a%20b/../c HTTP/1.1");
   std::optional<Request> req = http_server::parse_request(raw);
   ASSERT_TRUE(req.has_value());
@@ -285,9 +282,8 @@ TEST(ParseRequest, AcceptsAnAbsurdlyLongTargetWithinTheCap) {
 }
 
 TEST(ParseRequest, AcceptsATargetThatIsNotAnOriginPath) {
-  // Absolute-form and asterisk-form are legal targets a server must accept.
-  // Routing 404s them; rejecting them here would 400 a request from a proxy and
-  // would make the version check unreachable for an HTTP/2 preface.
+  // Legal targets a server must accept. Routing 404s them; rejecting them here
+  // would 400 a proxy's request and hide the version check from a preface.
   for (std::string_view target :
        {"http://example.com/", "*", "example.com:80"}) {
     std::string raw = request("GET " + std::string(target) + " HTTP/1.1");
@@ -463,10 +459,9 @@ TEST(ErrorResponse, OnlyMethodNotAllowedCarriesAnAllow) {
 }
 
 TEST(ErrorResponse, TheLongestPageIsTheOneWithTheLongestReason) {
-  // 431 has the longest reason phrase, so it is the largest page this can
-  // build. The C port sizes a fixed scratch buffer against it; here the string
-  // grows, and the number is still worth pinning because it is the
-  // Content-Length the contract tabulates.
+  // 431 has the longest reason phrase, so it is the largest page this builds -
+  // what the C port sizes its scratch buffer against. The numbers are pinned
+  // because they are the Content-Lengths the contract tabulates.
   std::string scratch;
   EXPECT_EQ(http_server::error_response(431, scratch).body.size(), 185u);
   EXPECT_EQ(http_server::error_response(400, scratch).body.size(), 145u);
@@ -600,8 +595,8 @@ TEST(Sanitize, HandlesAZeroLengthLimit) {
 }
 
 TEST(Sanitize, KeepsWhatFitsOfTheEllipsisWhenTheLimitIsTiny) {
-  // The ellipsis displaces the last bytes rather than pushing the line over the
-  // limit, so a limit smaller than the ellipsis is all ellipsis.
+  // The ellipsis displaces the last bytes rather than pushing the line over, so
+  // a limit smaller than it is all ellipsis.
   EXPECT_EQ(http_server::sanitize("abcdef", 2), "..");
 }
 
@@ -684,8 +679,7 @@ TEST(ServeConnection, AnswersFourThirtyOneWhenTheHeaderBlockIsTooLarge) {
   EXPECT_NE(s.log.find("request header block over 8192 bytes"),
             std::string::npos);
   // The rest of that request is still arriving, which is what tells accept_once
-  // to wait for it rather than close on top of it and turn the 431 into a
-  // connection reset.
+  // to wait rather than turn the 431 into a connection reset.
   EXPECT_TRUE(s.tx.left_unread);
 }
 
@@ -695,9 +689,8 @@ TEST(ServeConnection, LeavesNothingUnreadOnAnOrdinaryRequest) {
 }
 
 TEST(ServeConnection, LogsTheRequestLineAfterALeadingBlankLine) {
-  // RFC 7230 3.5's stray CRLF, on a request that is then malformed. Logging the
-  // raw first line would report the blank one, hiding the bytes that actually
-  // caused the 400.
+  // RFC 7230 3.5's stray CRLF, on a request that is then malformed. The raw
+  // first line would report the blank one, hiding what caused the 400.
   Served s = serve("\r\nGET /x HTTP/9\r\n\r\n", http_server::builtin_page());
   EXPECT_TRUE(s.response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
   EXPECT_NE(s.log.find("malformed request \"GET /x HTTP/9\""),

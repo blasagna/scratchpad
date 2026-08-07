@@ -14,22 +14,13 @@
 
 namespace {
 
-// Exit code for anything the server reports about itself. A usage error is 2 in
-// the C port, but here that one is CLI11's to report and carries its own code.
+// Exit code for anything the server reports about itself. A usage error is
+// CLI11's to report here, and carries its own code.
 constexpr int kExitFailure = 1;
 
-// Checks that --host is a dotted quad. Names are not resolved: getaddrinfo
-// would bring DNS and a blocking network lookup into the startup of a program
-// that binds exactly one socket, and would hand back a list of candidates to
-// choose between. inet_pton also turns down "127.1" and "0177.0.0.1", which the
-// older inet_aton would have accepted as 127.0.0.1.
-//
-// A hand-written validator is the last resort the root CLAUDE.md describes, and
-// this is what it is for: no built-in states this rule. CLI11's own ValidIPV4
-// is the tempting alternative and is not the same grammar - it splits on '.'
-// and range-checks four numbers of its own parsing - so taking it would quietly
-// move which addresses this port accepts away from the C one, which is the
-// whole mistake text_analyzer recorded.
+// Checks that --host is a dotted quad; names are not resolved. The last-resort
+// hand-written validator the root CLAUDE.md describes: CLI11's ValidIPV4 parses
+// four numbers of its own, which is a different grammar than inet_pton's.
 CLI::Validator ipv4_address() {
   return CLI::Validator(
       [](std::string &value) -> std::string {
@@ -75,8 +66,8 @@ void report(const http_server::Result &result) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-  // The name is passed explicitly because CLI11 otherwise takes argv[0], which
-  // under `bazel run` is the full runfiles path.
+  // The name is explicit because CLI11 otherwise takes argv[0], which under
+  // `bazel run` is the full runfiles path.
   CLI::App app{
       "A very small HTTP server. Binds a socket, then repeats: accept one\n"
       "connection, read the request, answer it, close, accept the next.\n"
@@ -92,10 +83,8 @@ int main(int argc, char *argv[]) {
   std::string page_path;
 
   // Bound to an int and range-checked by the library, which is the repo's rule
-  // and a deliberate divergence from the C port: CLI11 reads base 0 and strips
-  // group separators, so this accepts --port 0x1F90 and --port 8_080, and reads
-  // 010 as eight where strtol with base 10 reads it as ten. Hand-writing a
-  // validator to match C instead is the mistake text_analyzer documented.
+  // and a deliberate divergence: CLI11 reads base 0 and strips group
+  // separators, so --port 0x1F90, 8_080, and octal 010 all differ from C.
   app.add_option("-p,--port", opts.port,
                  "port to listen on, 0 to let the kernel pick")
       ->check(CLI::Range(0, 65535))
@@ -121,41 +110,24 @@ int main(int argc, char *argv[]) {
   app.get_formatter()->enable_footer_formatting(false);
 
   try {
-    // There are no operands: requests arrive over the socket, never from argv,
-    // so a stray one is a mistake worth naming. CLI11 rejects it as an extra.
+    // Requests arrive over the socket, never from argv, so a stray operand is a
+    // mistake worth naming. CLI11 rejects it as an extra.
     app.parse(argc, argv);
   } catch (const CLI::ParseError &e) {
     return app.exit(e);
   }
 
-  // Writing to a socket whose peer has already gone raises SIGPIPE, whose
-  // default action is to terminate the process with no message at all - so
-  // without this the server vanishes the first time somebody navigates away
-  // mid-response, and the symptom is "it just disappears sometimes". Ignoring
-  // it turns the same event into an EPIPE the write path reports and the loop
-  // survives.
-  //
-  // SocketStreambuf could pass MSG_NOSIGNAL to its send and need no signal
-  // disposition at all - that is the thing the C port's FILE* seam had nowhere
-  // to put the flag for. It still needs this, because the log goes to
-  // std::cerr: `tiny_http_server 2>&1 | head` would then kill the server on the
-  // closed log pipe, and a server that dies because nobody is reading its log
-  // is exactly what the best-effort log rule exists to prevent. One
-  // process-wide disposition covers both directions; two mechanisms would not
-  // cover more.
-  //
-  // It is here rather than in the library because it is process-global state,
-  // and the library takes streams its caller owns.
+  // Without this the server vanishes with no message the first time somebody
+  // navigates away mid-response. MSG_NOSIGNAL would cover the socket but not
+  // std::cerr, which `tiny_http_server 2>&1 | head` closes. See README.
   if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
     std::cerr << http_server::kProgName << ": cannot ignore SIGPIPE\n";
     return kExitFailure;
   }
 
-  // The page is read once, here, before the socket exists. A file that cannot
-  // be read is then a startup failure with a message, rather than a 500 that
-  // turns up later depending on which path somebody visits - and routing stays
-  // pure, with no I/O and no failure path, which is why this server has no 500
-  // at all. The cost is that the page cannot change while the server runs.
+  // The page is read once, before the socket exists, so an unreadable file is a
+  // startup failure rather than a 500 later - and routing stays pure, which is
+  // why this server has no 500 at all.
   std::string page;
   if (!page_path.empty()) {
     http_server::Result loaded;
@@ -176,8 +148,8 @@ int main(int argc, char *argv[]) {
   try {
     result = http_server::run(opts, std::cerr);
   } catch (const std::bad_alloc &) {
-    // The C port gets this as a failed allocation and returns HTTP_ERR_NOMEM;
-    // here it arrives as an exception, and is reported the same way.
+    // The C port gets a failed allocation; here it is an exception, reported
+    // the same way.
     result = {http_server::Stage::kNoMem, {}};
   }
 
