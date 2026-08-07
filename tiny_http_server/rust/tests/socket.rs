@@ -1,11 +1,6 @@
-//! The socket layer and the `--file` loader, against the real thing.
-//!
-//! There is no seam here and that is deliberate: `connect()` completes in the
-//! kernel via the accept queue whether or not `accept` has been called, so every
-//! test below drives a real socket with **no thread, no fork, and no sleep**.
-//! Take a seam where the real thing is untestable, not merely where it is
-//! impure - a fake socket layer would only have tested the fake. The C and C++
-//! ports make the same call in their `RealSocket` suites.
+//! The socket layer and the `--file` loader, against the real thing. No seam:
+//! `connect()` completes in the kernel via the accept queue whether or not
+//! `accept` has been called, so this needs no thread, no fork, and no sleep.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -21,7 +16,7 @@ use tiny_http_server::{
 };
 
 /// A unique path under the target directory. No `tempfile` crate: the ports here
-/// take only `clap`, and `simple_logger/rust` already does it this way.
+/// take only `clap`.
 fn scratch(tag: &str) -> PathBuf {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -99,8 +94,7 @@ fn reports_a_missing_page_file_with_the_error_intact() {
 #[test]
 fn refuses_a_directory_rather_than_failing_inside_the_read() {
     // Opening a directory succeeds on Linux; only the read fails, with EISDIR,
-    // which would be reported as "cannot read the page file" for what is really
-    // "that is a directory".
+    // which would be reported as "cannot read the page file".
     let err = load_page(Path::new(env!("CARGO_TARGET_TMPDIR")), MAX_PAGE_BYTES).expect_err("fails");
     assert!(matches!(err, PageError::NotRegular));
 }
@@ -109,8 +103,7 @@ fn refuses_a_directory_rather_than_failing_inside_the_read() {
 fn refuses_a_page_over_the_cap_rather_than_truncating_it() {
     let path = scratch("big");
     fs::write(&path, vec![b'x'; 64]).expect("writes");
-    // Exactly the cap is fine; one byte over is not - half a page served as a
-    // whole one is worse than a refusal that says why.
+    // Exactly the cap is fine; one byte over is not.
     assert!(load_page(&path, 64).is_ok());
     assert!(matches!(
         load_page(&path, 63).expect_err("fails"),
@@ -131,8 +124,7 @@ fn port_zero_reports_the_port_it_really_bound() {
 #[test]
 fn refuses_a_second_listener_on_the_same_port() {
     // SO_REUSEADDR is not SO_REUSEPORT, and std sets only the first. Swapping
-    // one for the other would let two servers share port 8080 and split
-    // connections between them at random; this is what says so.
+    // one for the other would let two servers share a port; this says so.
     let (_listener, addr) = bound_listener();
     let opts = Options {
         port: addr.port(),
@@ -179,10 +171,9 @@ fn serves_the_file_page_when_one_is_given() {
 
 #[test]
 fn delivers_the_405_past_a_request_body_it_never_read() {
-    // Linux sends an RST rather than a FIN when a socket is closed with unread
-    // inbound data, and a peer may discard data it already received when it gets
-    // one - so without the shutdown and the drain, `curl -d x` reports a
-    // connection reset instead of showing the 405 that really was sent.
+    // Linux sends an RST when a socket closes with unread inbound data, and a
+    // peer may discard what it already received - so without the shutdown and
+    // the drain, `curl -d x` sees a reset instead of the 405.
     let (listener, addr) = bound_listener();
     let client = client_sending(addr, b"POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello");
 
@@ -215,8 +206,7 @@ fn answers_an_oversized_header_block_with_a_431() {
 #[test]
 fn a_silent_client_times_out_and_does_not_count_as_answered() {
     // A browser's speculative preconnect: connected, then nothing. --once must
-    // not stop on it, or it exits having served nothing while the request the
-    // user actually made gets refused.
+    // not stop on it, or it exits having served nothing.
     let (listener, addr) = bound_listener();
     let _client = TcpStream::connect(addr).expect("connects");
 
@@ -225,8 +215,8 @@ fn a_silent_client_times_out_and_does_not_count_as_answered() {
     assert_eq!(outcome, Outcome::Unanswered);
 
     let log = String::from_utf8(log).expect("ascii");
-    // The timeout, and not an ordinary hang-up: the difference the whole
-    // SO_RCVTIMEO design exists for, and the one a std::streambuf cannot see.
+    // The timeout, and not an ordinary hang-up: the difference SO_RCVTIMEO
+    // exists for, and the one a std::streambuf cannot see.
     assert!(log.contains("tiny_http_server: client sent nothing before the read timeout\n"));
     assert!(log.ends_with("tiny_http_server: connection closed\n"));
 }

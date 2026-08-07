@@ -1,48 +1,7 @@
 #!/usr/bin/env bash
-#
-# Build the C, C++, and Rust tiny_http_server ports, drive each with the same
-# requests over a real socket, and check they agree byte for byte.
-#
-# Nothing here is mocked: each case starts a real server on an ephemeral port,
-# opens a real TCP connection to it, and compares the bytes that came back. The
-# response is the contract, so it is compared unnormalized.
-#
-#   ./tiny_http_server/check_parity.sh          # build, run every case, report
-#   ./tiny_http_server/check_parity.sh --keep   # keep the work dir for inspection
-#
-# The C port is the reference; every other port is diffed against it. What is
-# compared depends on who reports the outcome:
-#
-#   serve_case         — the response bytes, the log, and the exit status. The
-#                        default, and where the contract lives. The log IS
-#                        compared, because the event lines are part of the
-#                        contract and every port writes the same bytes - after
-#                        one normalization, below.
-#   startup_case       — the log and the exit status, for a server that never
-#                        gets as far as listening (an unreadable --file).
-#   parser_error_case  — stdout only, plus "every port must fail". These are the
-#                        failures the argument parser reports, and the ports do
-#                        not share one: C uses getopt_long and exits 2, C++ uses
-#                        CLI11 and brings its own wording and its own code, Rust
-#                        uses clap, which happens to land on 2 as well - a
-#                        coincidence rather than a contract. What still has to
-#                        hold is that the same command line is rejected by all of
-#                        them. See the divergence table in README.md.
-#   help_case          — exit status only, for --help, whose text the C port
-#                        hand-writes and the C++ and Rust ports get from CLI11
-#                        and clap.
-#
-# The one normalization: every port binds --port 0 so a case never collides with
-# a server left running in another terminal, and the kernel's choice then shows
-# up in "listening on 127.0.0.1:<port>" and the client's source port shows up in
-# "connection from 127.0.0.1:<port>". Both are replaced with :PORT before the
-# diff. Nothing else is touched.
-#
-# Two cases do not fit the "the ports agree" mold and are checked absolutely
-# instead, by check_drain and check_ephemeral_port below. Every port could
-# regress together and every comparison here would still pass.
-#
-# Builds are unoptimized: there are no timings here.
+# Build all three tiny_http_server ports, drive each over a real socket, and
+# check they agree byte for byte. --keep keeps the work dir. What each case kind
+# compares, and why two checks are absolute, is in README.md.
 
 set -euo pipefail
 
@@ -96,14 +55,9 @@ check_binaries() {
   return "${missing}"
 }
 
-# The client. Raw bytes in, raw bytes out, with no HTTP library between the
-# request and the socket - curl would normalize a malformed request line before
-# it ever reached the server, which is most of what is being tested here.
-#
-# It shuts down its write side after sending so the server's drain sees end of
-# input rather than waiting out the receive timeout. A real client closing after
-# its request does the same thing; without it the oversized-header case takes
-# five seconds in every port.
+# The client. Raw bytes in, raw bytes out, and no curl, which would normalize a
+# malformed request line before it reached the server. It half-closes after
+# sending, so the drain sees EOF rather than the timeout.
 make_client() {
   cat >"${WORK}/client.py" <<'PY'
 import socket, sys
@@ -127,9 +81,8 @@ PY
 }
 
 # Reads the port out of a server's log once it has bound, or fails after a few
-# seconds. --port 0 is what makes this necessary and is worth the trouble: a
-# fixed port collides with the server somebody left running, which is precisely
-# when they are running this script.
+# seconds. --port 0 makes this necessary and is worth the trouble: a fixed port
+# collides with the server somebody left running.
 wait_for_port() {
   local log="$1" i port
   for ((i = 0; i < 200; i++)); do
@@ -150,16 +103,9 @@ record_case() {
   CASE_MUST_FAIL["$1"]="${MUST_FAIL}"
 }
 
-# serve_case <name> <request-file> [server args...]
-#
-# Starts each port with --port 0 --once, sends the request bytes, and keeps the
-# response, the log, and the exit status.
-#
-# Every case here must be one the server answers, because --once stops after an
-# answered request: a case the server does not answer would leave it running
-# until this script's timeout. The cases that are deliberately unanswered - a
-# client that sends nothing, one that hangs up mid-header - are covered by the
-# unit suites instead.
+# serve_case <name> <request-file> [server args...] - starts each port with
+# --port 0 --once and keeps the response, the log, and the exit status. Every
+# case must be one the server answers; see README.md.
 serve_case() {
   local name="$1" request="${WORK}/requests/$2"
   shift 2
@@ -190,10 +136,9 @@ serve_case() {
   done < <(binaries)
 }
 
-# startup_case <name> [server args...]
-#
-# For a server that fails before it can listen, so there is no client and no
-# response - only what it said and what it exited with.
+# startup_case <name> [server args...] - for a server that fails before it can
+# listen, so there is no client and no response, only what it said and exited
+# with.
 startup_case() {
   local name="$1"
   shift
@@ -211,12 +156,9 @@ startup_case() {
   done < <(binaries)
 }
 
-# parser_error_case <name> [server args...]
-#
-# For a command line the argument parser rejects. getopt_long reports it in the
-# C port, CLI11 in the C++ one, and clap in the Rust one, so the message and the
-# exit code are each parser's own; what is asserted is that stdout agrees (empty
-# in all three) and that every port rejected it.
+# parser_error_case <name> [server args...] - for a command line the parser
+# rejects. The message and the exit code are each parser's own, so what is
+# asserted is that stdout agrees and that every port rejected it.
 parser_error_case() {
   local name="$1"
   shift
@@ -236,10 +178,8 @@ parser_error_case() {
   done < <(binaries)
 }
 
-# help_case <name> [server args...]
-#
-# Only the exit status is compared: the help text is the C port's own, CLI11's,
-# and clap's respectively.
+# help_case <name> [server args...] - only the exit status is compared, since
+# the help text is each parser's own.
 help_case() {
   local name="$1"
   shift
@@ -306,13 +246,9 @@ compare() {
   done
 }
 
-# The first absolute assertion, because agreement cannot express it.
-#
-# A request body is deliberately never read, and Linux sends an RST rather than a
-# FIN when a socket is closed with unread inbound data - so a bare close makes the
-# peer throw away the 405 it already received. Every port could lose its shutdown
-# and drain together, and every diff above would still be clean, because both
-# would return nothing.
+# The first absolute assertion, because agreement cannot express it: every port
+# could lose its shutdown and drain together and every diff above would still be
+# clean, since all of them would return nothing.
 check_drain() {
   local port bin body
   while IFS='|' read -r port bin; do
@@ -329,8 +265,7 @@ check_drain() {
 }
 
 # The second one. --port 0 has to report the port the kernel really chose, and
-# the normalization above would happily hide a port that stayed 0 in every port
-# at once.
+# the normalization above would hide a port that stayed 0 everywhere at once.
 check_ephemeral_port() {
   local port bin chosen
   while IFS='|' read -r port bin; do
@@ -453,11 +388,8 @@ main() {
   parser_error_case host_name     --host localhost
   parser_error_case unknown_opt   --nope
   parser_error_case stray_operand extra
-  # --port 0x1F90 and --port 8_080 are NOT here: CLI11 reads base 0 and strips
-  # group separators, so the C++ port accepts spellings the C and Rust ones
-  # reject. Neither is " 8080", which C's strtol and CLI11 both take and Rust's
-  # u16::from_str does not. Those are the documented divergences, not something
-  # to assert jointly.
+  # --port 0x1F90, 8_080, and " 8080" are NOT here: they are the documented
+  # parser divergences, not something to assert jointly.
 
   normalize_logs
   compare

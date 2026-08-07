@@ -21,7 +21,7 @@ template<typename F> static std::string captured(F body) {
   char buf[8192];
   FILE *out = fmemopen(buf, sizeof(buf), "w");
   /* Returning early rather than running body against a NULL stream: EXPECT_ is
-   * non-fatal, so the alternative is a segfault in place of a test failure. */
+   * non-fatal, so the alternative is a segfault in place of a failure. */
   EXPECT_NE(out, nullptr);
   if (out == nullptr)
     return "";
@@ -102,9 +102,9 @@ TEST(LoadPage, ReportsAMissingFileWithErrnoIntact) {
 }
 
 TEST(LoadPage, RefusesADirectory) {
-  /* fopen on a directory succeeds on Linux and only fails inside fread, with
-   * EISDIR, which would be reported as a read error. The fstat is what turns
-   * that into a message that says what is actually wrong. */
+  /* fopen on a directory succeeds and only fails inside fread with EISDIR,
+   * which reads as a read error. The fstat is what says what is really wrong.
+   */
   const char *dir = getenv("TEST_TMPDIR");
   HttpPage page = {nullptr, 0};
   EXPECT_EQ(server_load_page(dir ? dir : ".", SERVER_MAX_PAGE_BYTES, &page),
@@ -132,11 +132,9 @@ TEST(LoadPage, AcceptsAFileExactlyAtTheCap) {
 /* --- server_listen / server_accept_once (the only tests that touch a socket)
  */
 
-/*
- * The test binary does not run our main, so the SIGPIPE that main ignores is
- * still fatal here. Any test that writes to a socket the peer may have closed
- * needs this itself.
- */
+/* The test binary does not run our main, so the SIGPIPE it ignores is still
+ * fatal here. Any test that writes to a socket the peer may have closed needs
+ * this itself. */
 static void ignore_sigpipe() { ASSERT_NE(signal(SIGPIPE, SIG_IGN), SIG_ERR); }
 
 /* Connects to a listener on loopback and returns the client's descriptor. */
@@ -148,13 +146,9 @@ static int connect_to(const ServerListener &l) {
   addr.sin_family = AF_INET;
   addr.sin_port = htons(static_cast<uint16_t>(l.port));
   EXPECT_EQ(inet_pton(AF_INET, l.host, &addr.sin_addr), 1);
-  /*
-   * This completes without the server ever calling accept: the kernel finishes
-   * the handshake and parks the connection on the listen queue. That single
-   * fact is why these tests need no thread, no fork, and no sleep - and why
-   * this package has no fake socket layer, which would only have tested the
-   * fake.
-   */
+  /* This completes without the server ever calling accept: the kernel parks the
+   * connection on the listen queue. That is why these tests need no thread, no
+   * fork, and no sleep - and why there is no fake socket layer. */
   EXPECT_EQ(
       connect(fd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)), 0);
   return fd;
@@ -177,9 +171,8 @@ TEST(RealSocket, BindsAnEphemeralPortAndServesOneRequest) {
   ignore_sigpipe();
 
   ServerOptions opts = server_options_default();
-  /* Port 0 asks the kernel for a free one, so this never collides with a
-   * server left running in another terminal - which is exactly when someone is
-   * most likely to be running the tests. */
+  /* Port 0 asks the kernel for a free one, so this never collides with a server
+   * left running in another terminal. */
   opts.port = 0;
   opts.io_timeout_seconds = 2;
 
@@ -221,8 +214,7 @@ TEST(RealSocket, BindsAnEphemeralPortAndServesOneRequest) {
 
 TEST(RealSocket, ServesARequestWithAnUnreadBody) {
   /* What `curl -d x` does. The body is never read, and the shutdown plus drain
-   * before the close is what keeps the client from seeing a connection reset
-   * in place of the response. */
+   * is what keeps the client from seeing a reset in place of the response. */
   ignore_sigpipe();
 
   ServerOptions opts = server_options_default();
@@ -249,13 +241,9 @@ TEST(RealSocket, ServesARequestWithAnUnreadBody) {
 }
 
 TEST(RealSocket, RefusesASecondListenerOnTheSamePort) {
-  /*
-   * This is what pins SO_REUSEADDR as not being SO_REUSEPORT. The first lets a
-   * restart bind over the TIME_WAIT remnants of connections just served; the
-   * second would allow two live servers on one port and split traffic between
-   * them at random. Without this test, swapping one for the other passes
-   * everything else here.
-   */
+  /* This pins SO_REUSEADDR as not being SO_REUSEPORT, which would allow two
+   * live servers on one port and split traffic between them at random. Without
+   * it, swapping one for the other passes everything else here. */
   ServerOptions first = server_options_default();
   first.port = 0;
   ServerListener a;
@@ -281,13 +269,9 @@ TEST(RealSocket, ReportsABadHostRatherThanBinding) {
 }
 
 TEST(RealSocket, DropsAClientThatSendsNothing) {
-  /*
-   * A browser's speculative connection: connected, then silent. On a server
-   * that handles one connection at a time this is a wedge, and the receive
-   * timeout is the only thing that stops it being one. Costs a second of wall
-   * clock, which is the price of the one test that can cover the timeout at
-   * all.
-   */
+  /* A browser's speculative connection: connected, then silent. On a
+   * one-at-a-time server that is a wedge, and the receive timeout is the only
+   * thing that stops it. Costs a second of wall clock. */
   ignore_sigpipe();
 
   ServerOptions opts = server_options_default();
@@ -334,11 +318,6 @@ TEST(RealSocket, AnswersAnUnknownPathOverARealConnection) {
   server_close(&l);
 }
 
-/*
- * server_run itself has no test here, and cannot have one in this shape: a
- * client has to be connected before the loop accepts it, and server_run does
- * its own binding, so nothing single-threaded can be waiting on the queue by
- * the time it starts. Its two decisions - --once stopping after one connection,
- * and a fatal bind failure - are covered end to end from the shell instead;
- * see the verification list in c/README.md.
- */
+/* server_run has no test here and cannot: a client must be connected before the
+ * loop accepts it, and server_run does its own binding. Its two decisions are
+ * checked from the shell; see the verification list in c/README.md. */

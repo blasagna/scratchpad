@@ -1,13 +1,6 @@
-//! A very small HTTP server: bind a socket, then accept one connection at a
-//! time, read the request header block, answer `GET` and `HEAD` of `/` with a
-//! hello world page, and log every event to stderr.
-//!
-//! The C port is the reference dialect and `../README.md` is the contract every
-//! port is measured against; `../check_parity.sh` diffs the response bytes, the
-//! log, and the exit status of all three. `http` is the protocol and is either
-//! pure or generic over `Read`/`Write`, so the whole request-to-response
-//! transaction is exercised with `&[u8]` and `Vec<u8>` and no socket anywhere;
-//! `server` is the socket layer and the `--file` loader.
+//! A very small HTTP server: bind a socket, then answer one connection at a
+//! time with a hello world page, logging every event to stderr. `../README.md`
+//! is the contract; `http` is the protocol and `server` is the socket layer.
 
 mod http;
 mod server;

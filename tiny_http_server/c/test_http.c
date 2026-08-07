@@ -19,15 +19,14 @@ template<typename F> static std::string captured(F body) {
   char buf[16384];
   FILE *out = fmemopen(buf, sizeof(buf), "w");
   /* Returning early rather than running body against a NULL stream: EXPECT_ is
-   * non-fatal, so the alternative is a segfault in place of a test failure. */
+   * non-fatal, so the alternative is a segfault in place of a failure. */
   EXPECT_NE(out, nullptr);
   if (out == nullptr)
     return "";
   body(out);
   long written = ftell(out);
   EXPECT_EQ(fclose(out), 0);
-  /* A full buffer means fmemopen silently dropped the overflow, so the
-   * comparison downstream would be against truncated text. Fail here instead,
+  /* A full buffer means fmemopen silently dropped the overflow, so fail here,
    * where the message says why. */
   EXPECT_LT(static_cast<size_t>(written < 0 ? 0 : written), sizeof(buf))
       << "captured() buffer is too small; the output was truncated";
@@ -49,8 +48,8 @@ static HttpResponse routed(const std::string &raw, const HttpPage &page,
   HttpResult parsed = http_parse_request(raw.data(), raw.size(), &req);
   EXPECT_EQ(parsed, HTTP_OK) << "expected '" << raw << "' to parse";
   if (parsed != HTTP_OK) {
-    /* A 500 is not a status this server can send, so it cannot be confused
-     * with a real answer if an assertion above was non-fatal. */
+    /* A 500 is not a status this server can send, so it cannot be confused with
+     * a real answer if the assertion above was non-fatal. */
     HttpResponse none = {500, "", nullptr, 0, nullptr};
     return none;
   }
@@ -101,8 +100,8 @@ TEST(ReadRequest, AcceptsAMixedCrlfAndLfTerminator) {
 }
 
 TEST(ReadRequest, DoesNotStopAtTheEndOfTheRequestLine) {
-  /* The whole point of requiring a '\n' before the terminator: the CRLF
-   * ending the request line must not look like a blank line. */
+  /* The point of requiring a '\n' before the terminator: the request line's own
+   * CRLF must not look like a blank line. */
   std::string data = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
   FILE *in = make_input(data);
   char buf[HTTP_REQUEST_MAX];
@@ -201,8 +200,7 @@ TEST(ParseRequest, SplitsThePathFromTheQuery) {
 }
 
 TEST(ParseRequest, KeepsTheTargetVerbatim) {
-  /* Not percent-decoded: nothing here reaches the filesystem, so there is no
-   * path to normalize and no decoding to get wrong. */
+  /* Nothing here reaches the filesystem, so there is no path to normalize. */
   std::string raw = request("GET /a%20b/../c HTTP/1.1");
   HttpRequest req;
   ASSERT_EQ(http_parse_request(raw.data(), raw.size(), &req), HTTP_OK);

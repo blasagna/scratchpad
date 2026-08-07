@@ -4,14 +4,9 @@
 #include <errno.h>
 #include <string.h>
 
-/*
- * The page served when there is no --file. Compiled in rather than read from a
- * data dependency: a file would have to be found relative to something, and
- * `bazel run` executes from the runfiles directory rather than your shell's
- * cwd, so the default page would resolve differently depending on how the
- * program was started. An array, not a pointer, so sizeof gives the length and
- * the two cannot drift apart.
- */
+/* The page served when there is no --file. Compiled in, not a data dependency:
+ * `bazel run` executes from the runfiles dir, so a relative path would resolve
+ * differently per invocation. An array, so sizeof gives the length. */
 static const char kIndexHtml[] =
     "<!DOCTYPE html>\n"
     "<html lang=\"en\">\n"
@@ -19,11 +14,8 @@ static const char kIndexHtml[] =
     "<body><h1>Hello, world!</h1><p>Served by tiny_http_server.</p></body>\n"
     "</html>\n";
 
-/*
- * The body of every error response. One template rather than five literals:
- * adding a status is then a row in http_status_reason and nothing else, where
- * five near-identical pages are five places to forget.
- */
+/* The body of every error response. One template, so adding a status is a row
+ * in http_status_reason and nothing else. */
 static const char kErrorPageFmt[] =
     "<!DOCTYPE html>\n"
     "<html lang=\"en\">\n"
@@ -79,9 +71,8 @@ const char *http_result_str(HttpResult r) {
 }
 
 const char *http_status_reason(int status) {
-  /* No default here and none needed: the switch is over an int rather than an
-   * enum, so -Wswitch has nothing to check, and every caller reaches this with
-   * a literal from the handful below. */
+  /* A switch over an int, so -Wswitch has nothing to check and the default is
+   * what catches a status nobody sends. */
   switch (status) {
   case 200:
     return "OK";
@@ -118,9 +109,8 @@ size_t http_sanitize(char *dst, size_t dst_size, const char *src,
   size_t keep = src_len;
   size_t dots = 0;
   if (keep > room) {
-    /* The ellipsis lives inside room rather than past it, so it displaces the
-     * last few bytes instead of overrunning the buffer. A destination too
-     * small even for the ellipsis keeps whatever fits of it. */
+    /* The ellipsis lives inside room, displacing the last bytes rather than
+     * overrunning; too small even for it keeps whatever fits. */
     dots = room < ellipsis_len ? room : ellipsis_len;
     keep = room - dots;
   }
@@ -128,10 +118,8 @@ size_t http_sanitize(char *dst, size_t dst_size, const char *src,
   size_t written = 0;
   for (size_t i = 0; i < keep; i++) {
     unsigned char c = (unsigned char)src[i];
-    /* Printable ASCII passes; everything else - control bytes, NULs, and every
-     * byte with the high bit set - becomes '?'. Dropping the ESC is what
-     * defuses an escape sequence: the '[' and the digits after it are ordinary
-     * characters once nothing introduces them. */
+    /* Printable ASCII passes, everything else becomes '?'. Dropping the ESC is
+     * what defuses a sequence; what follows it is ordinary text. */
     dst[written++] = (c >= 0x20 && c < 0x7f) ? (char)c : '?';
   }
   for (size_t i = 0; i < dots; i++)
@@ -145,8 +133,8 @@ HttpResponse http_error_response(int status, char *scratch,
   HttpResponse resp;
   resp.status = status;
   resp.reason = http_status_reason(status);
-  /* Required by the RFC on a 405, and the only thing that tells somebody who
-   * sent a PUT what would have worked. */
+  /* Required by the RFC on a 405, and what tells a PUT what would have worked.
+   */
   resp.allow = status == 405 ? kAllowedMethods : NULL;
   resp.body = scratch;
   resp.body_len = 0;
@@ -158,11 +146,9 @@ HttpResponse http_error_response(int status, char *scratch,
 
   int n = snprintf(scratch, scratch_size, kErrorPageFmt, status, resp.reason,
                    status, resp.reason);
-  /* snprintf returns what it would have written. Neither branch below is
-   * reachable with HTTP_ERROR_PAGE_MAX and the reason phrases above - the
-   * longest page is 185 bytes - but serving a short body beats a failure path
-   * that http_route would then have to carry, which is what makes routing
-   * infallible and therefore pure. */
+  /* Neither branch is reachable at HTTP_ERROR_PAGE_MAX, but a short body beats
+   * a failure path http_route would have to carry - that is what keeps routing
+   * infallible. */
   if (n < 0)
     resp.body_len = 0;
   else if ((size_t)n >= scratch_size)
@@ -181,16 +167,9 @@ static size_t line_prefix_len(const char *buf, size_t len) {
   return n;
 }
 
-/*
- * Steps past one leading empty line, which RFC 7230 3.5 recommends tolerating:
- * a client that ends its previous request with a stray CRLF is common enough
- * that refusing it costs more than allowing it. Exactly one, so a request made
- * entirely of blank lines is still malformed.
- *
- * Shared by the parser and the log rather than written twice, because the two
- * disagreeing means the log describes a different line than the one that was
- * rejected.
- */
+/* Steps past one leading empty line, per RFC 7230 3.5. Exactly one, so a block
+ * of blank lines stays malformed. Shared by the parser and the log, so the log
+ * cannot describe a different line than the one that was rejected. */
 static void skip_one_blank_line(const char **buf, size_t *len) {
   const char *p = *buf;
   if (*len >= 2 && p[0] == '\r' && p[1] == '\n') {
@@ -216,8 +195,8 @@ HttpResult http_parse_request(const char *buf, size_t len, HttpRequest *out) {
   skip_one_blank_line(&p, &remaining);
 
   const char *nl = memchr(p, '\n', remaining);
-  /* No terminator means the request line never ended. It cannot be parsed as
-   * if it had: a target cut off midway is a different target. */
+  /* No terminator means the request line never ended, and a target cut off
+   * midway is a different target. */
   if (nl == NULL)
     return HTTP_ERR_MALFORMED;
 
@@ -225,16 +204,13 @@ HttpResult http_parse_request(const char *buf, size_t len, HttpRequest *out) {
   if (line_len > 0 && p[line_len - 1] == '\r')
     line_len--;
 
-  /* A NUL in the request line is refused rather than treated as a terminator.
-   * Everything downstream reads the line as text, so the alternative is
-   * letting "GET / HTTP/1.1\0junk" pass as an ordinary request - the same trap,
-   * and the same answer, as a NUL in a mini_shell command line. */
+  /* A NUL is refused, not treated as a terminator: everything downstream reads
+   * the line as text, so "GET / HTTP/1.1\0junk" would otherwise pass. */
   if (memchr(p, '\0', line_len) != NULL)
     return HTTP_ERR_MALFORMED;
 
-  /* Exactly three space-separated fields. Two is HTTP/0.9, which this server
-   * does not speak; four means a target containing a space, which a client is
-   * required to percent-encode. */
+  /* Exactly three space-separated fields: two is HTTP/0.9, four means a space
+   * in the target, which a client must percent-encode. */
   const char *first = memchr(p, ' ', line_len);
   if (first == NULL)
     return HTTP_ERR_MALFORMED;
@@ -254,9 +230,8 @@ HttpResult http_parse_request(const char *buf, size_t len, HttpRequest *out) {
   if (method_len == 0 || target_len == 0)
     return HTTP_ERR_MALFORMED;
 
-  /* A version token that is not even shaped like one is malformed rather than
-   * unsupported: "HTTP/1" and "http/1.1" do not say which version they meant,
-   * so there is nothing for routing to judge. */
+  /* Malformed rather than unsupported: "HTTP/1" and "http/1.1" do not say
+   * which version they meant, so there is nothing for routing to judge. */
   if (!version_shape_ok(version, version_len))
     return HTTP_ERR_MALFORMED;
 
@@ -266,15 +241,12 @@ HttpResult http_parse_request(const char *buf, size_t len, HttpRequest *out) {
     out->method = HTTP_METHOD_HEAD;
   else
     /* Well-formed but not one we serve. Methods are case-sensitive, so "get"
-     * lands here too and becomes a 405 rather than being helpfully corrected
-     * into something the client did not send. */
+     * lands here and becomes a 405 rather than being corrected. */
     out->method = HTTP_METHOD_OTHER;
 
-  /* The target is taken verbatim - not percent-decoded, not normalized. There
-   * is nothing to decode it for: no request byte ever reaches the filesystem,
-   * because the page was read at startup and is served at a fixed path. Every
-   * form a target can take (origin, absolute, authority, asterisk) is accepted
-   * here and sorted out by routing, which 404s the ones it does not know. */
+  /* Verbatim: no request byte reaches the filesystem, so there is nothing to
+   * decode for. Every target form is accepted here and sorted out by routing.
+   */
   out->target = rest;
   out->target_len = target_len;
 
@@ -302,11 +274,9 @@ static int path_is_served(const HttpRequest *req) {
 
 HttpResponse http_route(const HttpRequest *req, const HttpPage *page,
                         char *scratch, size_t scratch_size) {
-  /* Version before method, and that order is the contract. A method belongs to
-   * a protocol, so a version we do not speak leaves nothing to judge the method
-   * against - which is what makes an HTTP/2 preface ("PRI * HTTP/2.0") a 505
-   * and not a 405. The minor version is deliberately not looked at: HTTP/1.9
-   * is a version 1 client and is served. */
+  /* Version before method, and that order is the contract: an HTTP/2 preface
+   * ("PRI * HTTP/2.0") is a 505 and not a 405. The minor version is not looked
+   * at, so HTTP/1.9 is a version 1 client and is served. */
   if (req->major != 1)
     return http_error_response(505, scratch, scratch_size);
   if (req->method != HTTP_METHOD_GET && req->method != HTTP_METHOD_HEAD)
@@ -314,9 +284,8 @@ HttpResponse http_route(const HttpRequest *req, const HttpPage *page,
   if (!path_is_served(req))
     return http_error_response(404, scratch, scratch_size);
 
-  /* A HEAD is routed exactly like a GET, body included. Withholding the body
-   * is http_write_response's job, because the Content-Length a HEAD reports
-   * has to be the one the GET would have sent. */
+  /* A HEAD is routed exactly like a GET, body included: withholding it is
+   * http_write_response's job, since the length must be the GET's. */
   HttpResponse resp;
   resp.status = 200;
   resp.reason = http_status_reason(200);
@@ -333,16 +302,15 @@ HttpResult http_read_request(FILE *in, char *buf, size_t cap, size_t *out_len) {
   for (;;) {
     int c = fgetc(in);
     if (c == EOF) {
-      /* Snapshotted before anything else runs, ferror included: any function is
-       * allowed to set errno on a call that succeeded, and the timeout and the
-       * read failure below are told apart by this value alone - they produce
-       * different log lines. */
+      /* Snapshotted before anything else runs, ferror included: a successful
+       * call may set errno, and the timeout and the read failure below are
+       * told apart by this value alone. */
       int err = errno;
       *out_len = n;
       if (!ferror(in))
         /* End of input. At the first byte this is a browser's speculative
-         * connection, which is entirely ordinary and gets its own result so
-         * the log can stay calm about it. */
+         * connection, which is ordinary and gets its own result so the log can
+         * stay calm about it. */
         return HTTP_ERR_CLOSED;
       /* SO_RCVTIMEO surfaces as EAGAIN on the underlying read, which stdio
        * reports as an error rather than as end of input. */
@@ -357,9 +325,8 @@ HttpResult http_read_request(FILE *in, char *buf, size_t cap, size_t *out_len) {
     }
     buf[n++] = (char)c;
 
-    /* The blank line that ends the header block, in every spelling a client
-     * might use for it. Testing for a '\n' before the terminator is what keeps
-     * this from firing on the CRLF that ends the request line itself. */
+    /* The blank line that ends the header block, in every spelling. Requiring a
+     * '\n' before it keeps this off the request line's own CRLF. */
     if (n >= 2 && buf[n - 1] == '\n' && buf[n - 2] == '\n')
       break;
     if (n >= 3 && buf[n - 1] == '\n' && buf[n - 2] == '\r' &&
@@ -367,9 +334,8 @@ HttpResult http_read_request(FILE *in, char *buf, size_t cap, size_t *out_len) {
       break;
   }
 
-  /* Whatever follows stays on the stream unread. It is a request body, which
-   * this server never looks at, and leaving it there is why the connection is
-   * closed with a shutdown and a drain rather than a bare close. */
+  /* Whatever follows stays unread. It is a request body, and leaving it there
+   * is why the close is a shutdown plus a drain rather than a bare close. */
   *out_len = n;
   return HTTP_OK;
 }
@@ -403,9 +369,8 @@ HttpResult http_write_response(FILE *out, const HttpResponse *resp,
   if (!suppress_body && !put_bytes(out, resp->body, resp->body_len))
     return HTTP_ERR_WRITE;
 
-  /* Flushed here rather than left to the caller: the response has to be on the
-   * socket before the connection is shut down, and a buffered stream reports a
-   * failed write at the flush rather than at the fprintf that caused it. */
+  /* Flushed here: the response must be on the socket before the shutdown, and
+   * a buffered stream reports a failed write at the flush. */
   if (fflush(out) != 0 || ferror(out))
     return HTTP_ERR_WRITE;
   return HTTP_OK;
@@ -422,9 +387,8 @@ HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
     *left_unread = 0;
 
   HttpResult read_result = http_read_request(in, buf, sizeof buf, &len);
-  /* Every read failure but one leaves nobody to answer: the client is gone, or
-   * never spoke. HTTP_ERR_TOO_LARGE is the exception - that client is still
-   * there and is owed a 431. */
+  /* Every read failure but one leaves nobody to answer. HTTP_ERR_TOO_LARGE is
+   * the exception: that client is still there and is owed a 431. */
   if (read_result != HTTP_OK && read_result != HTTP_ERR_TOO_LARGE) {
     fprintf(log, "%s: %s\n", HTTP_PROGNAME, http_result_str(read_result));
     return read_result;
@@ -444,12 +408,9 @@ HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
     HttpRequest req;
     HttpResult parsed = http_parse_request(buf, len, &req);
     if (parsed != HTTP_OK) {
-      /* Sanitized before it is written, and quoted so an empty request line is
-       * visible as one. These are a stranger's bytes on somebody's terminal.
-       * Located the way the parser locates it, one leading empty line and all:
-       * taking the raw first line logs `malformed request ""` for a request
-       * that opened with a stray CRLF - hiding the bytes that caused the 400,
-       * in exactly the case the skip was added for. */
+      /* Sanitized and quoted, so an empty line is visible as one. Located the
+       * way the parser locates it: the raw first line would log `malformed
+       * request ""` for a request that opened with a stray CRLF. */
       const char *line = buf;
       size_t line_len = len;
       skip_one_blank_line(&line, &line_len);
@@ -470,9 +431,8 @@ HttpResult http_serve_connection(FILE *in, FILE *out, FILE *log,
     return written;
   }
 
-  /* The byte count is what went out, so a HEAD reports 0 even though its
-   * Content-Length says otherwise. The log records what happened on the wire;
-   * the header records what the resource is. */
+  /* The count is what went out, so a HEAD reports 0: the log records the wire,
+   * the header records the resource. */
   fprintf(log, "%s: response %d %s (%zu bytes)\n", HTTP_PROGNAME, resp.status,
           resp.reason, suppress_body ? (size_t)0 : resp.body_len);
   return HTTP_OK;

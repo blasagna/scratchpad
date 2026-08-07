@@ -220,6 +220,38 @@ edge:
   browser and `curl` do. Dual-stack means `AF_INET6` with `IPV6_V6ONLY=0`, and then every
   IPv4 client logs as `::ffff:127.0.0.1`.
 
+### The parity harness
+
+[`check_parity.sh`](check_parity.sh) builds all three ports, drives each with the same
+bytes over a real socket, and diffs the results against the C port. Nothing is mocked:
+every case starts a real server on an ephemeral port and opens a real TCP connection to
+it. What gets compared depends on who reports the outcome:
+
+| case kind | compared |
+|---|---|
+| `serve_case` | the response bytes, the log, and the exit status. The default, and where the contract lives — the log is part of the contract, so it is diffed too. |
+| `startup_case` | the log and the exit status, for a server that never gets as far as listening (an unreadable `--file`). |
+| `parser_error_case` | stdout only, plus "every port must fail". The parsers are `getopt_long`, CLI11, and clap, and only the rejection is shared; see [Known divergences](#known-divergences). |
+| `help_case` | the exit status only. The help text is each parser's own. |
+
+**The only normalization is the port number.** Every port binds `--port 0`, so a case
+never collides with a server left running in another terminal, and the kernel's choice
+shows up in `listening on 127.0.0.1:<port>` and the client's source port in `connection
+from 127.0.0.1:<port>`. Both become `:PORT` before the diff; nothing else is touched, and
+the response bytes are compared raw.
+
+**Every case must be one the server answers**, because `--once` stops after an *answered*
+request — a case the server does not answer would leave it running until the script's
+timeout. The deliberately unanswered ones (a client that sends nothing, one that hangs up
+mid-header) live in the unit suites instead. The client is a few lines of Python rather
+than `curl`, which would normalize a malformed request line before it reached the socket,
+and it half-closes after sending so the drain sees end of input rather than the timeout.
+
+**Two checks are absolute rather than comparisons**, because every port could regress
+together and every diff would still be clean: `check_drain` requires the `405` to survive
+a request with an unread body, and `check_ephemeral_port` requires `--port 0` to report a
+port it really bound. Builds are unoptimized; there are no timings here.
+
 ### Known divergences
 
 Everything above is shared by every port, and `check_parity.sh` diffs all of it: **every

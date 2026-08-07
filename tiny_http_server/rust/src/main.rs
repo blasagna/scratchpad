@@ -32,24 +32,13 @@ use tiny_http_server::{
 struct Cli {
     /// port to listen on, 0 to let the kernel pick
     ///
-    /// u16 is the whole validator, and it is the repo's "let the library carry
-    /// the grammar" rule landing unusually well: the type's range is exactly
-    /// 0-65535, it reads base 10 (so `08080` is eight thousand and eighty, as in
-    /// C and unlike C++'s octal), it takes a leading `+`, and it turns down
-    /// `abc`, `0x1F90`, `8_080`, `"8080 "`, `-1`, and `65536`. A hand-written
-    /// validator to match C exactly is the mistake text_analyzer documented.
+    /// `u16` is the whole validator: exactly 0-65535, base 10. See the README.
     #[arg(short, long, default_value_t = DEFAULT_PORT, value_name = "N")]
     port: u16,
 
     /// IPv4 address to bind
     ///
-    /// `Ipv4Addr`'s own parser, which is `inet_pton`'s grammar: it rejects
-    /// `localhost` (names are not resolved - DNS is a blocking network lookup
-    /// and would hand back a list of candidates for a program that binds exactly
-    /// one socket), and it rejects `127.1` and `0177.0.0.1` the same way, since
-    /// leading zeros are refused rather than read as octal. The C++ port needs a
-    /// hand-written `->check()` here because no CLI11 built-in states that rule;
-    /// this port needs nothing at all.
+    /// `Ipv4Addr`'s parser is `inet_pton`'s grammar, validator-free.
     #[arg(long, default_value_t = DEFAULT_HOST, value_name = "ADDR")]
     host: Ipv4Addr,
 
@@ -63,27 +52,18 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
-    // clap owns every usage error here and exits 2 for one, so this port has no
-    // usage-error path of its own. Requests arrive over the socket, never from
-    // argv, so there is no positional to declare and a stray operand is clap's
-    // to reject.
+    // clap owns every usage error and exits 2, so this port has no usage path of
+    // its own. Requests arrive over the socket, never from argv, so there is no
+    // positional to declare and a stray operand is clap's to reject.
     let cli = Cli::parse();
 
     // There is no signal(SIGPIPE, SIG_IGN) here, and that is not an omission:
-    // the Rust runtime sets that disposition before main runs. Both other ports
-    // have to call it - writing to a socket whose peer has gone raises SIGPIPE,
-    // whose default action is to terminate the process with no message at all,
-    // so without it the server vanishes the first time somebody navigates away
-    // mid-response and the symptom is "it just disappears sometimes". It also
-    // covers `tiny_http_server 2>&1 | head`, which would otherwise kill the
-    // server on the closed log pipe. Do not add a call back: an explicit
-    // SIG_DFL or a second mechanism is the only way to reintroduce the bug.
+    // the Rust runtime sets that disposition before main runs. Do not add a call
+    // back - an explicit SIG_DFL is the only way to reintroduce the bug.
 
-    // The page is read once, here, before the socket exists. A file that cannot
-    // be read is then a startup failure with a message, rather than a 500 that
-    // turns up later depending on which path somebody visits - and routing stays
-    // pure, with no I/O and no failure path, which is why this server has no 500
-    // at all. The cost is that the page cannot change while the server runs.
+    // The page is read once, before the socket exists, so an unreadable file is
+    // a startup failure rather than a 500 later - and routing stays pure, which
+    // is why this server has no 500 at all.
     let loaded = match &cli.file {
         Some(path) => match load_page(path, MAX_PAGE_BYTES) {
             Ok(page) => Some(page),
@@ -103,15 +83,15 @@ fn main() -> ExitCode {
         ..Options::default()
     };
 
-    // The log is the caller's stream rather than a global reached from inside,
-    // which is what lets every test in the library hand in a Vec<u8>.
+    // The log is the caller's stream rather than a global, which is what lets
+    // every test in the library hand in a Vec<u8>.
     let result = run(&opts, &mut io::stderr().lock());
 
     match result {
         // Whatever any request was answered with. A 404 is the server working.
         Ok(()) => ExitCode::SUCCESS,
-        // Display composes the failed stage and the errno, so the server's two
-        // shapes of failure come out of one arm.
+        // Display composes the failed stage and the errno, so both shapes of
+        // failure come out of one arm.
         Err(failure) => {
             eprintln!("{PROG_NAME}: {failure}");
             ExitCode::FAILURE
