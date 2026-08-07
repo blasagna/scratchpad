@@ -114,36 +114,36 @@ TEST(Evaluate, RejectsMalformedInput) {
 // The message text is part of the API: it is what a user sees on the CLI and
 // what arrives in Rust as the Err payload, so a few are pinned exactly.
 TEST(Evaluate, MessagesNameTheProblem) {
-  EXPECT_STREQ(
+  EXPECT_EQ(
       [] {
         try {
           exprkit::evaluate("2 / 0");
         } catch (const ExprError &err) {
-          return err.what();
+          return std::string(err.what());
         }
-        return "no exception";
+        return std::string("no exception");
       }(),
       "division by zero");
 
-  EXPECT_STREQ(
+  EXPECT_EQ(
       [] {
         try {
           exprkit::evaluate("1 + wat");
         } catch (const ExprError &err) {
-          return err.what();
+          return std::string(err.what());
         }
-        return "no exception";
+        return std::string("no exception");
       }(),
       "unknown name: 'wat'");
 
-  EXPECT_STREQ(
+  EXPECT_EQ(
       [] {
         try {
           exprkit::evaluate("1 2");
         } catch (const ExprError &err) {
-          return err.what();
+          return std::string(err.what());
         }
-        return "no exception";
+        return std::string("no exception");
       }(),
       "unexpected trailing input: '2'");
 }
