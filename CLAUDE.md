@@ -21,6 +21,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `simple_logger/` | A timestamped log-appender CLI, ported to C / C++ / Rust | [`simple_logger/CLAUDE.md`](simple_logger/CLAUDE.md) |
 | `matrix_ops/` | A 2D matrix arithmetic CLI, ported to C / C++ / Rust, benchmarked against Eigen, xtensor, faer, and nalgebra | [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md) |
 | `mini_shell/` | A prototype shell that forks and execs one program per line, ported to C / C++ / Rust | [`mini_shell/CLAUDE.md`](mini_shell/CLAUDE.md) |
+| `tiny_http_server/` | An HTTP server that serves one hello-world page, one connection at a time (C so far; C++ and Rust to follow) | [`tiny_http_server/CLAUDE.md`](tiny_http_server/CLAUDE.md) |
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/CLAUDE.md`](morse_trainer/CLAUDE.md) |
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
