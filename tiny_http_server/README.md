@@ -16,11 +16,13 @@ Create a very simple http server which responds to web requests. Once running, t
 
 ## Contract
 
-The program is implemented in `c/` (Bazel) so far; C++ and Rust ports will follow, and
+The program is implemented in `c/` and `cpp/` (both Bazel); a Rust port will follow, and
 this section is what all of them are checked against. The C port is the **reference
 dialect**: where a later port's library gives it different behavior for free, the
 difference is recorded under [Known divergences](#known-divergences) rather than
-hand-rolled back into agreement.
+hand-rolled back into agreement. [`check_parity.sh`](check_parity.sh) is what enforces
+the rest — it starts each port on an ephemeral port, drives it over a real socket, and
+diffs the response bytes, the log, and the exit status.
 
 ```
 tiny_http_server [options]
@@ -218,20 +220,59 @@ edge:
 
 ### Known divergences
 
-Everything above is shared by every port. Nothing is recorded here yet, because only the
-C port exists — it is the reference dialect the other two will be measured against. Two
-rows are already expected:
+Everything above is shared by every port, and `check_parity.sh` diffs all of it. What is
+listed here is what the ports' argument parsers do differently, which is all of it so
+far: **every response byte and every log line agrees.**
 
-- **`--port`'s grammar.** C uses `strtol`, as spelled out under [Options](#options). C++
-  should bind the option to an `int` and check it with `CLI::Range(0, 65535)` per the
-  root [`CLAUDE.md`](../CLAUDE.md), which accepts `0x1F90` and `8_080` where C does not;
-  hand-writing a validator to match C instead is the mistake
-  [`text_analyzer`](../text_analyzer/README.md#known-divergence-argument-parsers)
-  documented.
-- **Each parser's own diagnostics and exit code.** `getopt_long` reports an unknown
-  option or a stray operand itself at exit `2`; CLI11 and clap will bring their own
-  wording and their own codes. That is the same call `simple_logger` and `matrix_ops`
-  made, and it is not worth reconciling.
+The first two were predicted before the C++ port existed, and both landed. The third was
+not, and turned up in review.
+
+**`--port`'s grammar.** C uses `strtol` with base 10 fixed, as spelled out under
+[Options](#options). C++ binds the option to an `int` and checks it with
+`CLI::Range(0, 65535)`, per the root [`CLAUDE.md`](../CLAUDE.md); hand-writing a
+validator to match C instead is the mistake
+[`text_analyzer`](../text_analyzer/README.md#known-divergence-argument-parsers)
+documented. CLI11 converts with base 0 and strips group separators, so:
+
+| `--port` | C | C++ |
+|---|---|---|
+| `8080`, `+8080`, `" 8080"` | 8080 | 8080 |
+| `0x1F90` | usage error | 8080 |
+| `8_080` | usage error | 8080 |
+| `02000` | 2000 | **1024** — a leading zero is octal here and decimal there |
+| `""`, `abc`, `"8080 "`, `-1`, `65536` | usage error | usage error |
+
+The `02000` row is the one to watch: it is the only spelling both ports accept and act on
+differently, so it fails quietly rather than as an error.
+
+**Each parser's own diagnostics and exit code.** `getopt_long` reports an unknown option,
+a bad value, or a stray operand itself at exit `2`. CLI11 brings its own wording and its
+own codes — `105` for a `--port` or `--host` it rejects, `109` for an unknown option or a
+stray operand, `114` for a repeated one. `--help` exits `0` in both. That is the same call
+`simple_logger` and `matrix_ops` made, and it is not worth reconciling; `check_parity.sh`
+covers these cases by requiring only that every port rejects the same command line.
+
+**A repeated option.** `getopt_long` hands each occurrence to the loop in turn and the
+last one wins, because each `case` just overwrites what the previous stored. CLI11's
+default multi-option policy rejects the command line instead:
+
+| command | C | C++ |
+|---|---|---|
+| `--port 9090 --port 0` | binds port 0 | exit `114`, `--port: At most 1 required but received 2` |
+| `--host 127.0.0.1 --host 9.9.9.9` | binds 9.9.9.9 | exit `114` |
+| `--file a --file b` | loads `b` | exit `114` |
+| `--once --once` | on | on — a flag is exempt from the policy |
+
+This is the one divergence `check_parity.sh` cannot be extended to cover in its existing
+shape: `parser_error_case` asserts that *every* port rejects the command line, and here
+the C port succeeds and then serves. Catching it would mean a case that runs a server to
+completion under one port and expects a usage error from the other, which is a different
+kind of case than the file has.
+
+Nothing else diverges. In particular the C++ port's single bidirectional stream — where
+C needs a `dup` and two `FILE *` — changes no observable byte, and neither does its
+`std::error_code` replacing a global `errno`. Both are in
+[`cpp/README.md`](cpp/README.md).
 
 ### Exit codes
 

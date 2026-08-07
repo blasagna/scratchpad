@@ -2,17 +2,22 @@
 
 A very small HTTP server: it binds a socket, then accepts one connection at a time,
 reads the request header block, answers `GET` and `HEAD` of `/` with a hello world page,
-and logs every event to stderr. One port exists so far, `c/` (Bazel); **C++ and Rust are
-still to come**, and the C port is the reference dialect they will be measured against.
+and logs every event to stderr. Two ports exist, `c/` and `cpp/` (both Bazel); **Rust is
+still to come**, and the C port is the reference dialect the others are measured against.
 The full contract — the responses, the status precedence, the edge cases, the deliberate
-simplifications, and the exit codes — is in [`README.md`](README.md), and the port has
-its own design notes in [`c/README.md`](c/README.md).
+simplifications, and the exit codes — is in [`README.md`](README.md), and each port has
+its own design notes ([c](c/README.md), [cpp](cpp/README.md)).
 
 ## Commands
 
 ```sh
 bazel run  //tiny_http_server/c:tiny_http_server
+bazel run  //tiny_http_server/cpp:tiny_http_server
 bazel test //tiny_http_server/c:all
+bazel test //tiny_http_server/cpp:all
+
+./tiny_http_server/check_parity.sh          # build both, run 33 cases, diff them
+./tiny_http_server/check_parity.sh --keep   # keep the work dir for inspection
 
 # Run the binary directly rather than through `bazel run` whenever a relative
 # --file path matters: `bazel run` executes from the runfiles directory.
@@ -22,19 +27,33 @@ curl -i http://127.0.0.1:8080/
 printf 'GET / HTTP/1.1\r\n\r\n' | nc 127.0.0.1 8080
 ```
 
-**There is no `check_parity.sh` yet**, and there should be one as soon as the second port
-lands — same shape as `mini_shell`'s and `simple_logger`'s, with the C port as the
-reference. It will need `--port 0` (so cases never collide with a server left running in
-another terminal) and `--once` (so a case does not have to background the server and kill
-it by PID); both options exist for that reason as much as for their own.
+**`check_parity.sh` compares the response bytes, the log, and the exit status**, and the
+whole of the contract agrees today — the only recorded divergences are the argument
+parsers'. Three things about its shape are load-bearing:
 
-**Two things no unit test reaches**, both covered from the shell instead:
+- **It uses `--port 0` and `--once`, which is most of why those options exist.** A fixed
+  port collides with the server somebody left running in another terminal, which is
+  exactly when they run this; `--once` is what lets a case avoid backgrounding the server
+  and killing it by PID.
+- **The only normalization is the port number.** `listening on 127.0.0.1:<port>` and the
+  client's source port in `connection from 127.0.0.1:<port>` are replaced with `:PORT`.
+  Nothing else is touched, and the response bytes are compared raw.
+- **Every case must be one the server answers.** `--once` stops after an *answered*
+  request, so a case the server does not answer (a client that sends nothing, one that
+  hangs up mid-header) would leave the server running until the script's timeout. Those
+  live in the unit suites instead.
+- **Two checks there are absolute, not comparisons**, because both ports could regress
+  together and every diff would still be clean: `check_drain` requires the `405` to
+  survive a request with an unread body, and `check_ephemeral_port` requires `--port 0` to
+  report a port it really bound.
 
-- `server_run` itself. A client has to be connected before the loop accepts it, and
-  `server_run` does its own binding, so nothing single-threaded can be waiting on the
-  queue by the time it starts. Its two decisions — `--once` stopping after one
-  connection, and a fatal bind failure — are checked by hand; the list is at the bottom
-  of [`c/README.md`](c/README.md).
+**Two things no unit test reaches in either port**, both covered from the shell instead:
+
+- `server_run` / `run` itself. A client has to be connected before the loop accepts it,
+  and it does its own binding, so nothing single-threaded can be waiting on the queue by
+  the time it starts. Its two decisions — `--once` stopping after one answered request,
+  and a fatal bind failure — are checked by hand; the lists are at the bottom of
+  [`c/README.md`](c/README.md) and [`cpp/README.md`](cpp/README.md).
 - `SIGPIPE`. `main` ignores it and the test binary does not run `main`, so the suite
   cannot observe its absence. Reproduce it by connecting, sending a request, and closing
   with `SO_LINGER` set to zero so the peer gets an RST before reading the response.
@@ -65,7 +84,12 @@ it by PID); both options exist for that reason as much as for their own.
   right after the failing `accept`, with **no logging or cleanup in between**, because
   even a successful `fprintf` may set `errno` — and a fatal `EMFILE` misread as a
   transient `ECONNABORTED` is exactly the 100% CPU spin above. Every port needs its own
-  spelling of "capture the failure before doing anything else with it".
+  spelling of "capture the failure before doing anything else with it". **In C++ that
+  spelling makes the rule unbreakable rather than merely documented**: `Result` is
+  `{Stage, std::error_code}`, the code is captured into the value at the point of failure,
+  and `run` judges `served.ec` rather than a global. A port whose result type carries the
+  error has nothing left to get wrong here; one that leans on `errno` has to keep the rule
+  in its head.
 - **`--once` stops after a request, not after a connection.** Browsers preconnect, so the
   first connection is often a silent one that times out; stopping on it exits having
   served nothing and the real request is refused. A timeout or a hang-up does not count,
@@ -113,7 +137,11 @@ it by PID); both options exist for that reason as much as for their own.
   to a terminal: `\x1b[2J` clears the screen of whoever is watching, and a newline forges
   a second log line. Every byte outside printable ASCII becomes `?` and a long line is
   truncated with `...`. Logging the raw bytes is the obvious thing to write and is the
-  bug.
+  bug. **The limit is 255 characters, not 256**: C spells it as a 256-byte destination
+  buffer and spends one byte on the NUL, so a port that has no buffer — and therefore no
+  NUL — has to say 255 or its truncated lines are one character longer than everyone
+  else's. Only a request line over 255 bytes shows the difference, which is why
+  `check_parity.sh` has a 4000-byte-target case.
 - **The log has no timestamps**, so a parity script can diff stderr directly. Adding one
   means a clock, which means either non-deterministic output or importing
   `simple_logger`'s fake-clock seam into a program with no other clock — and then the
@@ -125,23 +153,49 @@ it by PID); both options exist for that reason as much as for their own.
 
 ## Gotchas
 
-- **A socket needs two `FILE *`, not one.** `fdopen(fd, "r+")` requires a file-positioning
-  call between a read and a following write, and a socket has none — `fseek` returns
-  `ESPIPE` — so the transition is formally undefined and practically drops or duplicates
-  bytes depending on the libc. `server_accept_once` therefore `dup`s the accepted
-  descriptor and opens `"r"` on one and `"w"` on the other. **`fdopen` takes ownership
-  only on success**: when the second one fails the cleanup is `fclose(in)` plus
-  `close(fd2)` and *never* `close(fd)`, which would be a double close that later silently
-  closes some unrelated descriptor.
-- **`SIGPIPE` is ignored in `main`, and the `FILE *` write seam is what forces it.**
-  `MSG_NOSIGNAL` is a flag on `send` and `fwrite` has nowhere to put it; `SO_NOSIGPIPE`
-  is a BSD option that does not exist on Linux. So the choice is: keep the stream seam
-  and ignore the signal process-wide, or take `MSG_NOSIGNAL` and lose `fmemopen` testing
-  of the response bytes — the most valuable test target in the package. The seam wins.
-  Delete the `signal` call and the server **dies silently, with no message and no log
-  line**, the first time a browser navigates away mid-response: SIGPIPE's default action
-  is termination. It lives in `main` and not the library for the same reason
-  `mini_shell`'s `setvbuf` does, and the test binary needs its own copy.
+- **In C, a socket needs two `FILE *`, not one — and in C++ it needs neither.**
+  `fdopen(fd, "r+")` requires a file-positioning call between a read and a following
+  write, and a socket has none — `fseek` returns `ESPIPE` — so the transition is formally
+  undefined and practically drops or duplicates bytes depending on the libc.
+  `server_accept_once` therefore `dup`s the accepted descriptor and opens `"r"` on one and
+  `"w"` on the other. **`fdopen` takes ownership only on success**: when the second one
+  fails the cleanup is `fclose(in)` plus `close(fd2)` and *never* `close(fd)`, which would
+  be a double close that later silently closes some unrelated descriptor. **That rule is
+  stdio's and `std::basic_filebuf`'s, not `std::streambuf`'s**: the C++ port writes a
+  `SocketStreambuf` with its own get and put areas over one descriptor, passes one
+  `SocketStream` as both the `istream &` and the `ostream &`, and has no dup, no second
+  stream, and no cleanup table at all. A port that transliterates the C dance into C++ has
+  taken on the hazard without the constraint that caused it.
+- **`SIGPIPE` is ignored in `main` in both ports, but not for the same reason.** In C the
+  `FILE *` write seam forces it: `MSG_NOSIGNAL` is a flag on `send`, `fwrite` has nowhere
+  to put it, and `SO_NOSIGPIPE` is a BSD option that does not exist on Linux — so the
+  choice is keep the stream seam and ignore the signal process-wide, or take
+  `MSG_NOSIGNAL` and lose `fmemopen` testing of the response bytes, the most valuable test
+  target in the package. The seam wins. **A hand-written streambuf could take
+  `MSG_NOSIGNAL` and keep the seam**, so the C++ port is not forced — and still does it,
+  because the log goes to `std::cerr` and `tiny_http_server 2>&1 | head` would otherwise
+  kill the server on the closed log pipe, which is the exact thing the best-effort log
+  rule exists to prevent. One process-wide disposition covers both directions; do not add
+  a second mechanism alongside it. Delete the call in either port and the server **dies
+  silently, with no message and no log line**, the first time a browser navigates away
+  mid-response: SIGPIPE's default action is termination. It lives in `main` and not the
+  library for the same reason `mini_shell`'s `setvbuf` does, and each test binary needs
+  its own copy.
+- **A `std::streambuf` cannot report "error" — only "no more bytes".** `underflow()`
+  returning `eof()` is the whole vocabulary, so a receive timeout and a browser's silent
+  preconnect are indistinguishable at the stream level. `SocketStreambuf` therefore keeps
+  the failing `recv`'s `std::error_code` and `read_request` takes a `ReadErrorProbe` that
+  reads it: empty is `kClosed`, `EAGAIN`/`EWOULDBLOCK` is `kTimeout`, anything else is
+  `kRead` — the same three cases the C port gets from `errno` after `fgetc`. Drop the
+  probe and every timeout is logged as an ordinary hang-up, which no unit test that hands
+  in a string stream would notice. Any port needs its own spelling of this; Rust's
+  `io::Error` carries it on the `Err`, so that one gets it for free.
+- **`last_error` inside `SocketStreambuf` is not the `errno` helper.** The class has a
+  member of that name, so within its member functions `error_ = last_error()` resolves to
+  the accessor and assigns `error_` to itself — it compiles, both return
+  `std::error_code`, nothing warns, and every receive timeout silently becomes a clean
+  close. The file-local helper is called `errno_error` for exactly this reason. This cost
+  a debugging session; do not rename it back.
 - **`SO_REUSEADDR` before `bind`, and it is not `SO_REUSEPORT`.** Without it, restarting
   inside about a minute fails `EADDRINUSE` on the `TIME_WAIT` remnants of the connections
   just served — which is every Ctrl-C and rerun during development. It does **not** permit
@@ -206,9 +260,18 @@ it by PID); both options exist for that reason as much as for their own.
   merely where it is impure. A fake socket layer would only have tested the fake.
 - **The request stream is buffered, which is the exact opposite of `mini_shell`.** There,
   `stdin` had to be `_IONBF` so a forked child inherited unconsumed bytes. Nothing is
-  forked here, so full buffering is free — and the stdio buffer holding bytes past the
-  blank line is desirable, since those are a request body nobody reads and `fclose` throws
-  away for free. **Do not copy the `setvbuf` line across.**
+  forked here, so full buffering is free — and the buffer holding bytes past the blank
+  line is desirable, since those are a request body nobody reads and `fclose` (or dropping
+  the streambuf's get area) throws away for free. **Do not copy the `setvbuf` line
+  across**, and in C++ do not reach for `sync_with_stdio` either — neither has anything to
+  do with a socket here.
+- **`Fd` in `cpp/server.hpp` is the repo's first RAII descriptor owner**, and it is
+  deliberate rather than an oversight elsewhere: `mini_shell/cpp` keeps its pipe in a bare
+  `int[2]` because that pipe lives inside one function, while a listener and every
+  accepted connection here outlive the function that made them. It is also what makes the
+  C port's `fdopen`-ownership table unrepresentable. `reset()` saves and restores `errno`
+  around the `close`, the same care `close_quietly` takes in C — a failing `close` would
+  otherwise overwrite the error the caller is about to report.
 - **`accept4(..., SOCK_CLOEXEC)` sits behind `_GNU_SOURCE`.** Use plain `accept`; there is
   no exec here, so `FD_CLOEXEC` buys nothing. Same trap, same reasoning, as `mini_shell`'s
   `pipe2` note.
@@ -227,7 +290,7 @@ it by PID); both options exist for that reason as much as for their own.
   turns down `/dev/zero` and FIFOs before they churn through the whole 1 MiB cap.
 - **`valgrind` does not run on this machine.** Use sanitizers instead:
   ```sh
-  bazel test //tiny_http_server/c:all --config=permissive \
+  bazel test //tiny_http_server/... --config=permissive \
     --copt=-fsanitize=address --copt=-g --linkopt=-fsanitize=address
   ```
 

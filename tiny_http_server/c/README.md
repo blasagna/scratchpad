@@ -4,7 +4,8 @@ A very small HTTP server: it binds a socket, then accepts one connection at a ti
 reads the request header block, answers `GET` and `HEAD` of `/` with a hello world page,
 and logs every event to stderr. See the top-level
 [`tiny_http_server/README.md`](../README.md) for the full contract this port defines and
-that `cpp/` and `rust/` will be checked against.
+that [`cpp/`](../cpp/README.md) is checked against by
+[`check_parity.sh`](../check_parity.sh), with `rust/` still to follow.
 
 ## Design
 
