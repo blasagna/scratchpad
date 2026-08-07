@@ -23,7 +23,7 @@ constexpr int kExitFailure = 1;
 // four numbers of its own, which is a different grammar than inet_pton's.
 CLI::Validator ipv4_address() {
   return CLI::Validator(
-      [](std::string &value) -> std::string {
+      [](const std::string &value) -> std::string {
         in_addr addr{};
         if (::inet_pton(AF_INET, value.c_str(), &addr) == 1)
           return {};

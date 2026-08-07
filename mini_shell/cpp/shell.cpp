@@ -1,9 +1,11 @@
 #include "shell.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <istream>
+#include <iterator>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -169,11 +171,11 @@ bool is_exit_command(std::string_view line) { return trim(line) == kExitWord; }
 bool is_blank(std::string_view line) { return trim(line).empty(); }
 
 Stage write_banner(std::ostream &out) {
-  for (const std::string_view line : kBanner) {
-    if (!put(out, line) || !put(out, "\n"))
-      return Stage::kWrite;
-  }
-  return Stage::kOk;
+  const bool failed = std::any_of(kBanner.begin(), kBanner.end(),
+                                  [&out](std::string_view line) {
+                                    return !put(out, line) || !put(out, "\n");
+                                  });
+  return failed ? Stage::kWrite : Stage::kOk;
 }
 
 namespace {
@@ -204,8 +206,9 @@ int exec_runner(const std::vector<std::string> &argv) {
   // call.
   std::vector<char *> raw_argv;
   raw_argv.reserve(argv.size() + 1);
-  for (const std::string &word : argv)
-    raw_argv.push_back(const_cast<char *>(word.c_str()));
+  std::transform(
+      argv.begin(), argv.end(), std::back_inserter(raw_argv),
+      [](const std::string &word) { return const_cast<char *>(word.c_str()); });
   raw_argv.push_back(nullptr);
 
   // The channel the child reports a failed exec on. pipe + fcntl rather than

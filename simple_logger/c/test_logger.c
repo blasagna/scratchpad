@@ -54,8 +54,10 @@ static std::string tmp_path(const char *name) {
 static void write_file(const std::string &path, const std::string &contents) {
   FILE *f = fopen(path.c_str(), "wb");
   ASSERT_NE(f, nullptr);
-  ASSERT_EQ(fwrite(contents.data(), 1, contents.size(), f), contents.size());
-  ASSERT_EQ(fclose(f), 0);
+  const size_t written = fwrite(contents.data(), 1, contents.size(), f);
+  const int closed = fclose(f);
+  ASSERT_EQ(written, contents.size());
+  ASSERT_EQ(closed, 0);
 }
 
 static std::string read_file(const std::string &path) {
@@ -395,6 +397,9 @@ TEST(Append, CreatesFileEvenWithNoEntries) {
 
 TEST(Append, OpenFailsWhenParentDirectoryIsMissing) {
   const std::string path = tmp_path("no_such_dir/log.txt");
+  // A deliberately bogus non-null sentinel: proves log_open_append nulls
+  // *out on failure rather than leaving a prior value untouched.
+  // cppcheck-suppress intToPointerCast
   FILE *out = reinterpret_cast<FILE *>(1);
   EXPECT_EQ(log_open_append(path.c_str(), &out), LOG_ERR_OPEN);
   EXPECT_EQ(out, nullptr);

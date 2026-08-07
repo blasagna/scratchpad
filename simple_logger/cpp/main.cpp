@@ -146,7 +146,11 @@ int main(int argc, char *argv[]) {
     return kExitFailure;
   }
 
+  // cppcheck's value-flow analysis mistakenly carries "positionals has more
+  // than one element" over from the path check above and concludes messages
+  // can never be empty; it can be (a logfile with no message arguments).
   logger::LogResult result =
+      // cppcheck-suppress knownConditionTrueFalse
       messages.empty()
           ? logger::append_lines(path, fmt, *timestamp, std::cin)
           : logger::append_messages(path, fmt, *timestamp, messages);
@@ -158,6 +162,7 @@ int main(int argc, char *argv[]) {
   // input at the iostream level. The FILE* underneath does record it, and it is
   // the same flag the C port's ferror(in) checks. Without this the program
   // would exit 0 on unreadable stdin, silently dropping the rest of the input.
+  // cppcheck-suppress knownConditionTrueFalse
   if (result && messages.empty() && std::ferror(stdin))
     result = {logger::LogStage::kRead,
               std::error_code(errno, std::generic_category())};

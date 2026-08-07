@@ -1,5 +1,6 @@
 #include "logger.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <charconv>
 #include <cstddef>
@@ -82,11 +83,10 @@ std::string_view name(Level level) {
 }
 
 std::optional<Level> parse_level(std::string_view text) {
-  for (std::size_t i = 0; i < kLevelNames.size(); i++) {
-    if (text == kLevelNames[i])
-      return static_cast<Level>(i);
-  }
-  return std::nullopt;
+  const auto it = std::find(kLevelNames.begin(), kLevelNames.end(), text);
+  if (it == kLevelNames.end())
+    return std::nullopt;
+  return static_cast<Level>(std::distance(kLevelNames.begin(), it));
 }
 
 std::optional<std::string> format_timestamp(std::time_t when) {

@@ -15,8 +15,8 @@ lint-py = "ruff check"
 # BUILD targets, see root CLAUDE.md), so cppcheck needs to treat them as C++ too, or
 # it reports their C++ syntax as invalid C. Found by grep rather than hardcoded, so
 # a new gtest-wrapped C test file doesn't need this task edited to pick it up.
-lint-c-src = "cppcheck --enable=warning,style,performance,portability --error-exitcode=1 --suppress=missingIncludeSystem --library=googletest $(grep -rl 'gtest' --include='*.c' c_little_book copy_file text_analyzer simple_logger matrix_ops mini_shell tiny_http_server | sed 's/^/-i /') c_little_book copy_file text_analyzer simple_logger matrix_ops mini_shell tiny_http_server"
-lint-c-gtest = "cppcheck --enable=warning,style,performance,portability --error-exitcode=1 --suppress=missingIncludeSystem --suppress=ctuOneDefinitionRuleViolation --library=googletest --language=c++ $(grep -rl 'gtest' --include='*.c' c_little_book copy_file text_analyzer simple_logger matrix_ops mini_shell tiny_http_server)"
+lint-c-src = "cppcheck --enable=warning,style,performance,portability --error-exitcode=1 --inline-suppr --suppress=missingIncludeSystem --library=googletest $(grep -rl 'gtest' --include='*.c' c_little_book copy_file text_analyzer simple_logger matrix_ops mini_shell tiny_http_server | sed 's/^/-i /') c_little_book copy_file text_analyzer simple_logger matrix_ops mini_shell tiny_http_server"
+lint-c-gtest = "cppcheck --enable=warning,style,performance,portability --error-exitcode=1 --inline-suppr --suppress=missingIncludeSystem --suppress=ctuOneDefinitionRuleViolation --library=googletest --language=c++ $(grep -rl 'gtest' --include='*.c' c_little_book copy_file text_analyzer simple_logger matrix_ops mini_shell tiny_http_server)"
 lint-c = { depends-on = ["lint-c-src", "lint-c-gtest"] }
 
 [dependencies]

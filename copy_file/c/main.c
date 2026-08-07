@@ -5,7 +5,7 @@
 
 #include "copyfile.h"
 
-int main(int argc, char *argv[]) {
+int main(int argc, const char *const argv[]) {
   if (argc != 3) {
     fprintf(stderr, "usage: copy_file <source> <destination>\n");
     return 2;
