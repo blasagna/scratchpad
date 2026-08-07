@@ -10,3 +10,10 @@ Debian/Ubuntu. Without it, valgrind fails at startup ("a function redirection wh
 mandatory for this platform-tool combination cannot be set up") because the system's
 `ld-linux-x86-64.so.2` doesn't export `memcmp` in its dynamic symbol table, and
 valgrind falls back to glibc debug info to find it.
+
+The same `--config=valgrind` also works with `bazel run` for a `cc_binary`, since
+`--run_under` applies to both commands:
+
+```
+bazel run //simple_logger/c:simple_logger --config=valgrind -- --help
+```
