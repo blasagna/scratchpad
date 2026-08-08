@@ -79,12 +79,20 @@ the choices it makes.
 
 ### Naming and namespacing
 
-A node's **qualified ID** is the `/`-joined path of enclosing subgraph IDs followed by its
+A node's **qualified ID** is the `.`-joined path of enclosing subgraph IDs followed by its
 own ID. The root graph contributes no prefix, so a top-level node is just `calib`.
 
-A **topic** is `<qualified node ID>.<output port name>`. The separator differs from the
-path separator on purpose: a topic splits unambiguously at its last `.`, whatever the
-nesting depth.
+A **topic** is `<qualified node ID>.<output port name>` — the same `.` at the subgraph
+boundary and at the port boundary, so a topic is one flat dotted path from the root graph
+down to a port. The alternative is a separator per boundary (`fusion/update.fused`), which
+lets any topic be split into node and port at its last `.` whatever the nesting depth.
+That buys a split that nothing much needs — a port name alone means nothing without the
+node it belongs to, so a consumer of the split is already holding the graph — and it costs
+every author and every parser a second spelling rule.
+
+One consequence: a topic and a qualified node ID are spelled the same way, and
+`fusion.pose` is the `pose` output of `fusion` rather than a node `pose` inside it. The
+two are told apart by context, not by spelling, because a topic always ends in a port name.
 
 **A topic names what flows; it does not carry it.** Subscribing taps an output port for
 debugging, recording, and visualization, while the messages still move over each edge's
@@ -100,12 +108,12 @@ flowchart LR
   frames([frames]) --> overlay
 
   subgraph fusion
-    predict -- "fusion/predict.state" --> update
+    predict -- "fusion.predict.state" --> update
   end
 
   calib -- "calib.corrected" --> predict
   calib -- "calib.corrected" --> update
-  update -- "fusion/update.fused" --> overlay
+  update -- "fusion.update.fused" --> overlay
   overlay -- "overlay.composited" --> pose([pose])
 ```
 
@@ -114,10 +122,10 @@ In that graph:
 - `calib.corrected` is a topic — a top-level node, so no path prefix. It fans out to two
   consumers, and that is still **one** topic: a topic names the output port, not each
   edge leaving it, so a subscriber sees each message once however many nodes consume it.
-- `fusion/predict.state` and `fusion/update.fused` are topics; the subgraph ID namespaces
+- `fusion.predict.state` and `fusion.update.fused` are topics; the subgraph ID namespaces
   both nodes.
 - `fusion` is itself a node, so its output port `pose` gives the topic `fusion.pose` —
-  which is an **alias** of `fusion/update.fused`, the output actually connected to it.
+  which is an **alias** of `fusion.update.fused`, the output actually connected to it.
   The diagram draws the subgraph's boundary but not its ports, so this one is implicit:
   it is the `update --> overlay` edge crossing the boundary.
 - The root graph's output `pose` is an alias of `overlay.composited`.
@@ -155,11 +163,11 @@ alternative, a scheduler that understands watermarks and lateness, buys real pow
 sensor fusion and costs a much larger core; nothing here needs it yet, and a
 sync-as-a-node stays reusable without being privileged.
 
-**Latency measurement does not read the message timestamp.** Requirement 10's latency is
-wall-clock time spent in the graph, which the control plane measures at edges with its
-own clock. Conflating the two is the obvious shortcut and reports garbage the moment a
-recording is replayed faster than real time — the sample timestamps are then hours apart
-while the actual processing took milliseconds.
+**Latency measurement does not read the message timestamp.** The latency the control plane
+reports (requirement 10) is wall-clock time spent in the graph, measured at edges against
+the control plane's own clock. Conflating the two is the obvious shortcut and reports
+garbage the moment a recording is replayed faster than real time — the sample timestamps
+are then hours apart while the actual processing took milliseconds.
 
 ### Output cardinality
 
@@ -223,11 +231,11 @@ after instantiation would mean running every `setup` first.
 
 ### Parameters
 
-Parameters are **immutable by default**. A node that wants requirement 10's live
-reconfiguration opts in with a parameter-change hook, and changes are applied *between*
-`run` invocations, never during one. Mutating a node's parameters underneath a running
-`run` is the natural-looking implementation and makes every node author responsible for
-their own locking.
+Parameters are **immutable by default**. A node that wants the live parameter changes the
+control plane offers (requirement 10) opts in with a parameter-change hook, and changes
+are applied *between* `run` invocations, never during one. Mutating a node's parameters
+underneath a running `run` is the natural-looking implementation and makes every node
+author responsible for their own locking.
 
 ### Errors
 
