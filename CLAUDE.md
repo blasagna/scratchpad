@@ -26,6 +26,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/CLAUDE.md`](rust_python_bindings/CLAUDE.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
 | `rust_hosted_cpp/` | A C++ library with no build system of its own, built/tested/run entirely from Rust | [`rust_hosted_cpp/CLAUDE.md`](rust_hosted_cpp/CLAUDE.md) |
+| `dfg/` | A dataflow graph framework for real-time and batch processing — a language-independent design contract plus a Python port (pixi) | [`dfg/CLAUDE.md`](dfg/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -129,6 +130,14 @@ See the per-area `CLAUDE.md` files.
 **New pixi problems** follow the same pattern: `solution.py`, `test_solution.py`,
 and a `pixi.toml` with `test` and `main` tasks (`pixi init <directory>` to start).
 Tests use Python's built-in `unittest`.
+
+That script-pair shape fits a single exercise, not a library. `dfg/python/` is the
+first Python area that is package-shaped instead — a `dfg/` package beside
+`examples/` and `tests/`, run with `python -m unittest discover -s tests` and no
+`pyproject.toml`, since `python -m` from the manifest directory puts it on
+`sys.path`. It is also the only area with scientific dependencies (numpy, pyarrow),
+and they are confined to its examples by a test rather than by a pixi environment;
+see [`dfg/CLAUDE.md`](dfg/CLAUDE.md).
 
 **New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
 `members` list in the root `Cargo.toml`.

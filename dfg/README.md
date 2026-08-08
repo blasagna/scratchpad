@@ -317,3 +317,29 @@ The first implementation is expected to demonstrate: the node lifecycle includin
 through serialization and a registry, mermaid rendering from a blueprint, at least two
 points in the readiness × ordering space, and a recorded-input replay that produces
 identical output twice.
+
+### The port
+
+It lives in [`python/`](python/) — ports are per-language subdirectories, so a second
+language is a sibling rather than a rewrite. `cd python && pixi run test` runs the
+suite and `pixi run demos` runs every example. The framework itself is stdlib-only;
+numpy and pyarrow appear only in the examples, and a test enforces that by walking the
+core's imports.
+
+Everything the list above asks for is covered by a demo *and* a test — see the
+checklist table in [`../dfg/CLAUDE.md`](CLAUDE.md) for which is which. Three further
+examples exercise the payload types this document names: `pixi run audio` (numpy
+blocks, several windows out of one firing, a bounded edge dropping), `pixi run video`
+(uint8 frames, decimation, and the 200 Hz-against-30 fps alignment done by an ordinary
+node, as [Messages and time](#messages-and-time) requires), and `pixi run arrow` (the
+same blueprint over pyarrow record batches at four chunk sizes, producing identical
+aggregates — the [one engine vs. columnar batch](#tensions) bet checked as far as
+agreement can check it, which is not the same as checking that it is fast).
+
+Two things the contract leaves open, decided here and worth knowing before reading the
+code. A subgraph's parameters reach the nodes inside it through `{"$param": "name"}`
+references resolved when the blueprint is flattened, which is what makes the same
+subgraph reusable at two rates. And an input port takes exactly one writer: fan-in is
+rejected at validation, because two producers sharing a queue would order messages by
+which node the scheduler happened to fire first, so a merge node with one port per
+producer says it explicitly instead.

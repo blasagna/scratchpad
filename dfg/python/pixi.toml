@@ -1,0 +1,41 @@
+[workspace]
+authors = ["Bob DiMaiolo <bdimaiolo@gmail.com>"]
+channels = ["conda-forge"]
+name = "dfg"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+# pixi runs tasks from the manifest directory, so cwd is dfg/python and `python -m`
+# puts it on sys.path: `import dfg` and `import examples` resolve with no install
+# step. `discover -s tests` adds tests/ too, which is how `import helpers` works
+# without an __init__.py there.
+test = "python -m unittest discover -s tests -v"
+lifecycle = "python -m examples.lifecycle_demo"
+imu = "python -m examples.imu_pipeline"
+roundtrip = "python -m examples.blueprint_roundtrip"
+mermaid = "python -m examples.render_mermaid"
+schedule = "python -m examples.scheduling_demo"
+replay = "python -m examples.replay_demo"
+audio = "python -m examples.audio_pipeline"
+video = "python -m examples.video_pipeline"
+arrow = "python -m examples.arrow_batch"
+demos = { depends-on = [
+  "lifecycle",
+  "imu",
+  "roundtrip",
+  "mermaid",
+  "schedule",
+  "replay",
+  "audio",
+  "video",
+  "arrow",
+] }
+
+# numpy and pyarrow are here for examples/ only. The core (dfg/) is stdlib-only,
+# and tests/test_core_is_stdlib_only.py enforces that by walking the imports --
+# which catches a stray `import numpy` even in an environment where numpy exists.
+[dependencies]
+python = ">=3.14.6,<3.15"
+numpy = ">=2.3,<3"
+pyarrow = ">=21,<22"
