@@ -169,7 +169,7 @@ class TestRegistryIndependence(unittest.TestCase):
         # instantiate. That is the whole reason the registry is a concept.
         text = dumps(helpers.readme_example_spec())
         spec = loads(text)  # no registry in sight
-        self.assertEqual(spec.nodes[0].type, "t.calib")
+        self.assertEqual(spec.nodes[0].type_name, "t.calib")
 
         # Instantiating validates first, so every unresolvable type is reported at
         # once rather than one per attempt.
@@ -182,8 +182,10 @@ class TestRegistryIndependence(unittest.TestCase):
             Registry().create("t.calib", {})
 
     def test_an_unknown_type_survives_a_round_trip_intact(self):
-        spec = GraphSpec(name="g", nodes=(NodeSpec(id="a", type="never.registered"),))
-        self.assertEqual(loads(dumps(spec)).nodes[0].type, "never.registered")
+        spec = GraphSpec(
+            name="g", nodes=(NodeSpec(node_id="a", type_name="never.registered"),)
+        )
+        self.assertEqual(loads(dumps(spec)).nodes[0].type_name, "never.registered")
 
 
 class TestRejections(unittest.TestCase):
@@ -202,7 +204,11 @@ class TestRejections(unittest.TestCase):
         spec = builder.build()
         spec = GraphSpec(
             name=spec.name,
-            nodes=(NodeSpec(id="head", type="t.double", params={"clock": object()}),),
+            nodes=(
+                NodeSpec(
+                    node_id="head", type_name="t.double", params={"clock": object()}
+                ),
+            ),
         )
         with self.assertRaises(SerializationError) as caught:
             dumps(spec)

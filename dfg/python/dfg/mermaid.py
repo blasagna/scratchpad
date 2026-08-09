@@ -15,7 +15,7 @@ half-match.
 
 from __future__ import annotations
 
-from dfg.blueprint import GraphSpec, NodeSpec, SubgraphSpec
+from dfg.blueprint import ErrorPolicy, GraphSpec, NodeSpec, SubgraphSpec
 from dfg.ports import qualify, topic_of
 
 DIRECTIONS = frozenset(("LR", "RL", "TB", "BT", "TD"))
@@ -80,8 +80,8 @@ def _body_lines(
     lines: list[str] = []
     for child in spec.nodes:
         if isinstance(child, SubgraphSpec):
-            inner_scope = (*scope, child.id)
-            lines.append(f"  subgraph {_ref_id(scope, child.id)}[{child.id}]")
+            inner_scope = (*scope, child.node_id)
+            lines.append(f"  subgraph {_ref_id(scope, child.node_id)}[{child.node_id}]")
             lines.extend(
                 "  " + line
                 for line in _body_lines(
@@ -90,7 +90,7 @@ def _body_lines(
             )
             lines.append("  end")
         else:
-            lines.append(f"  {_ref_id(scope, child.id)}[{_node_label(child)}]")
+            lines.append(f"  {_ref_id(scope, child.node_id)}[{_node_label(child)}]")
 
     for edge in spec.edges:
         src = _ref_id(scope, edge.src.node)
@@ -108,9 +108,9 @@ def _node_label(child: NodeSpec) -> str:
     marks = []
     if child.readiness.KIND and child.readiness.KIND != "all":
         marks.append(child.readiness.KIND)
-    if child.on_error != "stop":
-        marks.append(child.on_error)
-    return f"{child.id}<br/>{'/'.join(marks)}" if marks else child.id
+    if child.on_error != ErrorPolicy.STOP:
+        marks.append(str(child.on_error))
+    return f"{child.node_id}<br/>{'/'.join(marks)}" if marks else child.node_id
 
 
 def _ref_id(scope: tuple[str, ...], node_id: str) -> str:

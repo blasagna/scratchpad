@@ -40,7 +40,7 @@ def build_registry() -> Registry:
 
 
 def build_blueprint(
-    *, capacity: int | None = None, on_overflow: Overflow = "error"
+    *, capacity: int | None = None, on_overflow: Overflow = Overflow.ERROR
 ) -> GraphSpec:
     """The analysis chain. A capacity on one edge exercises backpressure."""
     builder = GraphBuilder("audio", params={"sample_rate": DEFAULT_SAMPLE_RATE})
@@ -75,7 +75,7 @@ def build_blueprint(
     return builder.build()
 
 
-def run(blocks, *, capacity=None, on_overflow="error", drain_each=True):
+def run(blocks, *, capacity=None, on_overflow=Overflow.ERROR, drain_each=True):
     """Push ``blocks`` through the graph.
 
     Args:
@@ -168,7 +168,7 @@ def main() -> None:
     print()
     unbounded, _, _ = run(blocks, drain_each=False)
     print(f"  unbounded            summaries: {len(unbounded)}")
-    for policy in ("drop_oldest", "drop_newest"):
+    for policy in (Overflow.DROP_OLDEST, Overflow.DROP_NEWEST):
         dropped_summaries, _, dropped_stats = run(
             blocks, capacity=4, on_overflow=policy, drain_each=False
         )

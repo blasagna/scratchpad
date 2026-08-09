@@ -24,26 +24,52 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from enum import StrEnum, auto
+from typing import Any
 
 from dfg.readiness import AllInputs, ReadinessRule
 
-type ErrorPolicy = Literal["stop", "drop", "route"]
-"""What happens when a node's ``run`` raises. ``stop`` is the default: a silent
-continue hides bugs in exactly the case where nobody is watching."""
 
-type Overflow = Literal["error", "drop_oldest", "drop_newest"]
-"""What a bounded edge does when it is full.
+class ErrorPolicy(StrEnum):
+    """What happens when a node's ``run`` raises.
 
-``block`` is deliberately absent. It is the obvious fourth policy and it deadlocks
-a single-threaded scheduler instantly: the producer waits for space only the
-consumer can free, and the consumer only runs when the producer returns."""
+    :attr:`STOP` is the default: a silent continue hides bugs in exactly the case
+    where nobody is watching. Members are ``str``, and ``auto()`` spells each one as
+    its lowercased name, so a member *is* its serialized form -- ``ErrorPolicy.DROP
+    == "drop"``, and a blueprint written with the bare string still works.
+    """
 
-ERROR_POLICIES: frozenset[str] = frozenset(("stop", "drop", "route"))
-OVERFLOW_POLICIES: frozenset[str] = frozenset(("error", "drop_oldest", "drop_newest"))
+    STOP = auto()
+    DROP = auto()
+    ROUTE = auto()
 
-MEMORY_TRANSPORT = "memory"
-"""The default edge transport. Others are a registration away, not an API change."""
+
+class Overflow(StrEnum):
+    """What a bounded edge does when it is full.
+
+    ``block`` is deliberately absent. It is the obvious fourth policy and it
+    deadlocks a single-threaded scheduler instantly: the producer waits for space
+    only the consumer can free, and the consumer only runs when the producer
+    returns.
+    """
+
+    ERROR = auto()
+    DROP_OLDEST = auto()
+    DROP_NEWEST = auto()
+
+
+class EdgeTransport(StrEnum):
+    """The mechanism an edge uses to move messages.
+
+    Unlike :class:`ErrorPolicy` and :class:`Overflow`, this enum is *open*: it names
+    the transports the framework ships, not every legal value. Others are a
+    registration away, not an API change, so :attr:`EdgeSpec.transport` stays typed
+    ``str`` and an edge naming a transport registered elsewhere is well-formed.
+    Members are ``str``, so ``EdgeTransport.MEMORY == "memory"`` and the registry
+    lookup does not care which spelling an author used.
+    """
+
+    MEMORY = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,19 +110,20 @@ class NodeSpec:
     """A leaf node in a blueprint.
 
     Attributes:
-        id: Unique among its siblings. No dots.
-        type: A registered node type name. Resolved by a :class:`dfg.registry.Registry`.
+        node_id: Unique among its siblings. No dots.
+        type_name: A registered node type name. Resolved by a
+            :class:`dfg.registry.Registry`.
         params: Values passed to the factory. A value may be a :class:`ParamRef`.
         readiness: When this node may fire. Defaults to :class:`~dfg.readiness.AllInputs`.
         on_error: What happens when ``run`` raises.
         priority: Used only by the ``priority`` ordering; higher fires first.
     """
 
-    id: str
-    type: str
+    node_id: str
+    type_name: str
     params: Mapping[str, Any] = field(default_factory=dict)
     readiness: ReadinessRule = AllInputs()
-    on_error: ErrorPolicy = "stop"
+    on_error: ErrorPolicy = ErrorPolicy.STOP
     priority: int = 0
 
     def __post_init__(self) -> None:
@@ -113,14 +140,14 @@ class SubgraphSpec:
     cannot say "this whole subgraph drops errors" in one place.
 
     Attributes:
-        id: Unique among its siblings, and the namespace prefix for everything
+        node_id: Unique among its siblings, and the namespace prefix for everything
             inside it. No dots.
         graph: The blueprint being referenced, inline.
         params: Overrides for ``graph.params``, which :class:`ParamRef`\\ s inside
             resolve against.
     """
 
-    id: str
+    node_id: str
     graph: GraphSpec
     params: Mapping[str, Any] = field(default_factory=dict)
 
@@ -145,14 +172,15 @@ class EdgeSpec:
             under the single-threaded scheduler: a run proceeds to quiescence, so a
             bound there only converts a working graph into a failing one.
         on_overflow: What to do when a bounded edge is full.
-        transport: The mechanism this edge uses. A registered name.
+        transport: The mechanism this edge uses. A registered name, which may be an
+            :class:`EdgeTransport` member or any other name a runtime has registered.
     """
 
     src: PortRef
     dst: PortRef
     capacity: int | None = None
-    on_overflow: Overflow = "error"
-    transport: str = MEMORY_TRANSPORT
+    on_overflow: Overflow = Overflow.ERROR
+    transport: str = EdgeTransport.MEMORY
 
     def __post_init__(self) -> None:
         if self.capacity is not None and self.capacity < 1:
@@ -225,7 +253,7 @@ class GraphSpec:
     def node(self, node_id: str) -> AnyNodeSpec | None:
         """Return the child spec with ``node_id``, or ``None``."""
         for spec in self.nodes:
-            if spec.id == node_id:
+            if spec.node_id == node_id:
                 return spec
         return None
 
@@ -295,14 +323,14 @@ class GraphBuilder:
         *,
         params: Mapping[str, Any] | None = None,
         readiness: ReadinessRule | None = None,
-        on_error: ErrorPolicy = "stop",
+        on_error: ErrorPolicy = ErrorPolicy.STOP,
         priority: int = 0,
     ) -> str:
         """Add a leaf node. Returns ``node_id``, so it reads well inline."""
         self._nodes.append(
             NodeSpec(
-                id=node_id,
-                type=type_name,
+                node_id=node_id,
+                type_name=type_name,
                 params=dict(params or {}),
                 readiness=readiness if readiness is not None else AllInputs(),
                 on_error=on_error,
@@ -320,7 +348,7 @@ class GraphBuilder:
     ) -> str:
         """Reference ``graph`` as a node. Returns ``node_id``."""
         self._nodes.append(
-            SubgraphSpec(id=node_id, graph=graph, params=dict(params or {}))
+            SubgraphSpec(node_id=node_id, graph=graph, params=dict(params or {}))
         )
         return node_id
 
@@ -330,8 +358,8 @@ class GraphBuilder:
         dst: str,
         *,
         capacity: int | None = None,
-        on_overflow: Overflow = "error",
-        transport: str = MEMORY_TRANSPORT,
+        on_overflow: Overflow = Overflow.ERROR,
+        transport: str = EdgeTransport.MEMORY,
     ) -> None:
         """Connect ``"node.port"`` to ``"node.port"``."""
         self._edges.append(

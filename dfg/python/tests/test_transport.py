@@ -2,7 +2,7 @@
 
 import unittest
 
-from dfg.blueprint import OVERFLOW_POLICIES
+from dfg.blueprint import Overflow
 from dfg.errors import EdgeOverflowError, UnknownTransportError
 from dfg.message import Envelope, Message
 from dfg.transport import (
@@ -104,8 +104,11 @@ class TestOverflowPolicies(unittest.TestCase):
         # It deadlocks a single-threaded scheduler instantly: the producer waits
         # for space only the consumer can free, and the consumer only runs when the
         # producer returns.
-        self.assertNotIn("block", OVERFLOW_POLICIES)
-        self.assertEqual(OVERFLOW_POLICIES, {"error", "drop_oldest", "drop_newest"})
+        self.assertNotIn("block", Overflow)
+        self.assertEqual(
+            sorted(p.value for p in Overflow),
+            ["drop_newest", "drop_oldest", "error"],
+        )
 
     def test_the_queue_has_no_maxlen_so_drops_are_counted(self):
         # A deque with maxlen would silently drop the oldest, making the `error`

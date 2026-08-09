@@ -20,11 +20,11 @@ from collections.abc import Iterator, Mapping
 from typing import Any
 
 from dfg.blueprint import (
-    ERROR_POLICIES,
-    OVERFLOW_POLICIES,
     AnyNodeSpec,
+    ErrorPolicy,
     GraphSpec,
     NodeSpec,
+    Overflow,
     ParamRef,
     PortRef,
     SubgraphSpec,
@@ -81,12 +81,14 @@ def _check_scope(
 
     for child in graph.nodes:
         if isinstance(child, SubgraphSpec):
-            yield from _check_scope(child.graph, registry, scope=(*scope, child.id))
-            inputs[child.id] = {
+            yield from _check_scope(
+                child.graph, registry, scope=(*scope, child.node_id)
+            )
+            inputs[child.node_id] = {
                 boundary.name: PortSpec(boundary.name, boundary.type_tag)
                 for boundary in child.graph.inputs
             }
-            outputs[child.id] = {
+            outputs[child.node_id] = {
                 boundary.name: PortSpec(boundary.name, boundary.type_tag)
                 for boundary in child.graph.outputs
             }
@@ -95,11 +97,11 @@ def _check_scope(
             )
             continue
 
-        info = registry.describe(child.type)
+        info = registry.describe(child.type_name)
         if info is None:
             yield Problem(
                 "unknown_type",
-                f"node {child.id!r} has type {child.type!r}, which is not "
+                f"node {child.node_id!r} has type {child.type_name!r}, which is not "
                 f"registered; registered types are {list(registry.names())}",
                 scope,
             )
@@ -111,18 +113,18 @@ def _check_scope(
         resolved = {name: None for name in info.params} | dict(child.params)
         node_inputs = info.input_ports(resolved)
         node_outputs = info.output_ports(resolved)
-        yield from _check_port_names(child.id, node_inputs, "input", scope)
-        yield from _check_port_names(child.id, node_outputs, "output", scope)
+        yield from _check_port_names(child.node_id, node_inputs, "input", scope)
+        yield from _check_port_names(child.node_id, node_outputs, "output", scope)
         if not node_inputs:
             yield Problem(
                 "source_node",
-                f"node {child.id!r} of type {child.type!r} has no input ports, so "
+                f"node {child.node_id!r} of type {child.type_name!r} has no input ports, so "
                 f"no input-driven readiness rule can ever fire it; graph inputs "
                 f"are the only sources",
                 scope,
             )
-        inputs[child.id] = {port.name: port for port in node_inputs}
-        outputs[child.id] = {port.name: port for port in node_outputs}
+        inputs[child.node_id] = {port.name: port for port in node_inputs}
+        outputs[child.node_id] = {port.name: port for port in node_outputs}
 
     yield from _check_edges(graph, inputs, outputs, scope)
     yield from _check_boundaries(graph, inputs, outputs, scope)
@@ -132,7 +134,7 @@ def _check_scope(
 
 def _check_unique_ids(graph: GraphSpec, scope: tuple[str, ...]) -> Iterator[Problem]:
     for label, names in (
-        ("node", [child.id for child in graph.nodes]),
+        ("node", [child.node_id for child in graph.nodes]),
         ("input", [boundary.name for boundary in graph.inputs]),
         ("output", [boundary.name for boundary in graph.outputs]),
     ):
@@ -150,17 +152,17 @@ def _check_unique_ids(graph: GraphSpec, scope: tuple[str, ...]) -> Iterator[Prob
 
 def _check_names(graph: GraphSpec, scope: tuple[str, ...]) -> Iterator[Problem]:
     for child in graph.nodes:
-        if "." in child.id:
+        if "." in child.node_id:
             yield Problem(
                 "bad_name",
-                f"node ID {child.id!r} contains a dot; qualified IDs and topics "
+                f"node ID {child.node_id!r} contains a dot; qualified IDs and topics "
                 f"are dotted paths, so a node ID may not be",
                 scope,
             )
-        elif not is_valid_name(child.id):
+        elif not is_valid_name(child.node_id):
             yield Problem(
                 "bad_name",
-                f"node ID {child.id!r} must start with a letter and contain only "
+                f"node ID {child.node_id!r} must start with a letter and contain only "
                 f"letters, digits, and underscores",
                 scope,
             )
@@ -216,14 +218,14 @@ def _check_params(
         if name not in declared:
             yield Problem(
                 "unknown_param",
-                f"{kind} {child.id!r} sets parameter {name!r}, which it does not "
+                f"{kind} {child.node_id!r} sets parameter {name!r}, which it does not "
                 f"declare; it declares {sorted(declared)}",
                 scope,
             )
         if isinstance(value, ParamRef) and value.name not in graph.params:
             yield Problem(
                 "unresolved_param",
-                f"{kind} {child.id!r} parameter {name!r} references graph "
+                f"{kind} {child.node_id!r} parameter {name!r} references graph "
                 f"parameter {value.name!r}, which this graph does not declare; "
                 f"it declares {sorted(graph.params)}",
                 scope,
@@ -232,7 +234,7 @@ def _check_params(
         if isinstance(default, _Required) and name not in given:
             yield Problem(
                 "missing_param",
-                f"{kind} {child.id!r} does not set required parameter {name!r}",
+                f"{kind} {child.node_id!r} does not set required parameter {name!r}",
                 scope,
             )
 
@@ -242,7 +244,7 @@ def _check_readiness(child: NodeSpec, scope: tuple[str, ...]) -> Iterator[Proble
     if not isinstance(rule, ReadinessRule):
         yield Problem(
             "bad_readiness",
-            f"node {child.id!r} readiness is {type(rule).__name__}, not a "
+            f"node {child.node_id!r} readiness is {type(rule).__name__}, not a "
             f"ReadinessRule",
             scope,
         )
@@ -254,18 +256,21 @@ def _check_readiness(child: NodeSpec, scope: tuple[str, ...]) -> Iterator[Proble
     if not is_registered_kind(rule.KIND):
         yield Problem(
             "unknown_readiness",
-            f"node {child.id!r} uses readiness kind {rule.KIND!r}, which is not "
+            f"node {child.node_id!r} uses readiness kind {rule.KIND!r}, which is not "
             f"registered, so this blueprint cannot round-trip",
             scope,
         )
 
 
 def _check_policies(child: NodeSpec, scope: tuple[str, ...]) -> Iterator[Problem]:
-    if child.on_error not in ERROR_POLICIES:
+    # A policy is an ErrorPolicy in the annotation, but a deserialized blueprint
+    # holds whatever the JSON said, so the check is containment rather than
+    # isinstance -- and the message lists spellings, not enum reprs.
+    if child.on_error not in ErrorPolicy:
         yield Problem(
             "bad_policy",
-            f"node {child.id!r} has error policy {child.on_error!r}; "
-            f"choose one of {sorted(ERROR_POLICIES)}",
+            f"node {child.node_id!r} has error policy {child.on_error!r}; "
+            f"choose one of {sorted(p.value for p in ErrorPolicy)}",
             scope,
         )
 
@@ -284,11 +289,11 @@ def _check_edges(
                 yield problem
         if isinstance(src_port, Problem) or isinstance(dst_port, Problem):
             continue
-        if edge.on_overflow not in OVERFLOW_POLICIES:
+        if edge.on_overflow not in Overflow:
             yield Problem(
                 "bad_policy",
                 f"edge {edge} has overflow policy {edge.on_overflow!r}; choose one "
-                f"of {sorted(OVERFLOW_POLICIES)} -- 'block' deadlocks a "
+                f"of {sorted(p.value for p in Overflow)} -- 'block' deadlocks a "
                 f"single-threaded scheduler and is deliberately absent",
                 scope,
             )
@@ -380,17 +385,19 @@ def _check_unfireable(
     for boundary in graph.inputs:
         written.update(boundary.targets)
     for child in graph.nodes:
-        if isinstance(child, SubgraphSpec) or child.id not in inputs:
+        if isinstance(child, SubgraphSpec) or child.node_id not in inputs:
             continue
         if not isinstance(child.readiness, AllInputs):
             continue
         unwired = sorted(
-            name for name in inputs[child.id] if PortRef(child.id, name) not in written
+            name
+            for name in inputs[child.node_id]
+            if PortRef(child.node_id, name) not in written
         )
         if unwired:
             yield Problem(
                 "never_ready",
-                f"node {child.id!r} has 'all' readiness but input port(s) "
+                f"node {child.node_id!r} has 'all' readiness but input port(s) "
                 f"{unwired} have no writer, so it can never fire",
                 scope,
             )
@@ -409,7 +416,7 @@ def _lookup(
             return Problem(
                 "dangling_edge",
                 f"{ref} names node {ref.node!r}, which this graph does not "
-                f"declare; it declares {[child.id for child in graph.nodes]}",
+                f"declare; it declares {[child.node_id for child in graph.nodes]}",
                 scope,
             )
         # The node exists but has no port table, because its type was unknown.

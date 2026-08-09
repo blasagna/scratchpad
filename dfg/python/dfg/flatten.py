@@ -55,7 +55,7 @@ class FlatNode:
     Attributes:
         qid: The qualified node ID -- enclosing subgraph IDs and its own, dotted.
         scope: The enclosing subgraph IDs, for messages that name the right graph.
-        type: The registered type name.
+        type_name: The registered type name.
         params: Parameters with every :class:`~dfg.blueprint.ParamRef` resolved.
         readiness: When this node may fire.
         on_error: What happens when its ``run`` raises.
@@ -67,7 +67,7 @@ class FlatNode:
 
     qid: str
     scope: tuple[str, ...]
-    type: str
+    type_name: str
     params: Mapping[str, Any]
     readiness: ReadinessRule
     on_error: ErrorPolicy
@@ -213,18 +213,18 @@ class _FlattenState:
 
         for child in graph.nodes:
             if isinstance(child, SubgraphSpec):
-                child_scope = (*scope, child.id)
+                child_scope = (*scope, child.node_id)
                 overrides = {
-                    name: _resolve_param(value, params, scope, child.id)
+                    name: _resolve_param(value, params, scope, child.node_id)
                     for name, value in child.params.items()
                 }
                 child_params = {**child.graph.params, **overrides}
                 inner_inputs, inner_outputs = self.scope(
                     child.graph, scope=child_scope, params=child_params
                 )
-                sub_inputs[child.id] = inner_inputs
-                sub_outputs[child.id] = inner_outputs
-                prefix = qualify(scope, child.id)
+                sub_inputs[child.node_id] = inner_inputs
+                sub_outputs[child.node_id] = inner_outputs
+                prefix = qualify(scope, child.node_id)
                 for name, endpoint in inner_outputs.items():
                     self.aliases[f"{prefix}.{name}"] = endpoint
             else:
@@ -261,26 +261,26 @@ class _FlattenState:
     def _leaf(
         self, spec: NodeSpec, *, scope: tuple[str, ...], params: Mapping[str, Any]
     ) -> None:
-        qid = qualify(scope, spec.id)
-        info = self.registry.describe(spec.type)
+        qid = qualify(scope, spec.node_id)
+        info = self.registry.describe(spec.type_name)
         if info is None:
             raise ValidationError(
                 (
                     Problem(
                         "unknown_type",
-                        f"node {spec.id!r} has unregistered type {spec.type!r}",
+                        f"node {spec.node_id!r} has unregistered type {spec.type_name!r}",
                         scope,
                     ),
                 )
             )
         resolved = {
-            name: _resolve_param(value, params, scope, spec.id)
+            name: _resolve_param(value, params, scope, spec.node_id)
             for name, value in spec.params.items()
         }
         node = FlatNode(
             qid=qid,
             scope=scope,
-            type=spec.type,
+            type_name=spec.type_name,
             params=resolved,
             readiness=spec.readiness,
             on_error=spec.on_error,
@@ -351,7 +351,7 @@ class _FlattenState:
                     Problem(
                         "dangling_edge",
                         f"no node named {ref.node!r} in this graph; "
-                        f"it declares {[n.id for n in graph.nodes]}",
+                        f"it declares {[n.node_id for n in graph.nodes]}",
                         scope,
                     ),
                 )

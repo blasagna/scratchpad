@@ -17,15 +17,19 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from enum import StrEnum
 from typing import Any
 
 from dfg.blueprint import (
     AnyNodeSpec,
     EdgeSpec,
+    EdgeTransport,
+    ErrorPolicy,
     GraphInput,
     GraphOutput,
     GraphSpec,
     NodeSpec,
+    Overflow,
     ParamRef,
     PortRef,
     SubgraphSpec,
@@ -115,17 +119,20 @@ def _node_to_dict(child: AnyNodeSpec) -> dict[str, Any]:
     if isinstance(child, SubgraphSpec):
         return {
             "kind": "subgraph",
-            "id": child.id,
-            "params": _params_to_dict(child.params, where=f"subgraph {child.id!r}"),
+            "id": child.node_id,
+            "params": _params_to_dict(
+                child.params, where=f"subgraph {child.node_id!r}"
+            ),
             "graph": _graph_to_dict(child.graph),
         }
     return {
         "kind": "node",
-        "id": child.id,
-        "type": child.type,
-        "params": _params_to_dict(child.params, where=f"node {child.id!r}"),
-        "readiness": _readiness_to_dict(child.readiness, child.id),
-        "on_error": child.on_error,
+        "id": child.node_id,
+        "type": child.type_name,
+        "params": _params_to_dict(child.params, where=f"node {child.node_id!r}"),
+        "readiness": _readiness_to_dict(child.readiness, child.node_id),
+        # str() so the dict holds JSON primitives, not enum members.
+        "on_error": str(child.on_error),
         "priority": child.priority,
     }
 
@@ -135,8 +142,8 @@ def _edge_to_dict(edge: EdgeSpec) -> dict[str, Any]:
         "src": _ref_to_dict(edge.src),
         "dst": _ref_to_dict(edge.dst),
         "capacity": edge.capacity,
-        "on_overflow": edge.on_overflow,
-        "transport": edge.transport,
+        "on_overflow": str(edge.on_overflow),
+        "transport": str(edge.transport),
     }
 
 
@@ -220,7 +227,7 @@ def _node_from_dict(data: Mapping[str, Any]) -> AnyNodeSpec:
                 f"subgraph {data.get('id')!r} has no 'graph' object"
             )
         return SubgraphSpec(
-            id=_require(data, "id", str),
+            node_id=_require(data, "id", str),
             graph=_graph_from_dict(graph),
             params=_params_from_dict(data.get("params", {})),
         )
@@ -235,11 +242,11 @@ def _node_from_dict(data: Mapping[str, Any]) -> AnyNodeSpec:
             f"{type(readiness).__name__}"
         )
     return NodeSpec(
-        id=_require(data, "id", str),
-        type=_require(data, "type", str),
+        node_id=_require(data, "id", str),
+        type_name=_require(data, "type", str),
         params=_params_from_dict(data.get("params", {})),
         readiness=readiness_from_dict(readiness),
-        on_error=data.get("on_error", "stop"),
+        on_error=_policy(data.get("on_error", ErrorPolicy.STOP), ErrorPolicy),
         priority=int(data.get("priority", 0)),
     )
 
@@ -249,8 +256,8 @@ def _edge_from_dict(data: Mapping[str, Any]) -> EdgeSpec:
         src=_ref_from_dict(data, "src"),
         dst=_ref_from_dict(data, "dst"),
         capacity=data.get("capacity"),
-        on_overflow=data.get("on_overflow", "error"),
-        transport=data.get("transport", "memory"),
+        on_overflow=_policy(data.get("on_overflow", Overflow.ERROR), Overflow),
+        transport=data.get("transport", EdgeTransport.MEMORY),
     )
 
 
@@ -301,6 +308,20 @@ def _param_from_json(value: Any) -> Any:
     if isinstance(value, list):
         return [_param_from_json(item) for item in value]
     return value
+
+
+def _policy[P: StrEnum](value: Any, policy: type[P]) -> Any:
+    """Coerce a serialized policy name to its member of ``policy``.
+
+    A name that is not a member comes back unchanged rather than raising here, so
+    :func:`dfg.validate.validate` stays the one place a bad policy is reported --
+    with the list of the ones that exist, and as a ``Problem`` alongside everything
+    else wrong with the graph rather than as the first exception out of the reader.
+    """
+    try:
+        return policy(value)
+    except ValueError:
+        return value
 
 
 def _require[T](data: Mapping[str, Any], key: str, kind: type[T]) -> T:

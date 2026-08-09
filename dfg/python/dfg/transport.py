@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from dfg.blueprint import Overflow
+from dfg.blueprint import EdgeTransport, Overflow
 from dfg.errors import EdgeOverflowError, UnknownTransportError
 from dfg.message import Envelope, Message
 
@@ -40,7 +40,7 @@ class EdgeConfig:
 
     key: str
     capacity: int | None = None
-    on_overflow: Overflow = "error"
+    on_overflow: Overflow = Overflow.ERROR
 
 
 @runtime_checkable
@@ -105,16 +105,17 @@ class InMemoryTransport:
         """
         capacity = self.config.capacity
         if capacity is not None and len(self._queue) >= capacity:
+            # Value patterns, so a config carrying the bare string still matches.
             match self.config.on_overflow:
-                case "error":
+                case Overflow.ERROR:
                     raise EdgeOverflowError(
                         f"edge {self.config.key!r} is full at capacity {capacity}; "
                         f"raise the capacity, or choose drop_oldest/drop_newest"
                     )
-                case "drop_oldest":
+                case Overflow.DROP_OLDEST:
                     self._queue.popleft()
                     self._dropped += 1
-                case "drop_newest":
+                case Overflow.DROP_NEWEST:
                     self._dropped += 1
                     return
                 case other:  # pragma: no cover - validation rejects these first
@@ -204,7 +205,10 @@ class PortQueueView:
 
 type TransportFactory = Callable[[EdgeConfig], Transport]
 
-MEMORY = "memory"
+# ``.value``, so the registry is keyed by plain strings: a member would compare and
+# hash the same, but ``transport_names()`` and the unknown-transport error would
+# report it by its enum repr rather than by the name an author writes.
+MEMORY = EdgeTransport.MEMORY.value
 
 _TRANSPORTS: dict[str, TransportFactory] = {MEMORY: InMemoryTransport}
 

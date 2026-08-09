@@ -33,12 +33,12 @@ class TestEndpointParsing(unittest.TestCase):
 
 class TestSpecs(unittest.TestCase):
     def test_specs_are_frozen(self):
-        spec = NodeSpec(id="a", type="t.double")
+        spec = NodeSpec(node_id="a", type_name="t.double")
         with self.assertRaises(Exception):
-            spec.id = "b"
+            spec.node_id = "b"
 
     def test_node_spec_defaults(self):
-        spec = NodeSpec(id="a", type="t.double")
+        spec = NodeSpec(node_id="a", type_name="t.double")
         self.assertEqual(spec.params, {})
         self.assertEqual(spec.readiness, AllInputs())
         self.assertEqual(spec.on_error, "stop")
@@ -46,7 +46,7 @@ class TestSpecs(unittest.TestCase):
 
     def test_node_spec_copies_the_params_mapping(self):
         params = {"n": 1}
-        spec = NodeSpec(id="a", type="t.emit_n", params=params)
+        spec = NodeSpec(node_id="a", type_name="t.emit_n", params=params)
         params["n"] = 99
         self.assertEqual(spec.params, {"n": 1})
 
@@ -65,12 +65,12 @@ class TestSpecs(unittest.TestCase):
         # Round-trip tests rely on this: a reloaded blueprint must equal the
         # original, not merely resemble it.
         self.assertEqual(
-            NodeSpec(id="a", type="t.double", params={"x": 1}),
-            NodeSpec(id="a", type="t.double", params={"x": 1}),
+            NodeSpec(node_id="a", type_name="t.double", params={"x": 1}),
+            NodeSpec(node_id="a", type_name="t.double", params={"x": 1}),
         )
         self.assertNotEqual(
-            NodeSpec(id="a", type="t.double", readiness=AllInputs()),
-            NodeSpec(id="a", type="t.double", readiness=AnyInput()),
+            NodeSpec(node_id="a", type_name="t.double", readiness=AllInputs()),
+            NodeSpec(node_id="a", type_name="t.double", readiness=AnyInput()),
         )
         self.assertEqual(helpers.readme_example_spec(), helpers.readme_example_spec())
 
@@ -98,9 +98,12 @@ class TestGraphBuilder(unittest.TestCase):
             GraphSpec(
                 name="chain",
                 nodes=(
-                    NodeSpec(id="double", type="t.double"),
+                    NodeSpec(node_id="double", type_name="t.double"),
                     NodeSpec(
-                        id="out", type="t.passthrough", on_error="drop", priority=5
+                        node_id="out",
+                        type_name="t.passthrough",
+                        on_error="drop",
+                        priority=5,
                     ),
                 ),
                 edges=(
@@ -151,7 +154,7 @@ class TestGraphBuilder(unittest.TestCase):
     def test_readme_example_has_the_shape_the_document_draws(self):
         spec = helpers.readme_example_spec()
         self.assertEqual(
-            [node.id for node in spec.nodes], ["calib", "fusion", "overlay"]
+            [node.node_id for node in spec.nodes], ["calib", "fusion", "overlay"]
         )
         self.assertEqual([b.name for b in spec.inputs], ["imu_raw", "frames"])
         self.assertEqual([b.name for b in spec.outputs], ["pose"])

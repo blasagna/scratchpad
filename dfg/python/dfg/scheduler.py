@@ -18,6 +18,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from dfg.blueprint import ErrorPolicy
 from dfg.control import ControlPlane
 from dfg.errors import LifecycleError, NodeRunError
 from dfg.flatten import FlatGraph, FlatNode
@@ -155,8 +156,9 @@ class Scheduler:
         retrying it forever.
         """
         self._control._record_error(qid)
+        # Value patterns, so a blueprint carrying the bare string still matches.
         match flat_node.on_error:
-            case "drop":
+            case ErrorPolicy.DROP:
                 logger.exception(
                     "node %s dropped a message after %s: %s",
                     qid,
@@ -164,7 +166,7 @@ class Scheduler:
                     exc,
                     exc_info=exc,
                 )
-            case "route":
+            case ErrorPolicy.ROUTE:
                 logger.warning(
                     "node %s routed an error: %s: %s", qid, type(exc).__name__, exc
                 )
@@ -175,6 +177,6 @@ class Scheduler:
                 # exactly the case where nobody is watching -- an offline batch run
                 # over a large recording.
                 raise NodeRunError(
-                    f"node {qid!r} ({flat_node.type}) raised "
+                    f"node {qid!r} ({flat_node.type_name}) raised "
                     f"{type(exc).__name__}: {exc}"
                 ) from exc

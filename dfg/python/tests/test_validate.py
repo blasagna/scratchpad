@@ -47,8 +47,8 @@ class TestAcceptance(unittest.TestCase):
         spec = GraphSpec(
             name="g",
             nodes=(
-                NodeSpec(id="a", type="t.nope"),
-                NodeSpec(id="a", type="t.double"),
+                NodeSpec(node_id="a", type_name="t.nope"),
+                NodeSpec(node_id="a", type_name="t.double"),
             ),
         )
         with self.assertRaises(ValidationError) as caught:
@@ -63,10 +63,10 @@ class TestAggregation(unittest.TestCase):
         spec = GraphSpec(
             name="g",
             nodes=(
-                NodeSpec(id="dup", type="t.double"),
-                NodeSpec(id="dup", type="t.double"),
-                NodeSpec(id="bad.id", type="t.double"),
-                NodeSpec(id="unknown", type="t.nope"),
+                NodeSpec(node_id="dup", type_name="t.double"),
+                NodeSpec(node_id="dup", type_name="t.double"),
+                NodeSpec(node_id="bad.id", type_name="t.double"),
+                NodeSpec(node_id="unknown", type_name="t.nope"),
             ),
             edges=(EdgeSpec(PortRef("dup", "out"), PortRef("missing", "in")),),
             inputs=(
@@ -98,7 +98,9 @@ class TestIdentityProblems(unittest.TestCase):
 
     def test_a_dotted_node_id_is_rejected(self):
         # Qualified IDs and topics are dotted paths, so a node ID may not be.
-        spec = GraphSpec(name="g", nodes=(NodeSpec(id="a.b", type="t.double"),))
+        spec = GraphSpec(
+            name="g", nodes=(NodeSpec(node_id="a.b", type_name="t.double"),)
+        )
         problems = check(spec, helpers.build_registry())
         self.assertIn("bad_name", [p.code for p in problems])
         self.assertIn("contains a dot", " ".join(p.detail for p in problems))
@@ -107,7 +109,7 @@ class TestIdentityProblems(unittest.TestCase):
         for node_id in ("1a", "has space", "_leading"):
             with self.subTest(node_id=node_id):
                 spec = GraphSpec(
-                    name="g", nodes=(NodeSpec(id=node_id, type="t.double"),)
+                    name="g", nodes=(NodeSpec(node_id=node_id, type_name="t.double"),)
                 )
                 self.assertIn("bad_name", codes(spec))
 
@@ -121,13 +123,15 @@ class TestIdentityProblems(unittest.TestCase):
 
         registry = helpers.build_registry()
         registry.register("t.reserved", Reserved)
-        spec = GraphSpec(name="g", nodes=(NodeSpec(id="a", type="t.reserved"),))
+        spec = GraphSpec(
+            name="g", nodes=(NodeSpec(node_id="a", type_name="t.reserved"),)
+        )
         self.assertIn("reserved_name", codes(spec, registry))
 
 
 class TestTypeAndParamProblems(unittest.TestCase):
     def test_unknown_node_type_names_the_alternatives(self):
-        spec = GraphSpec(name="g", nodes=(NodeSpec(id="a", type="t.nope"),))
+        spec = GraphSpec(name="g", nodes=(NodeSpec(node_id="a", type_name="t.nope"),))
         problems = check(spec, helpers.build_registry())
         self.assertEqual([p.code for p in problems], ["unknown_type"])
         self.assertIn("t.double", problems[0].detail)
@@ -209,7 +213,7 @@ class TestWiringProblems(unittest.TestCase):
     def test_an_input_with_no_targets(self):
         spec = GraphSpec(
             name="g",
-            nodes=(NodeSpec(id="double", type="t.double"),),
+            nodes=(NodeSpec(node_id="double", type_name="t.double"),),
             inputs=(GraphInput(name="source", targets=()),),
         )
         self.assertIn("dangling_boundary", codes(spec))
@@ -332,7 +336,7 @@ class TestFiringProblems(unittest.TestCase):
     def test_a_non_rule_readiness_is_rejected(self):
         spec = GraphSpec(
             name="g",
-            nodes=(NodeSpec(id="double", type="t.double", readiness="all"),),
+            nodes=(NodeSpec(node_id="double", type_name="t.double", readiness="all"),),
             inputs=(GraphInput("source", (PortRef("double", "in"),)),),
         )
         self.assertIn("bad_readiness", codes(spec))
@@ -463,15 +467,17 @@ class TestCycles(unittest.TestCase):
 
 class TestNestedScopes(unittest.TestCase):
     def test_a_problem_inside_a_subgraph_names_its_scope(self):
-        inner = GraphSpec(name="inner", nodes=(NodeSpec(id="bad", type="t.nope"),))
-        root = GraphSpec(name="root", nodes=(SubgraphSpec(id="sub", graph=inner),))
+        inner = GraphSpec(
+            name="inner", nodes=(NodeSpec(node_id="bad", type_name="t.nope"),)
+        )
+        root = GraphSpec(name="root", nodes=(SubgraphSpec(node_id="sub", graph=inner),))
         problems = check(root, helpers.build_registry())
         self.assertEqual([p.code for p in problems], ["unknown_type"])
         self.assertEqual(problems[0].scope, ("sub",))
         self.assertIn("in sub:", str(problems[0]))
 
     def test_a_root_problem_says_root(self):
-        spec = GraphSpec(name="g", nodes=(NodeSpec(id="a", type="t.nope"),))
+        spec = GraphSpec(name="g", nodes=(NodeSpec(node_id="a", type_name="t.nope"),))
         self.assertIn("<root>", str(check(spec, helpers.build_registry())[0]))
 
     def test_an_empty_registry_reports_every_type(self):

@@ -189,7 +189,7 @@ class Graph:
         validate(spec, registry)
         flat = flatten(spec, registry)
         nodes = {
-            qid: registry.create(node.type, node.params)
+            qid: registry.create(node.type_name, node.params)
             for qid, node in flat.nodes.items()
         }
         if ordering is None:
@@ -283,7 +283,7 @@ class Graph:
                 # the actual news.
                 self._stop_without_masking()
                 raise NodeSetupError(
-                    f"node {qid!r} ({self._flat.nodes[qid].type}) raised "
+                    f"node {qid!r} ({self._flat.nodes[qid].type_name}) raised "
                     f"{type(exc).__name__} during setup: {exc}"
                 ) from exc
             self._control._record_setup(qid)
