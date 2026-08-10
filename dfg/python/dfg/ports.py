@@ -26,6 +26,30 @@ ERROR_PORT = "__error__"
 
 
 @dataclass(frozen=True, slots=True)
+class Port:
+    """Wire-level facts about a port, carried inside an ``Annotated`` annotation.
+
+    A typed node declares its ports as parameter names, so the *name* comes from
+    the signature. Everything else about the port comes from here::
+
+        def run(self, *, imu: Annotated[In[Sample], Port("ImuSample")] = ()) -> Out
+
+    This exists because the Python annotation and the type tag are answering two
+    different questions. ``In[Sample]`` types the **payload**, for a type checker
+    reading this port. ``Port("ImuSample")`` types the **wire**, for validation
+    comparing the two ends of an edge -- and a tag has to survive JSON and mean
+    the same thing to a port in another language, which a Python type does not.
+
+    Attributes:
+        type_tag: The opaque string that lands in :attr:`PortSpec.type_tag`.
+        description: Free text, carried into rendered diagrams and nothing else.
+    """
+
+    type_tag: str | None = None
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class PortSpec:
     """A named, optionally typed attachment point on a node.
 

@@ -115,7 +115,7 @@ class Scheduler:
         flat_node = self._flat.nodes[qid]
         inputs = flat_node.readiness.take(self._views[qid])
         try:
-            produced = self._nodes[qid].run(inputs)
+            produced = self._nodes[qid].invoke(inputs)
         except Exception as exc:
             self._handle_error(qid, flat_node, exc)
             return True
