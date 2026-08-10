@@ -39,10 +39,10 @@ def build_blueprint(trace: list, *, failing: bool = False) -> GraphSpec:
         params={"trace": trace, "label": "middle"},
     )
     builder.add("last", core.Trace, params={"trace": trace, "label": "last"})
-    builder.connect("first.out", "middle.in")
-    builder.connect("middle.out", "last.in")
-    builder.add_input("source", "first.in")
-    builder.add_output("sink", "last.out")
+    builder.connect("first.output", "middle.input")
+    builder.connect("middle.output", "last.input")
+    builder.add_input("source", "first.input")
+    builder.add_output("sink", "last.output")
     return builder.build()
 
 

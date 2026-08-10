@@ -302,8 +302,8 @@ class GraphBuilder:
 
     >>> builder = GraphBuilder("chain")
     >>> _ = builder.add("double", "demo.double")
-    >>> builder.add_input("samples", "double.in")
-    >>> builder.add_output("result", "double.out")
+    >>> builder.add_input("samples", "double.input")
+    >>> builder.add_output("result", "double.output")
     >>> spec = builder.build()
     >>> spec.name, len(spec.nodes)
     ('chain', 1)
@@ -312,8 +312,8 @@ class GraphBuilder:
     typo or the wrong class is caught at the call site rather than at validation:
 
     >>> class Double(Node):
-    ...     INPUTS = (PortSpec("in"),)
-    ...     OUTPUTS = (PortSpec("out"),)
+    ...     INPUTS = (PortSpec("input"),)
+    ...     OUTPUTS = (PortSpec("output"),)
     ...     def run(self, inputs):
     ...         return None
     >>> by_class = GraphBuilder("chain2")

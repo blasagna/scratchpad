@@ -36,7 +36,7 @@ class TestReadinessRules(unittest.TestCase):
         builder.add("join", helpers.Sum2, readiness=rule)
         builder.add_input("left", "join.a")
         builder.add_input("right", "join.b")
-        builder.add_output("out", "join.out")
+        builder.add_output("output", "join.output")
         return builder.build()
 
     def test_all_waits_for_every_port(self):
@@ -45,10 +45,10 @@ class TestReadinessRules(unittest.TestCase):
         ) as graph:
             graph.inject("left", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 0)
-            self.assertEqual(graph.poll("out"), ())
+            self.assertEqual(graph.poll("output"), ())
             graph.inject("right", Message(2, 20))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(helpers.payloads(graph.poll("out")), [3])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [3])
 
     def test_any_fires_on_one_port(self):
         with Graph.instantiate(
@@ -56,7 +56,7 @@ class TestReadinessRules(unittest.TestCase):
         ) as graph:
             graph.inject("left", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(helpers.payloads(graph.poll("out")), [1])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [1])
 
     def test_any_takes_every_available_port_when_both_have_messages(self):
         with Graph.instantiate(
@@ -65,7 +65,7 @@ class TestReadinessRules(unittest.TestCase):
             graph.inject("left", Message(1, 10))
             graph.inject("right", Message(2, 20))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(helpers.payloads(graph.poll("out")), [3])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [3])
 
     def test_default_consumption_is_one_message_per_port(self):
         with Graph.instantiate(
@@ -75,20 +75,20 @@ class TestReadinessRules(unittest.TestCase):
                 graph.inject("left", Message(1, i))
                 graph.inject("right", Message(1, i))
             self.assertEqual(graph.run_until_idle(), 3)
-            self.assertEqual(helpers.payloads(graph.poll("out")), [2, 2, 2])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [2, 2, 2])
 
     def test_count_batches_and_consumes_the_whole_batch(self):
         # This is how "a batch is a very large sample" gets expressed: one rule,
         # not a second engine.
         builder = GraphBuilder("g")
         builder.add("batch", helpers.EmitN, params={"n": 1}, readiness=CountAtLeast(4))
-        builder.add_input("source", "batch.in")
-        builder.add_output("out", "batch.out")
+        builder.add_input("source", "batch.input")
+        builder.add_output("output", "batch.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             for i in range(6):
                 graph.inject("source", Message(i, i))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(len(graph.poll("out")), 4)
+            self.assertEqual(len(graph.poll("output")), 4)
             self.assertEqual(graph.control.total_pending(), 2)
 
     def test_count_on_a_named_port_takes_one_from_the_others(self):
@@ -96,14 +96,14 @@ class TestReadinessRules(unittest.TestCase):
         builder.add("join", helpers.Sum2, readiness=CountAtLeast(3, port="a"))
         builder.add_input("left", "join.a")
         builder.add_input("right", "join.b")
-        builder.add_output("out", "join.out")
+        builder.add_output("output", "join.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             for _ in range(3):
                 graph.inject("left", Message(1, 0))
             for _ in range(2):
                 graph.inject("right", Message(10, 0))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(helpers.payloads(graph.poll("out")), [13])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [13])
             self.assertEqual(graph.control.total_pending(), 1)
 
     def test_count_rejects_a_non_positive_count(self):
@@ -112,11 +112,13 @@ class TestReadinessRules(unittest.TestCase):
 
     def test_a_predicate_rule_drives_firing(self):
         # Fire only once two messages have piled up on the single port.
-        rule = PredicateRule(lambda queues: len(queues["in"]) >= 2, name="two_buffered")
+        rule = PredicateRule(
+            lambda queues: len(queues["input"]) >= 2, name="two_buffered"
+        )
         builder = GraphBuilder("g")
         builder.add("head", helpers.Passthrough, readiness=rule)
-        builder.add_input("source", "head.in")
-        builder.add_output("out", "head.out")
+        builder.add_input("source", "head.input")
+        builder.add_output("output", "head.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             graph.inject("source", Message(1, 1))
             self.assertEqual(graph.run_until_idle(), 0)
@@ -219,11 +221,11 @@ class TestTieBreaking(unittest.TestCase):
         builder.add("twin_b", helpers.TraceNode, params={"trace": trace, "label": "b"})
         builder.add("twin_a", helpers.TraceNode, params={"trace": trace, "label": "a"})
         builder.add("join", helpers.Sum2)
-        builder.connect("twin_b.out", "join.b")
-        builder.connect("twin_a.out", "join.a")
-        builder.add_input("left", "twin_b.in")
-        builder.add_input("right", "twin_a.in")
-        builder.add_output("out", "join.out")
+        builder.connect("twin_b.output", "join.b")
+        builder.connect("twin_a.output", "join.a")
+        builder.add_input("left", "twin_b.input")
+        builder.add_input("right", "twin_a.input")
+        builder.add_output("output", "join.output")
         return builder.build()
 
     def test_every_key_ends_with_the_qualified_id(self):

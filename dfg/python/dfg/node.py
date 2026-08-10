@@ -56,7 +56,7 @@ rule may hand a node several messages at once -- which is what makes a "fire whe
 """
 
 type Outputs = Mapping[str, Sequence[Message[Any]]] | None
-"""What ``run`` returns. ``None``, ``{}``, and ``{"out": ()}`` all mean nothing."""
+"""What ``run`` returns. ``None``, ``{}``, and ``{"output": ()}`` all mean nothing."""
 
 
 class Node(ABC):
@@ -225,7 +225,7 @@ def normalize_outputs(
         raise NodeContractError(
             f"{where}.run returned a bare Message; run returns a mapping of "
             f"output port name to zero or more messages -- wrap it, e.g. "
-            f'return {{"{declared[0].name if declared else "out"}": [msg]}}'
+            f'return {{"{declared[0].name if declared else "output"}": [msg]}}'
         )
     if not isinstance(outputs, Mapping):
         raise NodeContractError(

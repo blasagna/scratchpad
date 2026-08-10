@@ -15,16 +15,16 @@ from dfg.scheduler import ErrorEvent
 class FailOnOdd(Node):
     """Raises for odd payloads, passes even ones through."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         out = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             if message.payload % 2:
                 raise ValueError(f"cannot handle {message.payload}")
             out.append(message)
-        return {"out": out}
+        return {"output": out}
 
 
 def registry():
@@ -37,9 +37,9 @@ def spec(policy):
     builder = GraphBuilder("g")
     builder.add("picky", FailOnOdd, on_error=policy)
     builder.add("after", helpers.Passthrough)
-    builder.connect("picky.out", "after.in")
-    builder.add_input("source", "picky.in")
-    builder.add_output("out", "after.out")
+    builder.connect("picky.output", "after.input")
+    builder.add_input("source", "picky.input")
+    builder.add_output("output", "after.output")
     return builder.build()
 
 
@@ -68,9 +68,9 @@ class TestStop(unittest.TestCase):
             "before", helpers.TraceNode, params={"trace": trace, "label": "before"}
         )
         builder.add("picky", FailOnOdd)
-        builder.connect("before.out", "picky.in")
-        builder.add_input("source", "before.in")
-        builder.add_output("out", "picky.out")
+        builder.connect("before.output", "picky.input")
+        builder.add_input("source", "before.input")
+        builder.add_output("output", "picky.output")
         graph = Graph.instantiate(builder.build(), registry())
         graph.start()
         graph.inject("source", Message(1, 10))
@@ -97,7 +97,7 @@ class TestDrop(unittest.TestCase):
                 graph.inject("source", Message(i, i))
             with self.assertLogs("dfg", level="ERROR"):
                 graph.run_until_idle()
-            self.assertEqual(helpers.payloads(graph.poll("out")), [0, 2])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [0, 2])
             self.assertEqual(graph.control.total_pending(), 0)
 
     def test_the_failure_is_logged_with_a_traceback(self):
@@ -149,7 +149,7 @@ class TestRoute(unittest.TestCase):
                 graph.inject("source", Message(i, i))
             with self.assertLogs("dfg", level="WARNING"):
                 graph.run_until_idle()
-            self.assertEqual(helpers.payloads(graph.poll("out")), [0, 2])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [0, 2])
 
     def test_the_error_topic_has_no_edges(self):
         # An error is observed, never routed into another node's input port -- so
@@ -184,9 +184,9 @@ class TestEdgeOverflowIsNotANodeError(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("fan", helpers.EmitN, params={"n": 5}, on_error="drop")
         builder.add("after", helpers.Passthrough)
-        builder.connect("fan.out", "after.in", capacity=2, on_overflow="error")
-        builder.add_input("source", "fan.in")
-        builder.add_output("out", "after.out")
+        builder.connect("fan.output", "after.input", capacity=2, on_overflow="error")
+        builder.add_input("source", "fan.input")
+        builder.add_output("output", "after.output")
         graph = Graph.instantiate(builder.build(), registry())
         graph.start()
         graph.inject("source", Message("x", 10))
@@ -198,15 +198,17 @@ class TestEdgeOverflowIsNotANodeError(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("fan", helpers.EmitN, params={"n": 5})
         builder.add("after", helpers.Passthrough)
-        builder.connect("fan.out", "after.in", capacity=2, on_overflow="drop_oldest")
-        builder.add_input("source", "fan.in")
-        builder.add_output("out", "after.out")
+        builder.connect(
+            "fan.output", "after.input", capacity=2, on_overflow="drop_oldest"
+        )
+        builder.add_input("source", "fan.input")
+        builder.add_output("output", "after.output")
         with Graph.instantiate(builder.build(), registry()) as graph:
             graph.inject("source", Message("x", 10))
             graph.run_until_idle()
-            stats = graph.control.edge_stats()["fan.out -> after.in"]
+            stats = graph.control.edge_stats()["fan.output -> after.input"]
             self.assertEqual(stats.dropped, 3)
-            self.assertEqual(len(graph.poll("out")), 2)
+            self.assertEqual(len(graph.poll("output")), 2)
 
 
 if __name__ == "__main__":

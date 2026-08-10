@@ -58,8 +58,8 @@ class TestCoreNodes(unittest.TestCase):
     def graph_of(self, type_name, params):
         builder = GraphBuilder("g")
         builder.add("n", type_name, params=params)
-        builder.add_input("source", "n.in")
-        builder.add_output("out", "n.out")
+        builder.add_input("source", "n.input")
+        builder.add_output("output", "n.output")
         return Graph.instantiate(builder.build(), core.register(Registry()))
 
     def test_decimate_keeps_one_in_three(self):
@@ -67,14 +67,14 @@ class TestCoreNodes(unittest.TestCase):
             for i in range(7):
                 graph.inject("source", Message(i, i))
             graph.run_until_idle()
-            self.assertEqual([m.payload for m in graph.poll("out")], [0, 3, 6])
+            self.assertEqual([m.payload for m in graph.poll("output")], [0, 3, 6])
 
     def test_decimate_phase_shifts_which_one_survives(self):
         with self.graph_of(core.Decimate, {"factor": 3, "phase": 2}) as graph:
             for i in range(7):
                 graph.inject("source", Message(i, i))
             graph.run_until_idle()
-            self.assertEqual([m.payload for m in graph.poll("out")], [2, 5])
+            self.assertEqual([m.payload for m in graph.poll("output")], [2, 5])
 
     def test_decimate_rejects_a_factor_below_one(self):
         with self.assertRaises(ParamError):
@@ -87,7 +87,7 @@ class TestCoreNodes(unittest.TestCase):
                     for i in range(n):
                         graph.inject("source", Message(i, i))
                     graph.run_until_idle()
-                    windows = graph.poll("out")
+                    windows = graph.poll("output")
                 self.assertEqual(len(windows), 1 + (n - size) // hop)
                 self.assertTrue(all(len(w.payload) == size for w in windows))
 
@@ -96,7 +96,7 @@ class TestCoreNodes(unittest.TestCase):
             for i in range(7):
                 graph.inject("source", Message(i, i * 1000))
             graph.run_until_idle()
-            windows = graph.poll("out")
+            windows = graph.poll("output")
         self.assertEqual([w.timestamp for w in windows], [0, 2000, 4000])
         self.assertEqual([w.payload[0].payload for w in windows], [0, 2, 4])
 
@@ -105,7 +105,7 @@ class TestCoreNodes(unittest.TestCase):
             for i in range(8):
                 graph.inject("source", Message(i, i))
             graph.run_until_idle()
-            windows = graph.poll("out")
+            windows = graph.poll("output")
         self.assertEqual(
             [[inner.payload for inner in w.payload] for w in windows],
             [[0, 1, 2, 3], [2, 3, 4, 5], [4, 5, 6, 7]],
@@ -117,19 +117,19 @@ class TestCoreNodes(unittest.TestCase):
         builder.add("hold", core.Resample, readiness=AnyInput())
         builder.add_input("slow", "hold.slow")
         builder.add_input("fast", "hold.fast")
-        builder.add_output("out", "hold.out")
+        builder.add_output("output", "hold.output")
         with Graph.instantiate(builder.build(), core.register(Registry())) as graph:
             # Nothing held yet, so nothing comes out.
             graph.inject("slow", Message("frame0", 0))
             graph.run_until_idle()
-            self.assertEqual(graph.poll("out"), ())
+            self.assertEqual(graph.poll("output"), ())
             for i in range(3):
                 graph.inject("fast", Message(f"imu{i}", i))
                 graph.run_until_idle()
             graph.inject("slow", Message("frame1", 10))
             graph.run_until_idle()
             self.assertEqual(
-                [m.payload for m in graph.poll("out")], [("frame1", "imu2")]
+                [m.payload for m in graph.poll("output")], [("frame1", "imu2")]
             )
 
 
@@ -327,8 +327,8 @@ class TestReplayDemo(unittest.TestCase):
             )
 
     def test_the_digest_covers_timestamps(self):
-        one = {"out": (Message("a", 1),)}
-        two = {"out": (Message("a", 2),)}
+        one = {"output": (Message("a", 1),)}
+        two = {"output": (Message("a", 2),)}
         self.assertNotEqual(replay_demo.digest(one), replay_demo.digest(two))
 
     def test_main_runs(self):

@@ -73,15 +73,15 @@ def build_blueprint() -> GraphSpec:
 
     builder.connect("calib.corrected", "fusion.imu")
     builder.connect("fusion.pose", "hold.fast")
-    builder.connect("thin.out", "hold.slow")
-    builder.connect("hold.out", "overlay.in")
-    builder.connect("overlay.out", "gray.in")
-    builder.connect("gray.out", "stats.in")
+    builder.connect("thin.output", "hold.slow")
+    builder.connect("hold.output", "overlay.input")
+    builder.connect("overlay.output", "gray.input")
+    builder.connect("gray.output", "stats.input")
 
     builder.add_input("imu_raw", "calib.raw", type_tag="ImuSample")
-    builder.add_input("frames", "thin.in", type_tag=video.FRAME_RGB)
-    builder.add_output("composited", "overlay.out")
-    builder.add_output("stats", "stats.out")
+    builder.add_input("frames", "thin.input", type_tag=video.FRAME_RGB)
+    builder.add_output("composited", "overlay.output")
+    builder.add_output("stats", "stats.output")
     return builder.build()
 
 
@@ -126,7 +126,7 @@ def main() -> None:
         composited.extend(graph.poll("composited"))
         stats.extend(graph.poll("stats"))
         node_stats = dict(graph.control.node_stats())
-        kept_frames = graph.control.edge_stats()["thin.out -> hold.slow"].enqueued
+        kept_frames = graph.control.edge_stats()["thin.output -> hold.slow"].enqueued
 
     print("Rate mismatch, handled by a node")
     print("=" * 74)

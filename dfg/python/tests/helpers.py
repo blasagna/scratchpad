@@ -57,22 +57,24 @@ def digest(messages: Sequence[Message[Any]]) -> list[tuple[Any, int]]:
 class Passthrough(Node):
     """One in, one out, unchanged."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
-        return {"out": list(inputs.get("in", ()))}
+        return {"output": list(inputs.get("input", ()))}
 
 
 class Double(Node):
     """Doubles a numeric payload, keeping the sample time."""
 
-    INPUTS = (PortSpec("in", type_tag="number"),)
-    OUTPUTS = (PortSpec("out", type_tag="number"),)
+    INPUTS = (PortSpec("input", type_tag="number"),)
+    OUTPUTS = (PortSpec("output", type_tag="number"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         return {
-            "out": [msg.with_payload(msg.payload * 2) for msg in inputs.get("in", ())]
+            "output": [
+                msg.with_payload(msg.payload * 2) for msg in inputs.get("input", ())
+            ]
         }
 
 
@@ -80,37 +82,37 @@ class Sum2(Node):
     """Adds one message from each of two ports. The `all`-readiness workhorse."""
 
     INPUTS = (PortSpec("a", type_tag="number"), PortSpec("b", type_tag="number"))
-    OUTPUTS = (PortSpec("out", type_tag="number"),)
+    OUTPUTS = (PortSpec("output", type_tag="number"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         a = inputs.get("a", ())
         b = inputs.get("b", ())
         total = sum(msg.payload for msg in a) + sum(msg.payload for msg in b)
         newest = max(msg.timestamp for msg in (*a, *b))
-        return {"out": [Message(total, newest)]}
+        return {"output": [Message(total, newest)]}
 
 
 class EmitN(Node):
     """Emits ``n`` messages per firing. The many-outputs case."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS = {"n": 3}
 
     def run(self, inputs: Inputs) -> Outputs:
         out: list[Message[Any]] = []
-        for msg in inputs.get("in", ()):
+        for msg in inputs.get("input", ()):
             out.extend(
                 msg.with_payload((msg.payload, i)) for i in range(self.params["n"])
             )
-        return {"out": out}
+        return {"output": out}
 
 
 class EmitNothing(Node):
     """Consumes and emits nothing. The zero-outputs case."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         del inputs
@@ -120,8 +122,8 @@ class EmitNothing(Node):
 class EmitEmptyMapping(Node):
     """Returns ``{}``, which must mean the same as ``None``."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         del inputs
@@ -129,41 +131,41 @@ class EmitEmptyMapping(Node):
 
 
 class EmitEmptyPort(Node):
-    """Returns ``{"out": ()}``, which must also mean nothing was produced."""
+    """Returns ``{"output": ()}``, which must also mean nothing was produced."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         del inputs
-        return {"out": ()}
+        return {"output": ()}
 
 
 class ReturnBareMessage(Node):
     """Breaks the output contract by returning a message instead of a mapping."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
-        return next(iter(inputs["in"]))  # type: ignore[return-value]
+        return next(iter(inputs["input"]))  # type: ignore[return-value]
 
 
 class ReturnUnknownPort(Node):
     """Breaks the output contract by naming a port it did not declare."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
-        return {"nope": list(inputs.get("in", ()))}
+        return {"nope": list(inputs.get("input", ()))}
 
 
 class NoInputs(Node):
     """A free-running source, which the contract does not allow."""
 
     INPUTS = ()
-    OUTPUTS = (PortSpec("out"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         del inputs
@@ -173,8 +175,8 @@ class NoInputs(Node):
 class RaiseInSetup(Node):
     """``setup`` raises, so the graph must fail to start."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS = {"trace": None, "label": "raiser"}
 
     def setup(self) -> None:
@@ -192,8 +194,8 @@ class RaiseInSetup(Node):
 class RaiseInRun(Node):
     """``run`` raises, so the node's error policy decides what happens."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS = {"trace": None, "label": "failing"}
 
     def setup(self) -> None:
@@ -211,8 +213,8 @@ class RaiseInRun(Node):
 class TraceNode(Node):
     """Appends ``(label, phase)`` to a shared list on every lifecycle call."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS = {"trace": None, "label": "node"}
 
     def setup(self) -> None:
@@ -220,7 +222,7 @@ class TraceNode(Node):
 
     def run(self, inputs: Inputs) -> Outputs:
         _record(self.params, "run")
-        return {"out": list(inputs.get("in", ()))}
+        return {"output": list(inputs.get("input", ()))}
 
     def teardown(self) -> None:
         _record(self.params, "teardown")
@@ -229,8 +231,8 @@ class TraceNode(Node):
 class ParamWatcher(Node):
     """Records the value of a live-changeable parameter it saw on each firing."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS = {"gain": 1, "seen": None, "changes": None}
     MUTABLE_PARAMS = frozenset({"gain"})
 
@@ -238,11 +240,11 @@ class ParamWatcher(Node):
         seen = self.params.get("seen")
         gain = self.params["gain"]
         out: list[Message[Any]] = []
-        for msg in inputs.get("in", ()):
+        for msg in inputs.get("input", ()):
             if seen is not None:
                 seen.append(gain)
             out.append(msg.with_payload(msg.payload * gain))
-        return {"out": out}
+        return {"output": out}
 
     def on_params_changed(self, changes: Mapping[str, Any]) -> None:
         recorded = self.params.get("changes")
@@ -380,13 +382,13 @@ def scheduling_spec(trace: list | None = None, *, side_priority: int = 0) -> Gra
         params={"trace": trace, "label": "side"},
         priority=side_priority,
     )
-    builder.connect("head.out", "chain1.in")
-    builder.connect("chain1.out", "chain2.in")
-    builder.connect("chain2.out", "chain3.in")
-    builder.connect("head.out", "side.in")
-    builder.add_input("source", "head.in")
-    builder.add_output("chained", "chain3.out")
-    builder.add_output("aside", "side.out")
+    builder.connect("head.output", "chain1.input")
+    builder.connect("chain1.output", "chain2.input")
+    builder.connect("chain2.output", "chain3.input")
+    builder.connect("head.output", "side.input")
+    builder.add_input("source", "head.input")
+    builder.add_output("chained", "chain3.output")
+    builder.add_output("aside", "side.output")
     return builder.build()
 
 
@@ -396,7 +398,7 @@ def chain_spec(*, labels: Sequence[str] = ("a", "b", "c"), trace: list | None = 
     for label in labels:
         builder.add("n_" + label, TraceNode, params={"trace": trace, "label": label})
     for left, right in zip(labels, labels[1:]):
-        builder.connect(f"n_{left}.out", f"n_{right}.in")
-    builder.add_input("source", f"n_{labels[0]}.in")
-    builder.add_output("sink", f"n_{labels[-1]}.out")
+        builder.connect(f"n_{left}.output", f"n_{right}.input")
+    builder.add_input("source", f"n_{labels[0]}.input")
+    builder.add_output("sink", f"n_{labels[-1]}.output")
     return builder.build()

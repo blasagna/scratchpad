@@ -53,7 +53,7 @@ class TestSpecs(unittest.TestCase):
         self.assertEqual(spec.params, {"n": 1})
 
     def test_edge_defaults_to_unbounded(self):
-        edge = EdgeSpec(PortRef("a", "out"), PortRef("b", "in"))
+        edge = EdgeSpec(PortRef("a", "output"), PortRef("b", "input"))
         self.assertIsNone(edge.capacity)
         self.assertEqual(edge.on_overflow, "error")
         self.assertEqual(edge.transport, "memory")
@@ -61,7 +61,9 @@ class TestSpecs(unittest.TestCase):
     def test_edge_rejects_a_capacity_below_one(self):
         for capacity in (0, -1):
             with self.subTest(capacity=capacity), self.assertRaises(ValueError):
-                EdgeSpec(PortRef("a", "out"), PortRef("b", "in"), capacity=capacity)
+                EdgeSpec(
+                    PortRef("a", "output"), PortRef("b", "input"), capacity=capacity
+                )
 
     def test_specs_compare_by_value(self):
         # Round-trip tests rely on this: a reloaded blueprint must equal the
@@ -100,10 +102,12 @@ class TestGraphBuilder(unittest.TestCase):
     def test_builds_the_spec_a_hand_written_literal_would(self):
         builder = GraphBuilder("chain", params={"gain": 2})
         builder.add("double", "t.double")
-        builder.add("out", "t.passthrough", on_error="drop", priority=5)
-        builder.connect("double.out", "out.in", capacity=4, on_overflow="drop_oldest")
-        builder.add_input("samples", "double.in", type_tag="number")
-        builder.add_output("result", "out.out")
+        builder.add("tail", "t.passthrough", on_error="drop", priority=5)
+        builder.connect(
+            "double.output", "tail.input", capacity=4, on_overflow="drop_oldest"
+        )
+        builder.add_input("samples", "double.input", type_tag="number")
+        builder.add_output("result", "tail.output")
 
         self.assertEqual(
             builder.build(),
@@ -112,7 +116,7 @@ class TestGraphBuilder(unittest.TestCase):
                 nodes=(
                     NodeSpec(node_id="double", type_name="t.double"),
                     NodeSpec(
-                        node_id="out",
+                        node_id="tail",
                         type_name="t.passthrough",
                         on_error="drop",
                         priority=5,
@@ -120,8 +124,8 @@ class TestGraphBuilder(unittest.TestCase):
                 ),
                 edges=(
                     EdgeSpec(
-                        src=PortRef("double", "out"),
-                        dst=PortRef("out", "in"),
+                        src=PortRef("double", "output"),
+                        dst=PortRef("tail", "input"),
                         capacity=4,
                         on_overflow="drop_oldest",
                     ),
@@ -129,11 +133,11 @@ class TestGraphBuilder(unittest.TestCase):
                 inputs=(
                     GraphInput(
                         name="samples",
-                        targets=(PortRef("double", "in"),),
+                        targets=(PortRef("double", "input"),),
                         type_tag="number",
                     ),
                 ),
-                outputs=(GraphOutput(name="result", source=PortRef("out", "out")),),
+                outputs=(GraphOutput(name="result", source=PortRef("tail", "output")),),
                 params={"gain": 2},
             ),
         )
@@ -149,10 +153,10 @@ class TestGraphBuilder(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("left", "t.double")
         builder.add("right", "t.double")
-        builder.add_input("shared", "left.in", "right.in")
+        builder.add_input("shared", "left.input", "right.input")
         (boundary,) = builder.build().inputs
         self.assertEqual(
-            boundary.targets, (PortRef("left", "in"), PortRef("right", "in"))
+            boundary.targets, (PortRef("left", "input"), PortRef("right", "input"))
         )
 
     def test_build_is_repeatable_and_independent(self):

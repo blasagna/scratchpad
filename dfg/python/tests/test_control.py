@@ -18,8 +18,8 @@ def watcher_spec(seen=None, changes=None):
         helpers.ParamWatcher,
         params={"gain": 1, "seen": seen, "changes": changes},
     )
-    builder.add_input("source", "gainer.in")
-    builder.add_output("out", "gainer.out")
+    builder.add_input("source", "gainer.input")
+    builder.add_output("output", "gainer.output")
     return builder.build()
 
 
@@ -33,7 +33,7 @@ class TestLatency(unittest.TestCase):
             graph.inject("source", Message(1, 0))  # enqueued at tick 0
             clock.advance(500)
             graph.run_until_idle()  # dequeued at tick 500
-            stats = graph.control.edge_stats()["input:source -> n_a.in"]
+            stats = graph.control.edge_stats()["input:source -> n_a.input"]
             self.assertEqual(stats.latency_ns_last, 500)
             self.assertEqual(stats.latency_ns_max, 500)
             self.assertEqual(stats.latency_ns_total, 500)
@@ -50,7 +50,7 @@ class TestLatency(unittest.TestCase):
                 graph.inject("source", Message(i, i * HOUR_NS))
             clock.advance(7)
             graph.run_until_idle()
-            stats = graph.control.edge_stats()["input:source -> n_a.in"]
+            stats = graph.control.edge_stats()["input:source -> n_a.input"]
             self.assertEqual(stats.latency_ns_max, 7)
             self.assertLess(stats.latency_ns_total, 100)
             # The sample times are untouched, and still hours apart.
@@ -69,7 +69,7 @@ class TestLatency(unittest.TestCase):
             graph.inject("source", Message(2, 0))
             clock.advance(30)
             graph.run_until_idle()
-            stats = graph.control.edge_stats()["input:source -> n_a.in"]
+            stats = graph.control.edge_stats()["input:source -> n_a.input"]
             self.assertEqual(stats.latency_ns_last, 30)
             self.assertEqual(stats.latency_ns_max, 30)
             self.assertEqual(stats.latency_ns_mean, 20.0)
@@ -77,7 +77,7 @@ class TestLatency(unittest.TestCase):
     def test_mean_is_zero_before_anything_is_dequeued(self):
         spec = helpers.chain_spec(labels=("a",))
         with Graph.instantiate(spec, helpers.build_registry()) as graph:
-            stats = graph.control.edge_stats()["input:source -> n_a.in"]
+            stats = graph.control.edge_stats()["input:source -> n_a.input"]
             self.assertEqual(stats.latency_ns_mean, 0.0)
 
 
@@ -87,10 +87,10 @@ class TestCounters(unittest.TestCase):
         with Graph.instantiate(spec, helpers.build_registry()) as graph:
             for i in range(3):
                 graph.inject("source", Message(i, i))
-            stats = graph.control.edge_stats()["input:source -> n_a.in"]
+            stats = graph.control.edge_stats()["input:source -> n_a.input"]
             self.assertEqual((stats.enqueued, stats.dequeued, stats.depth), (3, 0, 3))
             graph.run_until_idle()
-            stats = graph.control.edge_stats()["input:source -> n_a.in"]
+            stats = graph.control.edge_stats()["input:source -> n_a.input"]
             self.assertEqual((stats.enqueued, stats.dequeued, stats.depth), (3, 3, 0))
 
     def test_node_counters_track_firings(self):
@@ -109,10 +109,10 @@ class TestCounters(unittest.TestCase):
         spec = helpers.chain_spec(labels=("a", "b"))
         with Graph.instantiate(spec, helpers.build_registry()) as graph:
             graph.inject("source", Message(1, 1))
-            self.assertEqual(graph.control.queue_depth("input:source -> n_a.in"), 1)
+            self.assertEqual(graph.control.queue_depth("input:source -> n_a.input"), 1)
             self.assertEqual(graph.control.total_pending(), 1)
             graph.run_until_idle()
-            self.assertEqual(graph.control.queue_depth("input:source -> n_a.in"), 0)
+            self.assertEqual(graph.control.queue_depth("input:source -> n_a.input"), 0)
             # The output sink still holds the result until it is polled.
             self.assertEqual(graph.control.total_pending(), 1)
             graph.poll("sink")
@@ -132,9 +132,9 @@ class TestCounters(unittest.TestCase):
             self.assertEqual(
                 graph.control.edge_keys(),
                 (
-                    "input:source -> n_a.in",
-                    "n_a.out -> n_b.in",
-                    "n_b.out -> output:sink",
+                    "input:source -> n_a.input",
+                    "n_a.output -> n_b.input",
+                    "n_b.output -> output:sink",
                 ),
             )
 
@@ -253,7 +253,7 @@ class TestFlowControl(unittest.TestCase):
         ) as graph:
             graph.inject("source", Message(1, 10))
             graph.control.reset_pending()
-            stats = graph.control.edge_stats()["input:source -> n_a.in"]
+            stats = graph.control.edge_stats()["input:source -> n_a.input"]
             self.assertEqual(stats.dropped, 0)
             self.assertEqual(stats.depth, 0)
 

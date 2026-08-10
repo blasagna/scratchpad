@@ -55,7 +55,7 @@ class TestVideoNodes(unittest.TestCase):
     def test_to_gray_reduces_a_dimension_and_keeps_uint8(self):
         node = video.ToGray()
         frame = synth_frames(1, width=32, height=16)[0]
-        (out,) = node.run({"in": (frame,)})["out"]
+        (out,) = node.run({"input": (frame,)})["output"]
         self.assertEqual(out.payload.shape, (16, 32))
         self.assertEqual(out.payload.dtype, np.uint8)
         self.assertEqual(out.timestamp, frame.timestamp)
@@ -64,14 +64,16 @@ class TestVideoNodes(unittest.TestCase):
         node = video.ToGray()
         red = np.zeros((1, 1, 3), dtype=np.uint8)
         red[0, 0] = (255, 0, 0)
-        (out,) = node.run({"in": (Message(red, 0),)})["out"]
+        (out,) = node.run({"input": (Message(red, 0),)})["output"]
         self.assertEqual(int(out.payload[0, 0]), round(255 * 0.299))
 
     def test_overlay_changes_only_the_box_pixels(self):
         node = video.OverlayBox(size=6, colour=(0, 255, 0))
         frame = synth_frames(1, width=64, height=48)[0]
         pose = Orientation(roll=0.0, pitch=0.0, accel_magnitude=9.8)
-        (out,) = node.run({"in": (frame.with_payload((frame.payload, pose)),)})["out"]
+        (out,) = node.run({"input": (frame.with_payload((frame.payload, pose)),)})[
+            "output"
+        ]
 
         changed = np.any(out.payload != frame.payload, axis=2)
         rows = np.flatnonzero(changed.any(axis=1))
@@ -87,8 +89,8 @@ class TestVideoNodes(unittest.TestCase):
 
         def box_row(roll):
             pose = Orientation(roll=roll, pitch=0.0, accel_magnitude=9.8)
-            (out,) = node.run({"in": (frame.with_payload((frame.payload, pose)),)})[
-                "out"
+            (out,) = node.run({"input": (frame.with_payload((frame.payload, pose)),)})[
+                "output"
             ]
             green = np.all(out.payload == (0, 255, 0), axis=2)
             return int(np.flatnonzero(green.any(axis=1))[0])
@@ -101,8 +103,8 @@ class TestVideoNodes(unittest.TestCase):
         frame = synth_frames(1, width=64, height=48)[0]
         for roll in (-100.0, 100.0):
             pose = Orientation(roll=roll, pitch=0.0, accel_magnitude=9.8)
-            (out,) = node.run({"in": (frame.with_payload((frame.payload, pose)),)})[
-                "out"
+            (out,) = node.run({"input": (frame.with_payload((frame.payload, pose)),)})[
+                "output"
             ]
             self.assertEqual(out.payload.shape, frame.payload.shape)
 
@@ -110,7 +112,7 @@ class TestVideoNodes(unittest.TestCase):
         node = video.FrameStatsNode(bright_threshold=128)
         grey = np.zeros((4, 4), dtype=np.uint8)
         grey[0, :] = 200
-        (out,) = node.run({"in": (Message(grey, 0),)})["out"]
+        (out,) = node.run({"input": (Message(grey, 0),)})["output"]
         self.assertEqual(out.payload.peak, 200)
         self.assertEqual(out.payload.bright_pixels, 4)
         self.assertAlmostEqual(out.payload.mean, 200 * 4 / 16, places=4)
@@ -118,7 +120,7 @@ class TestVideoNodes(unittest.TestCase):
     def test_downscale_halves_both_dimensions(self):
         node = video.Downscale(factor=2)
         frame = synth_frames(1, width=64, height=48)[0]
-        (out,) = node.run({"in": (frame,)})["out"]
+        (out,) = node.run({"input": (frame,)})["output"]
         self.assertEqual(out.payload.shape, (24, 32, 3))
         self.assertEqual(out.payload.dtype, np.uint8)
 
@@ -127,7 +129,7 @@ class TestVideoNodes(unittest.TestCase):
         node = video.Downscale(factor=5)
         frame = synth_frames(1, width=64, height=48)[0]
         with self.assertRaises(ValueError):
-            node.run({"in": (frame,)})
+            node.run({"input": (frame,)})
 
 
 @unittest.skipUnless(HAVE_NUMPY, NUMPY_REASON)
@@ -162,7 +164,7 @@ class TestVideoPipeline(unittest.TestCase):
             for name, message in self.recording:
                 graph.inject(name, message)
                 graph.run_until_idle()
-            kept = graph.control.edge_stats()["thin.out -> hold.slow"].enqueued
+            kept = graph.control.edge_stats()["thin.output -> hold.slow"].enqueued
             fired = graph.control.node_stats()["thin"].fired
         self.assertEqual(fired, video_pipeline.FRAME_COUNT)
         self.assertEqual(kept, video_pipeline.FRAME_COUNT // video_pipeline.DECIMATE)

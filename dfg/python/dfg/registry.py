@@ -69,8 +69,8 @@ class Registry:
     >>> registry = Registry()
     >>> @registry.node("demo.double")
     ... class Double(Node):
-    ...     INPUTS = (PortSpec("in"),)
-    ...     OUTPUTS = (PortSpec("out"),)
+    ...     INPUTS = (PortSpec("input"),)
+    ...     OUTPUTS = (PortSpec("output"),)
     ...     def run(self, inputs):
     ...         return None
     >>> "demo.double" in registry

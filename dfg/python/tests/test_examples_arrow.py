@@ -41,14 +41,14 @@ class TestBatchFromSamples(unittest.TestCase):
     def test_emits_nothing_until_the_batch_is_full(self):
         node = self.node(4)
         for i in range(3):
-            self.assertEqual(node.run({"in": (sample_message(i),)}), {"out": []})
-        out = node.run({"in": (sample_message(3),)})
-        self.assertEqual(len(out["out"]), 1)
+            self.assertEqual(node.run({"input": (sample_message(i),)}), {"output": []})
+        out = node.run({"input": (sample_message(3),)})
+        self.assertEqual(len(out["output"]), 1)
 
     def test_the_batch_has_the_declared_schema_and_row_count(self):
         node = self.node(3)
-        out = node.run({"in": tuple(sample_message(i) for i in range(3))})
-        (message,) = out["out"]
+        out = node.run({"input": tuple(sample_message(i) for i in range(3))})
+        (message,) = out["output"]
         batch = message.payload
         self.assertIsInstance(batch, pa.RecordBatch)
         self.assertEqual(batch.num_rows, 3)
@@ -57,22 +57,22 @@ class TestBatchFromSamples(unittest.TestCase):
 
     def test_the_batch_carries_its_first_rows_sample_time(self):
         node = self.node(3)
-        out = node.run({"in": tuple(sample_message(i + 5) for i in range(3))})
-        (message,) = out["out"]
+        out = node.run({"input": tuple(sample_message(i + 5) for i in range(3))})
+        (message,) = out["output"]
         self.assertEqual(message.timestamp, 5_000_000)
 
     def test_rows_one_emits_a_batch_per_sample(self):
         # The streaming extreme, and the reason the bet is checkable at all.
         node = self.node(1)
-        out = node.run({"in": tuple(sample_message(i) for i in range(4))})
-        self.assertEqual(len(out["out"]), 4)
-        self.assertTrue(all(m.payload.num_rows == 1 for m in out["out"]))
+        out = node.run({"input": tuple(sample_message(i) for i in range(4))})
+        self.assertEqual(len(out["output"]), 4)
+        self.assertTrue(all(m.payload.num_rows == 1 for m in out["output"]))
 
     def test_a_partial_batch_is_dropped_at_teardown(self):
         # teardown is for releasing; producing output there would produce it after
         # the scheduler stopped looking.
         node = self.node(8)
-        node.run({"in": tuple(sample_message(i) for i in range(3))})
+        node.run({"input": tuple(sample_message(i) for i in range(3))})
         node.teardown()
         self.assertEqual(node._rows, [])
 
@@ -103,14 +103,14 @@ class TestColumnarNodes(unittest.TestCase):
 
     def test_filter_keeps_the_passing_rows(self):
         node = arrow.Filter(column="az", op="greater", value=0.0)
-        (out,) = node.run({"in": (self.batch([1.0, -1.0, 2.0, -3.0]),)})["out"]
+        (out,) = node.run({"input": (self.batch([1.0, -1.0, 2.0, -3.0]),)})["output"]
         self.assertEqual(out.payload.num_rows, 2)
         self.assertEqual(out.payload.column("az").to_pylist(), [1.0, 2.0])
 
     def test_filter_emits_nothing_when_no_row_survives(self):
         # Which saves every downstream node an emptiness check.
         node = arrow.Filter(column="az", op="greater", value=100.0)
-        self.assertEqual(node.run({"in": (self.batch([1.0, 2.0]),)})["out"], [])
+        self.assertEqual(node.run({"input": (self.batch([1.0, 2.0]),)})["output"], [])
 
     def test_filter_rejects_an_unknown_op(self):
         with self.assertRaises(ParamError):
@@ -118,15 +118,15 @@ class TestColumnarNodes(unittest.TestCase):
 
     def test_project_computes_the_magnitude(self):
         node = arrow.Project(keep=["t_ns"], magnitude_name="mag")
-        (out,) = node.run({"in": (self.batch([3.0]),)})["out"]
+        (out,) = node.run({"input": (self.batch([3.0]),)})["output"]
         self.assertEqual(out.payload.schema.names, ["t_ns", "mag"])
         self.assertAlmostEqual(out.payload.column("mag")[0].as_py(), 3.0, places=9)
 
     def test_aggregate_reduces_a_batch_to_scalars(self):
         project = arrow.Project(keep=["t_ns"], magnitude_name="mag")
         aggregate = arrow.Aggregate(column="mag")
-        (projected,) = project.run({"in": (self.batch([3.0, 4.0]),)})["out"]
-        (out,) = aggregate.run({"in": (projected,)})["out"]
+        (projected,) = project.run({"input": (self.batch([3.0, 4.0]),)})["output"]
+        (out,) = aggregate.run({"input": (projected,)})["output"]
         self.assertEqual(out.payload["rows"], 2)
         self.assertAlmostEqual(out.payload["sum"], 7.0, places=9)
         self.assertAlmostEqual(out.payload["min"], 3.0, places=9)
@@ -135,8 +135,8 @@ class TestColumnarNodes(unittest.TestCase):
     def test_to_table_accumulates_everything_so_far(self):
         node = arrow.ToTable()
         node.setup()
-        first = node.run({"in": (self.batch([1.0, 2.0]),)})["out"][0]
-        second = node.run({"in": (self.batch([3.0]),)})["out"][0]
+        first = node.run({"input": (self.batch([1.0, 2.0]),)})["output"][0]
+        second = node.run({"input": (self.batch([3.0]),)})["output"][0]
         self.assertIsInstance(first.payload, pa.Table)
         self.assertEqual(first.payload.num_rows, 2)
         self.assertEqual(second.payload.num_rows, 3)

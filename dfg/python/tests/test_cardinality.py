@@ -19,8 +19,8 @@ from dfg.ports import PortSpec
 def one_node_graph(type_name, *, params=None, registry=None):
     builder = GraphBuilder("g")
     builder.add("n", type_name, params=params or {})
-    builder.add_input("source", "n.in")
-    builder.add_output("out", "n.out")
+    builder.add_input("source", "n.input")
+    builder.add_output("output", "n.output")
     return Graph.instantiate(builder.build(), registry or helpers.build_registry())
 
 
@@ -29,19 +29,19 @@ class TestZero(unittest.TestCase):
         with one_node_graph(helpers.EmitNothing) as graph:
             graph.inject("source", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(graph.poll("out"), ())
+            self.assertEqual(graph.poll("output"), ())
 
     def test_an_empty_mapping_produces_nothing(self):
         with one_node_graph(helpers.EmitEmptyMapping) as graph:
             graph.inject("source", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(graph.poll("out"), ())
+            self.assertEqual(graph.poll("output"), ())
 
     def test_an_empty_port_produces_nothing(self):
         with one_node_graph(helpers.EmitEmptyPort) as graph:
             graph.inject("source", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
-            self.assertEqual(graph.poll("out"), ())
+            self.assertEqual(graph.poll("output"), ())
 
     def test_a_node_that_produces_nothing_still_counts_as_fired(self):
         # The node ran; it just had nothing to say. Conflating the two would make a
@@ -55,9 +55,9 @@ class TestZero(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("silent", helpers.EmitNothing)
         builder.add("after", helpers.Passthrough)
-        builder.connect("silent.out", "after.in")
-        builder.add_input("source", "silent.in")
-        builder.add_output("out", "after.out")
+        builder.connect("silent.output", "after.input")
+        builder.add_input("source", "silent.input")
+        builder.add_output("output", "after.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             graph.inject("source", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
@@ -70,7 +70,7 @@ class TestMany(unittest.TestCase):
             graph.inject("source", Message("x", 10))
             graph.run_until_idle()
             self.assertEqual(
-                helpers.payloads(graph.poll("out")),
+                helpers.payloads(graph.poll("output")),
                 [("x", 0), ("x", 1), ("x", 2)],
             )
 
@@ -79,28 +79,28 @@ class TestMany(unittest.TestCase):
             graph.inject("source", Message("x", 4242))
             graph.run_until_idle()
             self.assertEqual(
-                [m.timestamp for m in graph.poll("out")], [4242, 4242, 4242]
+                [m.timestamp for m in graph.poll("output")], [4242, 4242, 4242]
             )
 
     def test_all_of_them_reach_a_downstream_node(self):
         builder = GraphBuilder("g")
         builder.add("fan", helpers.EmitN, params={"n": 4})
         builder.add("after", helpers.Passthrough)
-        builder.connect("fan.out", "after.in")
-        builder.add_input("source", "fan.in")
-        builder.add_output("out", "after.out")
+        builder.connect("fan.output", "after.input")
+        builder.add_input("source", "fan.input")
+        builder.add_output("output", "after.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             graph.inject("source", Message("x", 10))
             # One firing of `fan`, then one of `after` per message it produced.
             self.assertEqual(graph.run_until_idle(), 5)
-            self.assertEqual(len(graph.poll("out")), 4)
+            self.assertEqual(len(graph.poll("output")), 4)
 
 
 class TestDecimation(unittest.TestCase):
     def test_a_decimator_emits_on_every_nth_firing_only(self):
         class Decimate(Node):
-            INPUTS = (PortSpec("in"),)
-            OUTPUTS = (PortSpec("out"),)
+            INPUTS = (PortSpec("input"),)
+            OUTPUTS = (PortSpec("output"),)
             PARAMS = {"factor": 3}
 
             def setup(self) -> None:
@@ -108,11 +108,11 @@ class TestDecimation(unittest.TestCase):
 
             def run(self, inputs: Inputs) -> Outputs:
                 out = []
-                for message in inputs.get("in", ()):
+                for message in inputs.get("input", ()):
                     self._seen += 1
                     if self._seen % self.params["factor"] == 0:
                         out.append(message)
-                return {"out": out}
+                return {"output": out}
 
         registry = helpers.build_registry()
         registry.register(Decimate)
@@ -120,7 +120,7 @@ class TestDecimation(unittest.TestCase):
             for i in range(7):
                 graph.inject("source", Message(i, i))
             self.assertEqual(graph.run_until_idle(), 7)
-            self.assertEqual(helpers.payloads(graph.poll("out")), [2, 5])
+            self.assertEqual(helpers.payloads(graph.poll("output")), [2, 5])
 
 
 class TestContractViolations(unittest.TestCase):

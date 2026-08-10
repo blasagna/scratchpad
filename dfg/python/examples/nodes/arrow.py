@@ -55,8 +55,8 @@ class BatchFromSamples(Node):
     :class:`examples.nodes.core.Window`.
     """
 
-    INPUTS = (PortSpec("in", type_tag="ImuSample"),)
-    OUTPUTS = (PortSpec("out", type_tag=RECORD_BATCH),)
+    INPUTS = (PortSpec("input", type_tag="ImuSample"),)
+    OUTPUTS = (PortSpec("output", type_tag=RECORD_BATCH),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"rows": REQUIRED}
 
     def __init__(self, **params: Any) -> None:
@@ -70,7 +70,7 @@ class BatchFromSamples(Node):
     def run(self, inputs: Inputs) -> Outputs:
         wanted = self.params["rows"]
         batches: list[Message[pa.RecordBatch]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             sample = message.payload
             self._rows.append(
                 (
@@ -85,7 +85,7 @@ class BatchFromSamples(Node):
             )
             if len(self._rows) == wanted:
                 batches.append(self._emit())
-        return {"out": batches}
+        return {"output": batches}
 
     def teardown(self) -> None:
         # A partial batch is dropped rather than emitted: teardown is for releasing,
@@ -110,8 +110,8 @@ class Filter(Node):
     saves every downstream node an emptiness check.
     """
 
-    INPUTS = (PortSpec("in", type_tag=RECORD_BATCH),)
-    OUTPUTS = (PortSpec("out", type_tag=RECORD_BATCH),)
+    INPUTS = (PortSpec("input", type_tag=RECORD_BATCH),)
+    OUTPUTS = (PortSpec("output", type_tag=RECORD_BATCH),)
     PARAMS: ClassVar[Mapping[str, Any]] = {
         "column": REQUIRED,
         "op": "greater",
@@ -136,20 +136,20 @@ class Filter(Node):
         compare = self.OPS[self.params["op"]]
         column, value = self.params["column"], self.params["value"]
         out: list[Message[pa.RecordBatch]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             batch = message.payload
             mask = compare(batch.column(column), value)
             filtered = batch.filter(mask)
             if filtered.num_rows:
                 out.append(message.with_payload(filtered))
-        return {"out": out}
+        return {"output": out}
 
 
 class Project(Node):
     """Selects columns and adds a computed accelerometer magnitude."""
 
-    INPUTS = (PortSpec("in", type_tag=RECORD_BATCH),)
-    OUTPUTS = (PortSpec("out", type_tag=RECORD_BATCH),)
+    INPUTS = (PortSpec("input", type_tag=RECORD_BATCH),)
+    OUTPUTS = (PortSpec("output", type_tag=RECORD_BATCH),)
     PARAMS: ClassVar[Mapping[str, Any]] = {
         "keep": ("t_ns",),
         "magnitude_name": "accel_magnitude",
@@ -159,7 +159,7 @@ class Project(Node):
         keep = list(self.params["keep"])
         name = self.params["magnitude_name"]
         out: list[Message[pa.RecordBatch]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             batch = message.payload
             squares = pc.add(
                 pc.add(
@@ -174,7 +174,7 @@ class Project(Node):
                     pa.RecordBatch.from_arrays(arrays, names=[*keep, name])
                 )
             )
-        return {"out": out}
+        return {"output": out}
 
 
 class Aggregate(Node):
@@ -185,14 +185,14 @@ class Aggregate(Node):
     ``rows=1`` versus ``rows=64`` comparison needs.
     """
 
-    INPUTS = (PortSpec("in", type_tag=RECORD_BATCH),)
-    OUTPUTS = (PortSpec("out", type_tag="aggregate"),)
+    INPUTS = (PortSpec("input", type_tag=RECORD_BATCH),)
+    OUTPUTS = (PortSpec("output", type_tag="aggregate"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"column": "accel_magnitude"}
 
     def run(self, inputs: Inputs) -> Outputs:
         column = self.params["column"]
         out: list[Message[dict[str, Any]]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             values = message.payload.column(column)
             out.append(
                 message.with_payload(
@@ -204,7 +204,7 @@ class Aggregate(Node):
                     }
                 )
             )
-        return {"out": out}
+        return {"output": out}
 
 
 class ToTable(Node):
@@ -215,18 +215,18 @@ class ToTable(Node):
     only works because a node is allowed to keep state.
     """
 
-    INPUTS = (PortSpec("in", type_tag=RECORD_BATCH),)
-    OUTPUTS = (PortSpec("out", type_tag=TABLE),)
+    INPUTS = (PortSpec("input", type_tag=RECORD_BATCH),)
+    OUTPUTS = (PortSpec("output", type_tag=TABLE),)
 
     def setup(self) -> None:
         self._batches: list[pa.RecordBatch] = []
 
     def run(self, inputs: Inputs) -> Outputs:
         out: list[Message[pa.Table]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             self._batches.append(message.payload)
             out.append(message.with_payload(pa.Table.from_batches(list(self._batches))))
-        return {"out": out}
+        return {"output": out}
 
 
 def register(registry: Registry) -> Registry:

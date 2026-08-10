@@ -69,9 +69,9 @@ class TestInjectAndPoll(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("left", helpers.Double)
         builder.add("right", helpers.Double)
-        builder.add_input("shared", "left.in", "right.in")
-        builder.add_output("l", "left.out")
-        builder.add_output("r", "right.out")
+        builder.add_input("shared", "left.input", "right.input")
+        builder.add_output("l", "left.output")
+        builder.add_output("r", "right.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             graph.inject("shared", Message(3, 10))
             self.assertEqual(graph.run_until_idle(), 2)
@@ -138,13 +138,13 @@ class TestTaps(unittest.TestCase):
         builder.add("head", helpers.Double)
         builder.add("left", helpers.Passthrough)
         builder.add("right", helpers.Passthrough)
-        builder.connect("head.out", "left.in")
-        builder.connect("head.out", "right.in")
-        builder.add_input("source", "head.in")
-        builder.add_output("l", "left.out")
-        builder.add_output("r", "right.out")
+        builder.connect("head.output", "left.input")
+        builder.connect("head.output", "right.input")
+        builder.add_input("source", "head.input")
+        builder.add_output("l", "left.output")
+        builder.add_output("r", "right.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
-            graph.subscribe("head.out", lambda name, m: seen.append(m.payload))
+            graph.subscribe("head.output", lambda name, m: seen.append(m.payload))
             graph.inject("source", Message(3, 10))
             graph.run_until_idle()
             # Both consumers got it...
@@ -199,7 +199,7 @@ class TestTaps(unittest.TestCase):
             helpers.chain_spec(labels=("a",)), helpers.build_registry()
         ) as graph:
             subscription = graph.subscribe(
-                "n_a.out", lambda name, m: seen.append(m.payload)
+                "n_a.output", lambda name, m: seen.append(m.payload)
             )
             graph.inject("source", Message(1, 10))
             graph.run_until_idle()
@@ -215,7 +215,7 @@ class TestTaps(unittest.TestCase):
         with Graph.instantiate(
             helpers.chain_spec(labels=("a",)), helpers.build_registry()
         ) as graph:
-            with graph.subscribe("n_a.out", lambda name, m: seen.append(m.payload)):
+            with graph.subscribe("n_a.output", lambda name, m: seen.append(m.payload)):
                 graph.inject("source", Message(1, 10))
                 graph.run_until_idle()
             graph.inject("source", Message(2, 20))
@@ -238,7 +238,7 @@ class TestTaps(unittest.TestCase):
             spec = helpers.chain_spec(labels=("a", "b"))
             with Graph.instantiate(spec, helpers.build_registry()) as graph:
                 if subscribe:
-                    graph.subscribe("n_a.out", lambda name, m: None)
+                    graph.subscribe("n_a.output", lambda name, m: None)
                 graph.inject("source", Message(1, 10))
                 graph.run_until_idle()
                 return helpers.digest(graph.poll("sink"))
@@ -252,11 +252,11 @@ class TestPublishOrder(unittest.TestCase):
         from dfg.ports import PortSpec
 
         class TwoOut(Node):
-            INPUTS = (PortSpec("in"),)
+            INPUTS = (PortSpec("input"),)
             OUTPUTS = (PortSpec("first"), PortSpec("second"))
 
             def run(self, inputs: Inputs) -> Outputs:
-                messages = list(inputs.get("in", ()))
+                messages = list(inputs.get("input", ()))
                 # Deliberately built in the wrong order.
                 return {"second": messages, "first": messages}
 
@@ -265,7 +265,7 @@ class TestPublishOrder(unittest.TestCase):
         seen: list[str] = []
         builder = GraphBuilder("g")
         builder.add("n", TwoOut)
-        builder.add_input("source", "n.in")
+        builder.add_input("source", "n.input")
         builder.add_output("a", "n.first")
         builder.add_output("b", "n.second")
         with Graph.instantiate(builder.build(), registry) as graph:
@@ -278,12 +278,12 @@ class TestPublishOrder(unittest.TestCase):
     def test_two_outputs_may_alias_the_same_port(self):
         builder = GraphBuilder("g")
         builder.add("n", helpers.Double)
-        builder.add_input("source", "n.in")
-        builder.add_output("primary", "n.out")
-        builder.add_output("copy", "n.out")
+        builder.add_input("source", "n.input")
+        builder.add_output("primary", "n.output")
+        builder.add_output("copy", "n.output")
         seen: list[int] = []
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
-            graph.subscribe("n.out", lambda name, m: seen.append(m.payload))
+            graph.subscribe("n.output", lambda name, m: seen.append(m.payload))
             graph.inject("source", Message(4, 10))
             graph.run_until_idle()
             self.assertEqual(helpers.payloads(graph.poll("primary")), [8])

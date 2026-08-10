@@ -40,19 +40,19 @@ class FrameStats:
 class ToGray(Node):
     """Converts RGB to luma with the Rec. 601 weights."""
 
-    INPUTS = (PortSpec("in", type_tag=FRAME_RGB),)
-    OUTPUTS = (PortSpec("out", type_tag=FRAME_GRAY),)
+    INPUTS = (PortSpec("input", type_tag=FRAME_RGB),)
+    OUTPUTS = (PortSpec("output", type_tag=FRAME_GRAY),)
 
     WEIGHTS: ClassVar[tuple[float, float, float]] = (0.299, 0.587, 0.114)
 
     def run(self, inputs: Inputs) -> Outputs:
         weights = np.array(self.WEIGHTS, dtype=np.float32)
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             frame = np.asarray(message.payload)
             luma = frame.astype(np.float32) @ weights
             out.append(message.with_payload(np.round(luma).astype(np.uint8)))
-        return {"out": out}
+        return {"output": out}
 
 
 class OverlayBox(Node):
@@ -63,8 +63,8 @@ class OverlayBox(Node):
     roll. Only the box's pixels change, so a test can check exactly that.
     """
 
-    INPUTS = (PortSpec("in", type_tag="frame_and_pose"),)
-    OUTPUTS = (PortSpec("out", type_tag=FRAME_RGB),)
+    INPUTS = (PortSpec("input", type_tag="frame_and_pose"),)
+    OUTPUTS = (PortSpec("output", type_tag=FRAME_RGB),)
     PARAMS: ClassVar[Mapping[str, Any]] = {
         "size": 6,
         "colour": (0, 255, 0),
@@ -76,7 +76,7 @@ class OverlayBox(Node):
         colour = np.array(self.params["colour"], dtype=np.uint8)
         gain = self.params["gain"]
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             frame, pose = message.payload
             frame = np.asarray(frame)
             height, width = frame.shape[0], frame.shape[1]
@@ -87,7 +87,7 @@ class OverlayBox(Node):
             marked = frame.copy()
             marked[top : top + size, left : left + size] = colour
             out.append(message.with_payload(marked))
-        return {"out": out}
+        return {"output": out}
 
 
 class FrameStatsNode(Node):
@@ -98,14 +98,14 @@ class FrameStatsNode(Node):
     than after it.
     """
 
-    INPUTS = (PortSpec("in", type_tag=FRAME_GRAY),)
-    OUTPUTS = (PortSpec("out", type_tag="FrameStats"),)
+    INPUTS = (PortSpec("input", type_tag=FRAME_GRAY),)
+    OUTPUTS = (PortSpec("output", type_tag="FrameStats"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"bright_threshold": 128}
 
     def run(self, inputs: Inputs) -> Outputs:
         threshold = self.params["bright_threshold"]
         out: list[Message[FrameStats]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             frame = np.asarray(message.payload)
             out.append(
                 message.with_payload(
@@ -116,7 +116,7 @@ class FrameStatsNode(Node):
                     )
                 )
             )
-        return {"out": out}
+        return {"output": out}
 
 
 class Downscale(Node):
@@ -127,14 +127,14 @@ class Downscale(Node):
     quietly.
     """
 
-    INPUTS = (PortSpec("in", type_tag=FRAME_RGB),)
-    OUTPUTS = (PortSpec("out", type_tag=FRAME_RGB),)
+    INPUTS = (PortSpec("input", type_tag=FRAME_RGB),)
+    OUTPUTS = (PortSpec("output", type_tag=FRAME_RGB),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"factor": 2}
 
     def run(self, inputs: Inputs) -> Outputs:
         factor = self.params["factor"]
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             frame = np.asarray(message.payload)
             height, width = frame.shape[0], frame.shape[1]
             if height % factor or width % factor:
@@ -147,7 +147,7 @@ class Downscale(Node):
             )
             averaged = reshaped.mean(axis=(1, 3))
             out.append(message.with_payload(np.round(averaged).astype(np.uint8)))
-        return {"out": out}
+        return {"output": out}
 
 
 def register(registry: Registry) -> Registry:

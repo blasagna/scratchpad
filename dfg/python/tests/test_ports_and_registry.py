@@ -54,7 +54,7 @@ class TestNodeParams(unittest.TestCase):
 
     def test_missing_required_parameter_is_rejected(self):
         class NeedsOne(Node):
-            INPUTS = (PortSpec("in"),)
+            INPUTS = (PortSpec("input"),)
             PARAMS = {"size": REQUIRED}
 
             def run(self, inputs):
@@ -90,11 +90,11 @@ class TestNodeParams(unittest.TestCase):
 
     def test_ports_are_answerable_from_the_class(self):
         self.assertEqual([p.name for p in helpers.Sum2.input_ports({})], ["a", "b"])
-        self.assertEqual([p.name for p in helpers.Sum2.output_ports({})], ["out"])
+        self.assertEqual([p.name for p in helpers.Sum2.output_ports({})], ["output"])
 
     def test_parameter_dependent_ports(self):
         class Splitter(Node):
-            INPUTS = (PortSpec("in"),)
+            INPUTS = (PortSpec("input"),)
             PARAMS = {"ways": 2}
 
             @classmethod
@@ -111,34 +111,36 @@ class TestNodeParams(unittest.TestCase):
 
 
 class TestOutputContract(unittest.TestCase):
-    declared = (PortSpec("out"), PortSpec("other"))
+    declared = (PortSpec("output"), PortSpec("other"))
 
     def normalize(self, outputs):
         return normalize_outputs(outputs, self.declared, where="n")
 
     def test_none_and_empty_forms_all_mean_nothing(self):
-        for outputs in (None, {}, {"out": ()}, {"out": [], "other": ()}):
+        for outputs in (None, {}, {"output": ()}, {"output": [], "other": ()}):
             with self.subTest(outputs=outputs):
                 self.assertEqual(self.normalize(outputs), {})
 
     def test_several_messages_keep_their_order(self):
         messages = [Message(i, i) for i in range(3)]
-        self.assertEqual(self.normalize({"out": messages}), {"out": tuple(messages)})
+        self.assertEqual(
+            self.normalize({"output": messages}), {"output": tuple(messages)}
+        )
 
     def test_ports_come_back_in_declared_order_not_returned_order(self):
         # Publishing order must not depend on how an author happened to build a
         # dict, so the declared order wins.
-        result = self.normalize({"other": [Message(1, 1)], "out": [Message(2, 2)]})
-        self.assertEqual(list(result), ["out", "other"])
+        result = self.normalize({"other": [Message(1, 1)], "output": [Message(2, 2)]})
+        self.assertEqual(list(result), ["output", "other"])
 
     def test_a_bare_message_is_rejected_with_advice(self):
         with self.assertRaises(NodeContractError) as caught:
             self.normalize(Message(1, 1))
-        self.assertIn('return {"out": [msg]}', str(caught.exception))
+        self.assertIn('return {"output": [msg]}', str(caught.exception))
 
     def test_a_bare_message_on_a_port_is_rejected(self):
         with self.assertRaises(NodeContractError) as caught:
-            self.normalize({"out": Message(1, 1)})
+            self.normalize({"output": Message(1, 1)})
         self.assertIn("wrap it in a list", str(caught.exception))
 
     def test_an_undeclared_port_is_rejected(self):
@@ -148,7 +150,7 @@ class TestOutputContract(unittest.TestCase):
 
     def test_a_non_message_element_is_rejected(self):
         with self.assertRaises(NodeContractError) as caught:
-            self.normalize({"out": [1, 2]})
+            self.normalize({"output": [1, 2]})
         self.assertIn("must be a Message", str(caught.exception))
 
     def test_a_non_mapping_return_is_rejected(self):
@@ -157,7 +159,7 @@ class TestOutputContract(unittest.TestCase):
 
     def test_a_string_on_a_port_is_rejected_rather_than_iterated(self):
         with self.assertRaises(NodeContractError):
-            self.normalize({"out": "oops"})
+            self.normalize({"output": "oops"})
 
 
 class TestRegistry(unittest.TestCase):
@@ -211,8 +213,8 @@ class TestRegistry(unittest.TestCase):
         # Validation runs before any node is constructed, so the registry has to
         # answer port and parameter questions from the class.
         class Explodes(Node):
-            INPUTS = (PortSpec("in"),)
-            OUTPUTS = (PortSpec("out"),)
+            INPUTS = (PortSpec("input"),)
+            OUTPUTS = (PortSpec("output"),)
             PARAMS = {"x": 1}
 
             def __init__(self, **params):
@@ -224,8 +226,8 @@ class TestRegistry(unittest.TestCase):
         registry = Registry()
         registry.register("t.explodes", Explodes)
         info = registry.describe("t.explodes")
-        self.assertEqual([p.name for p in info.input_ports({})], ["in"])
-        self.assertEqual([p.name for p in info.output_ports({})], ["out"])
+        self.assertEqual([p.name for p in info.input_ports({})], ["input"])
+        self.assertEqual([p.name for p in info.output_ports({})], ["output"])
         self.assertEqual(info.params, {"x": 1})
 
     def test_factory_registration_carries_explicit_descriptors(self):
@@ -237,13 +239,13 @@ class TestRegistry(unittest.TestCase):
         registry.register_factory(
             "t.factory",
             make,
-            inputs=(PortSpec("in"),),
-            outputs=(PortSpec("out"),),
+            inputs=(PortSpec("input"),),
+            outputs=(PortSpec("output"),),
             params={"gain": 2},
         )
         info = registry.describe("t.factory")
         self.assertIsNone(info.node_cls)
-        self.assertEqual([p.name for p in info.input_ports({})], ["in"])
+        self.assertEqual([p.name for p in info.input_ports({})], ["input"])
         self.assertEqual(info.params, {"gain": 2})
         self.assertEqual(registry.create("t.factory", {"gain": 5}).params["n"], 5)
 

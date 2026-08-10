@@ -113,8 +113,8 @@ class TestNestingTwoDeep(unittest.TestCase):
     def build(self):
         inner = GraphBuilder("inner")
         inner.add("double", helpers.Double)
-        inner.add_input("x", "double.in")
-        inner.add_output("y", "double.out")
+        inner.add_input("x", "double.input")
+        inner.add_output("y", "double.output")
         inner_spec = inner.build()
 
         middle = GraphBuilder("middle")
@@ -126,22 +126,24 @@ class TestNestingTwoDeep(unittest.TestCase):
         root = GraphBuilder("root")
         root.add_subgraph("mid", middle_spec)
         root.add("tail", helpers.Passthrough)
-        root.connect("mid.y", "tail.in")
+        root.connect("mid.y", "tail.input")
         root.add_input("source", "mid.x")
-        root.add_output("result", "tail.out")
+        root.add_output("result", "tail.output")
         return root.build()
 
     def test_alias_chains_resolve_through_every_level(self):
         flat = flatten(self.build(), helpers.build_registry())
         self.assertIn("mid.deep.double", flat.nodes)
-        self.assertEqual(flat.aliases["mid.deep.y"], ("mid.deep.double", "out"))
-        self.assertEqual(flat.aliases["mid.y"], ("mid.deep.double", "out"))
-        self.assertEqual(flat.outputs["result"], ("tail", "out"))
-        self.assertEqual(flat.inputs["source"], (("mid.deep.double", "in"),))
+        self.assertEqual(flat.aliases["mid.deep.y"], ("mid.deep.double", "output"))
+        self.assertEqual(flat.aliases["mid.y"], ("mid.deep.double", "output"))
+        self.assertEqual(flat.outputs["result"], ("tail", "output"))
+        self.assertEqual(flat.inputs["source"], (("mid.deep.double", "input"),))
 
     def test_an_edge_across_two_boundaries_lands_on_the_real_port(self):
         flat = flatten(self.build(), helpers.build_registry())
-        self.assertEqual(flat.writer_of(("tail", "in")).src, ("mid.deep.double", "out"))
+        self.assertEqual(
+            flat.writer_of(("tail", "input")).src, ("mid.deep.double", "output")
+        )
 
 
 class TestSiblingNamespaces(unittest.TestCase):
@@ -156,7 +158,7 @@ class TestSiblingNamespaces(unittest.TestCase):
         root.connect("right.pose", "merge.b")
         root.add_input("left_imu", "left.imu")
         root.add_input("right_imu", "right.imu")
-        root.add_output("total", "merge.out")
+        root.add_output("total", "merge.output")
 
         flat = flatten(root.build(), helpers.build_registry())
         self.assertEqual(flat.aliases["left.pose"], ("left.update", "fused"))
@@ -169,8 +171,8 @@ class TestGraphParameters(unittest.TestCase):
     def build(self, *, override=None):
         inner = GraphBuilder("inner", params={"n": 2})
         inner.add("emit", helpers.EmitN, params={"n": ParamRef("n")})
-        inner.add_input("x", "emit.in")
-        inner.add_output("y", "emit.out")
+        inner.add_input("x", "emit.input")
+        inner.add_output("y", "emit.output")
 
         root = GraphBuilder("root", params={"outer_n": 5})
         root.add_subgraph("sub", inner.build(), params=override or {})
@@ -197,8 +199,8 @@ class TestGraphParameters(unittest.TestCase):
     def test_an_unresolvable_reference_is_reported(self):
         inner = GraphBuilder("inner")
         inner.add("emit", helpers.EmitN, params={"n": ParamRef("missing")})
-        inner.add_input("x", "emit.in")
-        inner.add_output("y", "emit.out")
+        inner.add_input("x", "emit.input")
+        inner.add_output("y", "emit.output")
         root = GraphBuilder("root")
         root.add_subgraph("sub", inner.build())
         root.add_input("source", "sub.x")
@@ -224,11 +226,11 @@ class TestGraphAlgorithms(unittest.TestCase):
         builder.add("n_b", helpers.Double)
         builder.add("n_a", helpers.Double)
         builder.add("merge", helpers.Sum2)
-        builder.connect("n_b.out", "merge.b")
-        builder.connect("n_a.out", "merge.a")
-        builder.add_input("left", "n_b.in")
-        builder.add_input("right", "n_a.in")
-        builder.add_output("out", "merge.out")
+        builder.connect("n_b.output", "merge.b")
+        builder.connect("n_a.output", "merge.a")
+        builder.add_input("left", "n_b.input")
+        builder.add_input("right", "n_a.input")
+        builder.add_output("output", "merge.output")
         flat = flatten(builder.build(), helpers.build_registry())
         self.assertEqual(topological_order(flat), ("n_a", "n_b", "merge"))
 
@@ -239,11 +241,11 @@ class TestGraphAlgorithms(unittest.TestCase):
         builder.add("head", helpers.Double)
         builder.add("mid", helpers.Double)
         builder.add("tail", helpers.Sum2)
-        builder.connect("head.out", "mid.in")
-        builder.connect("head.out", "tail.a")
-        builder.connect("mid.out", "tail.b")
-        builder.add_input("source", "head.in")
-        builder.add_output("out", "tail.out")
+        builder.connect("head.output", "mid.input")
+        builder.connect("head.output", "tail.a")
+        builder.connect("mid.output", "tail.b")
+        builder.add_input("source", "head.input")
+        builder.add_output("output", "tail.output")
         flat = flatten(builder.build(), helpers.build_registry())
         self.assertEqual(levels(flat), {"head": 0, "mid": 1, "tail": 2})
 
@@ -255,10 +257,10 @@ class TestGraphAlgorithms(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("a", helpers.Sum2)
         builder.add("b", helpers.Double)
-        builder.connect("a.out", "b.in")
-        builder.connect("b.out", "a.b")
+        builder.connect("a.output", "b.input")
+        builder.connect("b.output", "a.b")
         builder.add_input("source", "a.a")
-        builder.add_output("out", "b.out")
+        builder.add_output("output", "b.output")
         flat = flatten(builder.build(), helpers.build_registry())
         cycle = find_cycle(flat)
         self.assertIsNotNone(cycle)

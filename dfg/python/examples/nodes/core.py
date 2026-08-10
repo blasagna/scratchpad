@@ -21,11 +21,11 @@ from dfg.registry import Registry
 class Passthrough(Node):
     """Forwards its input unchanged. Useful as a graph's named boundary."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
-        return {"out": list(inputs.get("in", ()))}
+        return {"output": list(inputs.get("input", ()))}
 
 
 class Decimate(Node):
@@ -36,8 +36,8 @@ class Decimate(Node):
     express this without a side channel.
     """
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"factor": 2, "phase": 0}
 
     def __init__(self, **params: Any) -> None:
@@ -52,11 +52,11 @@ class Decimate(Node):
         factor = self.params["factor"]
         phase = self.params["phase"] % factor
         kept: list[Message[Any]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             if self._seen % factor == phase:
                 kept.append(message)
             self._seen += 1
-        return {"out": kept}
+        return {"output": kept}
 
 
 class Window(Node):
@@ -70,8 +70,8 @@ class Window(Node):
         hop: How far the window advances between emissions. ``hop < size`` overlaps.
     """
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out", type_tag="window"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output", type_tag="window"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"size": REQUIRED, "hop": REQUIRED}
 
     def __init__(self, **params: Any) -> None:
@@ -86,7 +86,7 @@ class Window(Node):
     def run(self, inputs: Inputs) -> Outputs:
         size, hop = self.params["size"], self.params["hop"]
         windows: list[Message[Any]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             if self._skip:
                 # Only reachable when hop > size, where the frames have gaps.
                 self._skip -= 1
@@ -103,7 +103,7 @@ class Window(Node):
                 self._skip = hop - size
             else:
                 del self._buffer[:hop]
-        return {"out": windows}
+        return {"output": windows}
 
 
 class Merge(Node):
@@ -116,12 +116,12 @@ class Merge(Node):
     """
 
     INPUTS = (PortSpec("a"), PortSpec("b"))
-    OUTPUTS = (PortSpec("out"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         merged = [*inputs.get("a", ()), *inputs.get("b", ())]
         merged.sort(key=lambda message: message.timestamp)
-        return {"out": merged}
+        return {"output": merged}
 
 
 class Resample(Node):
@@ -140,7 +140,7 @@ class Resample(Node):
     """
 
     INPUTS = (PortSpec("slow"), PortSpec("fast"))
-    OUTPUTS = (PortSpec("out"),)
+    OUTPUTS = (PortSpec("output"),)
 
     def setup(self) -> None:
         self._held: Message[Any] | None = None
@@ -152,7 +152,7 @@ class Resample(Node):
             return None
         held = self._held
         return {
-            "out": [
+            "output": [
                 message.with_payload((message.payload, held.payload))
                 for message in inputs.get("slow", ())
             ]
@@ -162,18 +162,18 @@ class Resample(Node):
 class Counter(Node):
     """Counts messages and emits the running total."""
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out", type_tag="count"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output", type_tag="count"),)
 
     def setup(self) -> None:
         self._count = 0
 
     def run(self, inputs: Inputs) -> Outputs:
         out: list[Message[int]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             self._count += 1
             out.append(message.with_payload(self._count))
-        return {"out": out}
+        return {"output": out}
 
 
 class Recorder(Node):
@@ -184,16 +184,16 @@ class Recorder(Node):
     blueprint -- this exists to show that a node is allowed to be boring.
     """
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"sink": None}
 
     def run(self, inputs: Inputs) -> Outputs:
         sink = self.params["sink"]
-        messages = list(inputs.get("in", ()))
+        messages = list(inputs.get("input", ()))
         if sink is not None:
             sink.extend(messages)
-        return {"out": messages}
+        return {"output": messages}
 
 
 class Trace(Node):
@@ -203,8 +203,8 @@ class Trace(Node):
     a trace of unlabelled nodes is not worth printing.
     """
 
-    INPUTS = (PortSpec("in"),)
-    OUTPUTS = (PortSpec("out"),)
+    INPUTS = (PortSpec("input"),)
+    OUTPUTS = (PortSpec("output"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"trace": None, "label": REQUIRED}
 
     def setup(self) -> None:
@@ -212,7 +212,7 @@ class Trace(Node):
 
     def run(self, inputs: Inputs) -> Outputs:
         self._record("run")
-        return {"out": list(inputs.get("in", ()))}
+        return {"output": list(inputs.get("input", ()))}
 
     def teardown(self) -> None:
         self._record("teardown")
@@ -244,12 +244,12 @@ class FailRun(Trace):
 
     def run(self, inputs: Inputs) -> Outputs:
         self._record("run")
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             if not message.payload:
                 raise ValueError(
                     f"{self.params['label']}: bad sample {message.payload!r}"
                 )
-        return {"out": list(inputs.get("in", ()))}
+        return {"output": list(inputs.get("input", ()))}
 
 
 def register(registry: Registry) -> Registry:

@@ -35,8 +35,8 @@ class Frame(Node):
     which for a 512-sample block reframed at 256/128 is three windows per block.
     """
 
-    INPUTS = (PortSpec("in", type_tag=AUDIO_BLOCK),)
-    OUTPUTS = (PortSpec("out", type_tag=AUDIO_WINDOW),)
+    INPUTS = (PortSpec("input", type_tag=AUDIO_BLOCK),)
+    OUTPUTS = (PortSpec("output", type_tag=AUDIO_WINDOW),)
     PARAMS: ClassVar[Mapping[str, Any]] = {
         "size": REQUIRED,
         "hop": REQUIRED,
@@ -65,7 +65,7 @@ class Frame(Node):
         size, hop = self.params["size"], self.params["hop"]
         rate = self.params["sample_rate"]
         windows: list[Message[np.ndarray]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             block = np.asarray(message.payload, dtype=np.float32)
             if not self._have_origin:
                 self._origin = round(message.timestamp * rate / 1_000_000_000)
@@ -77,7 +77,7 @@ class Frame(Node):
                 windows.append(Message(window, timestamp))
                 self._buffer = self._buffer[hop:]
                 self._origin += hop
-        return {"out": windows}
+        return {"output": windows}
 
 
 class Hann(Node):
@@ -87,52 +87,52 @@ class Hann(Node):
     in the window from smearing across the whole spectrum.
     """
 
-    INPUTS = (PortSpec("in", type_tag=AUDIO_WINDOW),)
-    OUTPUTS = (PortSpec("out", type_tag=AUDIO_WINDOW),)
+    INPUTS = (PortSpec("input", type_tag=AUDIO_WINDOW),)
+    OUTPUTS = (PortSpec("output", type_tag=AUDIO_WINDOW),)
 
     def setup(self) -> None:
         self._window: np.ndarray | None = None
 
     def run(self, inputs: Inputs) -> Outputs:
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             samples = np.asarray(message.payload, dtype=np.float32)
             if self._window is None or self._window.size != samples.size:
                 self._window = np.hanning(samples.size).astype(np.float32)
             out.append(message.with_payload(samples * self._window))
-        return {"out": out}
+        return {"output": out}
 
 
 class Rms(Node):
     """Root-mean-square level of a window, in dB relative to full scale."""
 
-    INPUTS = (PortSpec("in", type_tag=AUDIO_WINDOW),)
-    OUTPUTS = (PortSpec("out", type_tag="db"),)
+    INPUTS = (PortSpec("input", type_tag=AUDIO_WINDOW),)
+    OUTPUTS = (PortSpec("output", type_tag="db"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {"floor_db": -120.0}
 
     def run(self, inputs: Inputs) -> Outputs:
         floor = self.params["floor_db"]
         out: list[Message[float]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             samples = np.asarray(message.payload, dtype=np.float64)
             rms = float(np.sqrt(np.mean(np.square(samples))))
             db = 20.0 * np.log10(rms) if rms > 0.0 else floor
             out.append(message.with_payload(max(float(db), floor)))
-        return {"out": out}
+        return {"output": out}
 
 
 class Spectrum(Node):
     """Magnitude spectrum of a real window, via ``numpy.fft.rfft``."""
 
-    INPUTS = (PortSpec("in", type_tag=AUDIO_WINDOW),)
-    OUTPUTS = (PortSpec("out", type_tag=SPECTRUM),)
+    INPUTS = (PortSpec("input", type_tag=AUDIO_WINDOW),)
+    OUTPUTS = (PortSpec("output", type_tag=SPECTRUM),)
 
     def run(self, inputs: Inputs) -> Outputs:
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             samples = np.asarray(message.payload, dtype=np.float32)
             out.append(message.with_payload(np.abs(np.fft.rfft(samples))))
-        return {"out": out}
+        return {"output": out}
 
 
 class PeakBin(Node):
@@ -141,8 +141,8 @@ class PeakBin(Node):
     Ignores bin 0 (DC), which any real signal with an offset would otherwise win with.
     """
 
-    INPUTS = (PortSpec("in", type_tag=SPECTRUM),)
-    OUTPUTS = (PortSpec("out", type_tag="hz"),)
+    INPUTS = (PortSpec("input", type_tag=SPECTRUM),)
+    OUTPUTS = (PortSpec("output", type_tag="hz"),)
     PARAMS: ClassVar[Mapping[str, Any]] = {
         "sample_rate": 16_000.0,
         "window_size": REQUIRED,
@@ -152,13 +152,13 @@ class PeakBin(Node):
         rate = self.params["sample_rate"]
         size = self.params["window_size"]
         out: list[Message[float]] = []
-        for message in inputs.get("in", ()):
+        for message in inputs.get("input", ()):
             magnitudes = np.asarray(message.payload)
             if magnitudes.size < 2:
                 continue
             index = int(np.argmax(magnitudes[1:])) + 1
             out.append(message.with_payload(index * rate / size))
-        return {"out": out}
+        return {"output": out}
 
 
 class Pack(Node):
@@ -170,12 +170,12 @@ class Pack(Node):
     """
 
     INPUTS = (PortSpec("level", type_tag="db"), PortSpec("peak", type_tag="hz"))
-    OUTPUTS = (PortSpec("out", type_tag="audio_summary"),)
+    OUTPUTS = (PortSpec("output", type_tag="audio_summary"),)
 
     def run(self, inputs: Inputs) -> Outputs:
         pairs = zip(inputs.get("level", ()), inputs.get("peak", ()))
         return {
-            "out": [
+            "output": [
                 level.with_payload((round(level.payload, 3), round(peak.payload, 2)))
                 for level, peak in pairs
             ]
