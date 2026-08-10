@@ -4,28 +4,31 @@ These are the nodes that carry the parts of the contract nothing domain-specific
 should have to re-derive: decimation is the zero-output case, windowing is the
 many-output case, and merge is what you use instead of wiring two producers into
 one input port.
+
+They are also the reference for the typed node form -- parameters as annotated
+class attributes, input ports as ``run``'s keyword-only parameters, output ports
+as the fields of a nested ``Out``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import Annotated, Any, NamedTuple
 
 from dfg.errors import ParamError
 from dfg.message import Message
-from dfg.node import REQUIRED, Inputs, Node, Outputs
-from dfg.ports import PortSpec
+from dfg.node import Emit, In, Node
+from dfg.ports import Port
 from dfg.registry import Registry
 
 
 class Passthrough(Node):
     """Forwards its input unchanged. Useful as a graph's named boundary."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
+    class Out(NamedTuple):
+        output: Emit[Any]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        return {"output": list(inputs.get("input", ()))}
+    def run(self, *, input: In[Any] = ()) -> Out:
+        return self.Out(output=input)
 
 
 class Decimate(Node):
@@ -36,27 +39,27 @@ class Decimate(Node):
     express this without a side channel.
     """
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"factor": 2, "phase": 0}
+    factor: int = 2
+    phase: int = 0
 
-    def __init__(self, **params: Any) -> None:
-        super().__init__(**params)
-        if self.params["factor"] < 1:
-            raise ParamError(f"factor must be at least 1, got {self.params['factor']}")
+    class Out(NamedTuple):
+        output: Emit[Any]
+
+    def __post_init__(self) -> None:
+        if self.factor < 1:
+            raise ParamError(f"factor must be at least 1, got {self.factor}")
 
     def setup(self) -> None:
         self._seen = 0
 
-    def run(self, inputs: Inputs) -> Outputs:
-        factor = self.params["factor"]
-        phase = self.params["phase"] % factor
+    def run(self, *, input: In[Any] = ()) -> Out:
+        phase = self.phase % self.factor
         kept: list[Message[Any]] = []
-        for message in inputs.get("input", ()):
-            if self._seen % factor == phase:
+        for message in input:
+            if self._seen % self.factor == phase:
                 kept.append(message)
             self._seen += 1
-        return {"output": kept}
+        return self.Out(output=tuple(kept))
 
 
 class Window(Node):
@@ -70,23 +73,24 @@ class Window(Node):
         hop: How far the window advances between emissions. ``hop < size`` overlaps.
     """
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output", type_tag="window"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"size": REQUIRED, "hop": REQUIRED}
+    size: int
+    hop: int
 
-    def __init__(self, **params: Any) -> None:
-        super().__init__(**params)
-        if self.params["size"] < 1 or self.params["hop"] < 1:
+    class Out(NamedTuple):
+        output: Annotated[Emit[tuple[Message[Any], ...]], Port("window")]
+
+    def __post_init__(self) -> None:
+        if self.size < 1 or self.hop < 1:
             raise ParamError("size and hop must both be at least 1")
 
     def setup(self) -> None:
         self._buffer: list[Message[Any]] = []
         self._skip = 0
 
-    def run(self, inputs: Inputs) -> Outputs:
-        size, hop = self.params["size"], self.params["hop"]
+    def run(self, *, input: In[Any] = ()) -> Out:
+        size, hop = self.size, self.hop
         windows: list[Message[Any]] = []
-        for message in inputs.get("input", ()):
+        for message in input:
             if self._skip:
                 # Only reachable when hop > size, where the frames have gaps.
                 self._skip -= 1
@@ -103,7 +107,7 @@ class Window(Node):
                 self._skip = hop - size
             else:
                 del self._buffer[:hop]
-        return {"output": windows}
+        return self.Out(output=tuple(windows))
 
 
 class Merge(Node):
@@ -115,13 +119,13 @@ class Merge(Node):
     time they actually carry.
     """
 
-    INPUTS = (PortSpec("a"), PortSpec("b"))
-    OUTPUTS = (PortSpec("output"),)
+    class Out(NamedTuple):
+        output: Emit[Any]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        merged = [*inputs.get("a", ()), *inputs.get("b", ())]
+    def run(self, *, a: In[Any] = (), b: In[Any] = ()) -> Out:
+        merged = [*a, *b]
         merged.sort(key=lambda message: message.timestamp)
-        return {"output": merged}
+        return self.Out(output=tuple(merged))
 
 
 class Resample(Node):
@@ -139,41 +143,41 @@ class Resample(Node):
     where the node is wired -- the node itself cannot know how it will be used.
     """
 
-    INPUTS = (PortSpec("slow"), PortSpec("fast"))
-    OUTPUTS = (PortSpec("output"),)
+    class Out(NamedTuple):
+        output: Emit[tuple[Any, Any]]
 
     def setup(self) -> None:
         self._held: Message[Any] | None = None
 
-    def run(self, inputs: Inputs) -> Outputs:
-        for message in inputs.get("fast", ()):
+    def run(self, *, slow: In[Any] = (), fast: In[Any] = ()) -> Out | None:
+        for message in fast:
             self._held = message
         if self._held is None:
             return None
         held = self._held
-        return {
-            "output": [
+        return self.Out(
+            output=tuple(
                 message.with_payload((message.payload, held.payload))
-                for message in inputs.get("slow", ())
-            ]
-        }
+                for message in slow
+            )
+        )
 
 
 class Counter(Node):
     """Counts messages and emits the running total."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output", type_tag="count"),)
+    class Out(NamedTuple):
+        output: Annotated[Emit[int], Port("count")]
 
     def setup(self) -> None:
         self._count = 0
 
-    def run(self, inputs: Inputs) -> Outputs:
+    def run(self, *, input: In[Any] = ()) -> Out:
         out: list[Message[int]] = []
-        for message in inputs.get("input", ()):
+        for message in input:
             self._count += 1
             out.append(message.with_payload(self._count))
-        return {"output": out}
+        return self.Out(output=tuple(out))
 
 
 class Recorder(Node):
@@ -184,43 +188,43 @@ class Recorder(Node):
     blueprint -- this exists to show that a node is allowed to be boring.
     """
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"sink": None}
+    sink: list[Message[Any]] | None = None
 
-    def run(self, inputs: Inputs) -> Outputs:
-        sink = self.params["sink"]
-        messages = list(inputs.get("input", ()))
-        if sink is not None:
-            sink.extend(messages)
-        return {"output": messages}
+    class Out(NamedTuple):
+        output: Emit[Any]
+
+    def run(self, *, input: In[Any] = ()) -> Out:
+        if self.sink is not None:
+            self.sink.extend(input)
+        return self.Out(output=input)
 
 
 class Trace(Node):
     """Appends ``(label, phase)`` to a shared list on every lifecycle call.
 
-    What ``lifecycle_demo`` prints. ``label`` defaults to nothing useful on purpose:
-    a trace of unlabelled nodes is not worth printing.
+    What ``lifecycle_demo`` prints. ``label`` has no default on purpose: a trace of
+    unlabelled nodes is not worth printing.
     """
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"trace": None, "label": REQUIRED}
+    trace: list[tuple[str, str]] | None = None
+    label: str
+
+    class Out(NamedTuple):
+        output: Emit[Any]
 
     def setup(self) -> None:
         self._record("setup")
 
-    def run(self, inputs: Inputs) -> Outputs:
+    def run(self, *, input: In[Any] = ()) -> Out:
         self._record("run")
-        return {"output": list(inputs.get("input", ()))}
+        return self.Out(output=input)
 
     def teardown(self) -> None:
         self._record("teardown")
 
     def _record(self, phase: str) -> None:
-        trace = self.params["trace"]
-        if trace is not None:
-            trace.append((self.params["label"], phase))
+        if self.trace is not None:
+            self.trace.append((self.label, phase))
 
 
 class FailSetup(Trace):
@@ -232,24 +236,23 @@ class FailSetup(Trace):
 
     def setup(self) -> None:
         self._record("setup")
-        raise RuntimeError(f"{self.params['label']}: could not acquire the device")
+        raise RuntimeError(f"{self.label}: could not acquire the device")
 
 
 class FailRun(Trace):
     """Raises in ``run`` for payloads its policy should reject.
 
     Fails on any payload that is falsy, so a demo can send a mix and watch the error
-    policy decide.
+    policy decide. Its ``run`` is annotated ``-> Trace.Out`` because a class body's
+    scope is not inherited, so a bare ``Out`` would not resolve here.
     """
 
-    def run(self, inputs: Inputs) -> Outputs:
+    def run(self, *, input: In[Any] = ()) -> Trace.Out:
         self._record("run")
-        for message in inputs.get("input", ()):
+        for message in input:
             if not message.payload:
-                raise ValueError(
-                    f"{self.params['label']}: bad sample {message.payload!r}"
-                )
-        return {"output": list(inputs.get("input", ()))}
+                raise ValueError(f"{self.label}: bad sample {message.payload!r}")
+        return self.Out(output=input)
 
 
 def register(registry: Registry) -> Registry:

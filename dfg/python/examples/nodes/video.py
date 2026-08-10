@@ -13,15 +13,15 @@ newest pose, and :class:`OverlayBox` consumes the pair it produces.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Annotated, ClassVar, NamedTuple
 
 import numpy as np
 
 from dfg.message import Message
-from dfg.node import Inputs, Node, Outputs
-from dfg.ports import PortSpec
+from dfg.node import Emit, In, Node
+from dfg.ports import Port
 from dfg.registry import Registry
 
 FRAME_RGB = "frame_rgb"
@@ -40,19 +40,21 @@ class FrameStats:
 class ToGray(Node):
     """Converts RGB to luma with the Rec. 601 weights."""
 
-    INPUTS = (PortSpec("input", type_tag=FRAME_RGB),)
-    OUTPUTS = (PortSpec("output", type_tag=FRAME_GRAY),)
-
+    # ClassVar, so it is a constant rather than a parameter: nobody reconfigures
+    # the Rec. 601 weights per instance.
     WEIGHTS: ClassVar[tuple[float, float, float]] = (0.299, 0.587, 0.114)
 
-    def run(self, inputs: Inputs) -> Outputs:
+    class Out(NamedTuple):
+        output: Annotated[Emit[np.ndarray], Port(FRAME_GRAY)]
+
+    def run(self, *, input: Annotated[In[np.ndarray], Port(FRAME_RGB)] = ()) -> Out:
         weights = np.array(self.WEIGHTS, dtype=np.float32)
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("input", ()):
+        for message in input:
             frame = np.asarray(message.payload)
             luma = frame.astype(np.float32) @ weights
             out.append(message.with_payload(np.round(luma).astype(np.uint8)))
-        return {"output": out}
+        return self.Out(output=tuple(out))
 
 
 class OverlayBox(Node):
@@ -63,20 +65,23 @@ class OverlayBox(Node):
     roll. Only the box's pixels change, so a test can check exactly that.
     """
 
-    INPUTS = (PortSpec("input", type_tag="frame_and_pose"),)
-    OUTPUTS = (PortSpec("output", type_tag=FRAME_RGB),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {
-        "size": 6,
-        "colour": (0, 255, 0),
-        "gain": 40.0,
-    }
+    size: int = 6
+    colour: Sequence[int] = (0, 255, 0)
+    gain: float = 40.0
 
-    def run(self, inputs: Inputs) -> Outputs:
-        size = self.params["size"]
-        colour = np.array(self.params["colour"], dtype=np.uint8)
-        gain = self.params["gain"]
+    class Out(NamedTuple):
+        output: Annotated[Emit[np.ndarray], Port(FRAME_RGB)]
+
+    def run(
+        self,
+        *,
+        input: Annotated[In[tuple[np.ndarray, object]], Port("frame_and_pose")] = (),
+    ) -> Out:
+        size = self.size
+        colour = np.array(self.colour, dtype=np.uint8)
+        gain = self.gain
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("input", ()):
+        for message in input:
             frame, pose = message.payload
             frame = np.asarray(frame)
             height, width = frame.shape[0], frame.shape[1]
@@ -87,7 +92,7 @@ class OverlayBox(Node):
             marked = frame.copy()
             marked[top : top + size, left : left + size] = colour
             out.append(message.with_payload(marked))
-        return {"output": out}
+        return self.Out(output=tuple(out))
 
 
 class FrameStatsNode(Node):
@@ -98,14 +103,15 @@ class FrameStatsNode(Node):
     than after it.
     """
 
-    INPUTS = (PortSpec("input", type_tag=FRAME_GRAY),)
-    OUTPUTS = (PortSpec("output", type_tag="FrameStats"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"bright_threshold": 128}
+    bright_threshold: int = 128
 
-    def run(self, inputs: Inputs) -> Outputs:
-        threshold = self.params["bright_threshold"]
+    class Out(NamedTuple):
+        output: Annotated[Emit[FrameStats], Port("FrameStats")]
+
+    def run(self, *, input: Annotated[In[np.ndarray], Port(FRAME_GRAY)] = ()) -> Out:
+        threshold = self.bright_threshold
         out: list[Message[FrameStats]] = []
-        for message in inputs.get("input", ()):
+        for message in input:
             frame = np.asarray(message.payload)
             out.append(
                 message.with_payload(
@@ -116,7 +122,7 @@ class FrameStatsNode(Node):
                     )
                 )
             )
-        return {"output": out}
+        return self.Out(output=tuple(out))
 
 
 class Downscale(Node):
@@ -127,14 +133,15 @@ class Downscale(Node):
     quietly.
     """
 
-    INPUTS = (PortSpec("input", type_tag=FRAME_RGB),)
-    OUTPUTS = (PortSpec("output", type_tag=FRAME_RGB),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"factor": 2}
+    factor: int = 2
 
-    def run(self, inputs: Inputs) -> Outputs:
-        factor = self.params["factor"]
+    class Out(NamedTuple):
+        output: Annotated[Emit[np.ndarray], Port(FRAME_RGB)]
+
+    def run(self, *, input: Annotated[In[np.ndarray], Port(FRAME_RGB)] = ()) -> Out:
+        factor = self.factor
         out: list[Message[np.ndarray]] = []
-        for message in inputs.get("input", ()):
+        for message in input:
             frame = np.asarray(message.payload)
             height, width = frame.shape[0], frame.shape[1]
             if height % factor or width % factor:
@@ -147,7 +154,7 @@ class Downscale(Node):
             )
             averaged = reshaped.mean(axis=(1, 3))
             out.append(message.with_payload(np.round(averaged).astype(np.uint8)))
-        return {"output": out}
+        return self.Out(output=tuple(out))
 
 
 def register(registry: Registry) -> Registry:

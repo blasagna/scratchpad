@@ -12,13 +12,13 @@ time in columns. Same node contract, same scheduler.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any, ClassVar
+from typing import Annotated, Any, NamedTuple
 
 from dfg.message import Message
-from dfg.node import Inputs, Node, Outputs
-from dfg.ports import PortSpec
+from dfg.node import Emit, In, Node
+from dfg.ports import Port
 from dfg.registry import Registry
 
 GRAVITY_M_S2 = 9.80665
@@ -62,21 +62,22 @@ class Calibrate(Node):
     and a subgraph whose parameters are decorative is not worth having.
     """
 
-    INPUTS = (PortSpec("raw", type_tag="ImuSample"),)
-    OUTPUTS = (PortSpec("corrected", type_tag="ImuSample"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {
-        "accel_bias": (0.0, 0.0, 0.0),
-        "gyro_bias": (0.0, 0.0, 0.0),
-        "scale": 1.0,
-        "rate_hz": 200.0,
-    }
+    # Sequence rather than tuple: JSON has one sequence type, so a bias written
+    # as a tuple comes back from a serialized blueprint as a list.
+    accel_bias: Sequence[float] = (0.0, 0.0, 0.0)
+    gyro_bias: Sequence[float] = (0.0, 0.0, 0.0)
+    scale: float = 1.0
+    rate_hz: float = 200.0
 
-    def run(self, inputs: Inputs) -> Outputs:
-        abx, aby, abz = self.params["accel_bias"]
-        gbx, gby, gbz = self.params["gyro_bias"]
-        scale = self.params["scale"]
+    class Out(NamedTuple):
+        corrected: Annotated[Emit[ImuSample], Port("ImuSample")]
+
+    def run(self, *, raw: Annotated[In[ImuSample], Port("ImuSample")] = ()) -> Out:
+        abx, aby, abz = self.accel_bias
+        gbx, gby, gbz = self.gyro_bias
+        scale = self.scale
         out: list[Message[ImuSample]] = []
-        for message in inputs.get("raw", ()):
+        for message in raw:
             sample = message.payload
             out.append(
                 message.with_payload(
@@ -90,7 +91,7 @@ class Calibrate(Node):
                     )
                 )
             )
-        return {"corrected": out}
+        return self.Out(corrected=tuple(out))
 
 
 class Predict(Node):
@@ -99,18 +100,19 @@ class Predict(Node):
     The "predict" half of a complementary filter: fast, drifts.
     """
 
-    INPUTS = (PortSpec("imu", type_tag="ImuSample"),)
-    OUTPUTS = (PortSpec("state", type_tag="Orientation"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"rate_hz": 200.0}
+    rate_hz: float = 200.0
+
+    class Out(NamedTuple):
+        state: Annotated[Emit[Orientation], Port("Orientation")]
 
     def setup(self) -> None:
         self._roll = 0.0
         self._pitch = 0.0
 
-    def run(self, inputs: Inputs) -> Outputs:
-        dt = 1.0 / self.params["rate_hz"]
+    def run(self, *, imu: Annotated[In[ImuSample], Port("ImuSample")] = ()) -> Out:
+        dt = 1.0 / self.rate_hz
         out: list[Message[Orientation]] = []
-        for message in inputs.get("imu", ()):
+        for message in imu:
             sample = message.payload
             self._roll += sample.gx * dt
             self._pitch += sample.gy * dt
@@ -118,7 +120,7 @@ class Predict(Node):
             out.append(
                 message.with_payload(Orientation(self._roll, self._pitch, magnitude))
             )
-        return {"state": out}
+        return self.Out(state=tuple(out))
 
 
 class Update(Node):
@@ -129,16 +131,19 @@ class Update(Node):
     scheduler knowing anything about time.
     """
 
-    INPUTS = (
-        PortSpec("imu", type_tag="ImuSample"),
-        PortSpec("state", type_tag="Orientation"),
-    )
-    OUTPUTS = (PortSpec("fused", type_tag="Orientation"),)
-    PARAMS: ClassVar[Mapping[str, Any]] = {"alpha": 0.02}
+    alpha: float = 0.02
 
-    def run(self, inputs: Inputs) -> Outputs:
-        alpha = self.params["alpha"]
-        pairs = zip(inputs.get("imu", ()), inputs.get("state", ()))
+    class Out(NamedTuple):
+        fused: Annotated[Emit[Orientation], Port("Orientation")]
+
+    def run(
+        self,
+        *,
+        imu: Annotated[In[ImuSample], Port("ImuSample")] = (),
+        state: Annotated[In[Orientation], Port("Orientation")] = (),
+    ) -> Out:
+        alpha = self.alpha
+        pairs = zip(imu, state)
         out: list[Message[Orientation]] = []
         for imu_message, state_message in pairs:
             sample = imu_message.payload
@@ -153,7 +158,7 @@ class Update(Node):
                 accel_magnitude=predicted.accel_magnitude,
             )
             out.append(state_message.with_payload(fused))
-        return {"fused": out}
+        return self.Out(fused=tuple(out))
 
 
 class GravitySplit(Node):
@@ -162,21 +167,20 @@ class GravitySplit(Node):
     Two output ports, which is the other half of why ``run`` returns a mapping.
     """
 
-    INPUTS = (PortSpec("imu", type_tag="ImuSample"),)
-    OUTPUTS = (
-        PortSpec("gravity", type_tag="ImuSample"),
-        PortSpec("linear", type_tag="ImuSample"),
-    )
-    PARAMS: ClassVar[Mapping[str, Any]] = {"alpha": 0.1}
+    alpha: float = 0.1
+
+    class Out(NamedTuple):
+        gravity: Annotated[Emit[ImuSample], Port("ImuSample")]
+        linear: Annotated[Emit[ImuSample], Port("ImuSample")]
 
     def setup(self) -> None:
         self._gravity = (0.0, 0.0, GRAVITY_M_S2)
 
-    def run(self, inputs: Inputs) -> Outputs:
-        alpha = self.params["alpha"]
+    def run(self, *, imu: Annotated[In[ImuSample], Port("ImuSample")] = ()) -> Out:
+        alpha = self.alpha
         gravity_out: list[Message[ImuSample]] = []
         linear_out: list[Message[ImuSample]] = []
-        for message in inputs.get("imu", ()):
+        for message in imu:
             sample = message.payload
             self._gravity = tuple(
                 (1 - alpha) * held + alpha * measured
@@ -195,7 +199,7 @@ class GravitySplit(Node):
                     )
                 )
             )
-        return {"gravity": gravity_out, "linear": linear_out}
+        return self.Out(gravity=tuple(gravity_out), linear=tuple(linear_out))
 
 
 class Stats(Node):
@@ -205,12 +209,16 @@ class Stats(Node):
     which is what the ``count`` readiness rule and the windowing node exist for.
     """
 
-    INPUTS = (PortSpec("window", type_tag="window"),)
-    OUTPUTS = (PortSpec("stats", type_tag="ImuStats"),)
+    class Out(NamedTuple):
+        stats: Annotated[Emit[ImuStats], Port("ImuStats")]
 
-    def run(self, inputs: Inputs) -> Outputs:
+    def run(
+        self,
+        *,
+        window: Annotated[In[tuple[Message[ImuSample], ...]], Port("window")] = (),
+    ) -> Out:
         out: list[Message[ImuStats]] = []
-        for message in inputs.get("window", ()):
+        for message in window:
             samples = [inner.payload for inner in message.payload]
             magnitudes = [math.sqrt(s.ax**2 + s.ay**2 + s.az**2) for s in samples]
             gyros = [math.sqrt(s.gx**2 + s.gy**2 + s.gz**2) for s in samples]
@@ -223,7 +231,7 @@ class Stats(Node):
                     )
                 )
             )
-        return {"stats": out}
+        return self.Out(stats=tuple(out))
 
 
 class Overlay(Node):
@@ -233,20 +241,25 @@ class Overlay(Node):
     thing is :func:`examples.nodes.video.OverlayBox`.
     """
 
-    INPUTS = (PortSpec("frame"), PortSpec("pose", type_tag="Orientation"))
-    OUTPUTS = (PortSpec("composited"),)
+    class Out(NamedTuple):
+        composited: Emit[str]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        pairs = zip(inputs.get("frame", ()), inputs.get("pose", ()))
-        return {
-            "composited": [
-                frame.with_payload(
-                    f"{frame.payload} roll={pose.payload.roll:+.4f} "
-                    f"pitch={pose.payload.pitch:+.4f}"
+    def run(
+        self,
+        *,
+        frame: In[Any] = (),
+        pose: Annotated[In[Orientation], Port("Orientation")] = (),
+    ) -> Out:
+        pairs = zip(frame, pose)
+        return self.Out(
+            composited=tuple(
+                frame_message.with_payload(
+                    f"{frame_message.payload} roll={pose_message.payload.roll:+.4f} "
+                    f"pitch={pose_message.payload.pitch:+.4f}"
                 )
-                for frame, pose in pairs
-            ]
-        }
+                for frame_message, pose_message in pairs
+            )
+        )
 
 
 def register(registry: Registry) -> Registry:

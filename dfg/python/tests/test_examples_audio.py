@@ -142,7 +142,7 @@ class TestAnalysisNodes(unittest.TestCase):
         node = audio.Hann()
         node.setup()
         ones = Message(np.ones(8, dtype=np.float32), 0)
-        (out,) = node.run({"input": (ones,)})["output"]
+        (out,) = node.run(input=(ones,)).output
         self.assertAlmostEqual(float(out.payload[0]), 0.0, places=6)
         self.assertGreater(float(out.payload[4]), 0.9)
         self.assertEqual(out.payload.dtype, np.float32)
@@ -150,23 +150,17 @@ class TestAnalysisNodes(unittest.TestCase):
     def test_rms_of_a_unit_sine_is_about_minus_three_db(self):
         node = audio.Rms()
         samples = np.sin(np.linspace(0, 2 * np.pi, 1024, endpoint=False))
-        (out,) = node.run({"input": (Message(samples.astype(np.float32), 0),)})[
-            "output"
-        ]
+        (out,) = node.run(input=(Message(samples.astype(np.float32), 0),)).output
         self.assertAlmostEqual(out.payload, -3.01, places=1)
 
     def test_rms_of_silence_hits_the_floor(self):
         node = audio.Rms(floor_db=-120.0)
-        (out,) = node.run({"input": (Message(np.zeros(16, dtype=np.float32), 0),)})[
-            "output"
-        ]
+        (out,) = node.run(input=(Message(np.zeros(16, dtype=np.float32), 0),)).output
         self.assertEqual(out.payload, -120.0)
 
     def test_spectrum_length_is_the_rfft_length(self):
         node = audio.Spectrum()
-        (out,) = node.run({"input": (Message(np.zeros(256, dtype=np.float32), 0),)})[
-            "output"
-        ]
+        (out,) = node.run(input=(Message(np.zeros(256, dtype=np.float32), 0),)).output
         self.assertEqual(out.payload.shape, (129,))
 
     def test_peak_bin_finds_an_injected_tone(self):
@@ -175,8 +169,8 @@ class TestAnalysisNodes(unittest.TestCase):
         samples = np.sin(2 * np.pi * frequency * t).astype(np.float32)
         spectrum = audio.Spectrum()
         peak = audio.PeakBin(sample_rate=rate, window_size=size)
-        (magnitudes,) = spectrum.run({"input": (Message(samples, 0),)})["output"]
-        (out,) = peak.run({"input": (magnitudes,)})["output"]
+        (magnitudes,) = spectrum.run(input=(Message(samples, 0),)).output
+        (out,) = peak.run(input=(magnitudes,)).output
         self.assertAlmostEqual(out.payload, frequency, delta=rate / size)
 
     def test_peak_bin_ignores_dc(self):
@@ -186,8 +180,8 @@ class TestAnalysisNodes(unittest.TestCase):
         samples = (5.0 + np.sin(2 * np.pi * 1_000.0 * t)).astype(np.float32)
         spectrum = audio.Spectrum()
         peak = audio.PeakBin(sample_rate=rate, window_size=size)
-        (magnitudes,) = spectrum.run({"input": (Message(samples, 0),)})["output"]
-        (out,) = peak.run({"input": (magnitudes,)})["output"]
+        (magnitudes,) = spectrum.run(input=(Message(samples, 0),)).output
+        (out,) = peak.run(input=(magnitudes,)).output
         self.assertGreater(out.payload, 500.0)
 
 
