@@ -13,8 +13,13 @@ version = "0.1.0"
 build = "VIRTUAL_ENV=$CONDA_PREFIX maturin develop"
 test = { cmd = "python -m unittest discover -s tests -v", depends-on = ["build"] }
 cli = { cmd = "python -m statkit", depends-on = ["build"] }
+# --search-path lets `import statkit` resolve to `python/statkit` via its
+# hand-written `_core.pyi` stub, so this doesn't need `build` (a real compiled
+# extension) to run.
+type = "pyrefly check python tests --search-path python"
 
 [dependencies]
 python = ">=3.14.6,<3.15"
 maturin = ">=1.14.1,<2"
 pip = ">=25"
+pyrefly = ">=1.1.1,<2"
