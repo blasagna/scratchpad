@@ -312,7 +312,7 @@ def make_node_type(
         INPUTS = tuple(PortSpec(port) for port in inputs)
         OUTPUTS = tuple(PortSpec(port) for port in outputs)
 
-        def run(self, node_inputs: Inputs) -> Outputs:  # type: ignore[override]
+        def run(self, node_inputs: Inputs) -> Outputs:
             newest = max(
                 (msg.timestamp for msgs in node_inputs.values() for msg in msgs),
                 default=0,

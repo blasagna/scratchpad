@@ -171,11 +171,16 @@ are then hours apart while the actual processing took milliseconds.
 
 ### Output cardinality
 
-`run` returns a mapping of output port name to **zero or more** messages. One-in-one-out
-is the common case, not the contract: decimation emits nothing on most invocations, and
-framing a stream of audio samples into overlapping windows emits several. An API that
-returns one value per output port cannot express either without a side channel, and audio
-and video are mostly these.
+`run` returns, addressed by output port name, **zero or more** messages per port.
+One-in-one-out is the common case, not the contract: decimation emits nothing on most
+invocations, and framing a stream of audio samples into overlapping windows emits
+several. An API that returns one value per output port cannot express either without a
+side channel, and audio and video are mostly these.
+
+How a port names that structure is its own business — a mapping is the obvious
+spelling and the one the Python port's framework passes around, but a language with
+named fields may offer those instead, so long as a field holds zero or more messages
+rather than one.
 
 ### Sources
 
@@ -336,10 +341,23 @@ same blueprint over pyarrow record batches at four chunk sizes, producing identi
 aggregates — the [one engine vs. columnar batch](#tensions) bet checked as far as
 agreement can check it, which is not the same as checking that it is fast).
 
-Two things the contract leaves open, decided here and worth knowing before reading the
-code. A subgraph's parameters reach the nodes inside it through `{"$param": "name"}`
-references resolved when the blueprint is flattened, which is what makes the same
-subgraph reusable at two rates. And an input port takes exactly one writer: fan-in is
-rejected at validation, because two producers sharing a queue would order messages by
-which node the scheduler happened to fire first, so a merge node with one port per
-producer says it explicitly instead.
+Three things the contract leaves open, decided here and worth knowing before reading
+the code. A subgraph's parameters reach the nodes inside it through `{"$param":
+"name"}` references resolved when the blueprint is flattened, which is what makes the
+same subgraph reusable at two rates. And an input port takes exactly one writer:
+fan-in is rejected at validation, because two producers sharing a queue would order
+messages by which node the scheduler happened to fire first, so a merge node with one
+port per producer says it explicitly instead.
+
+The third is how a node says what its parameters and ports are. Python can name them
+as identifiers rather than as strings in a table, so a node here may declare a
+parameter as an annotated class attribute, an input port as a keyword-only parameter
+of `run`, and an output port as a field of a nested `Out` — read off the class when it
+is created, so validation still answers without building a node. This is sugar over
+the mapping form, not a replacement for it: the mapping is still what the framework
+passes and returns, a port still carries **zero or more** messages, and a node whose
+ports depend on its parameters still declares them as data because no signature can
+say that. A second language port has to implement the mapping form; whether it also
+has a spelling like this one is its own business. The generic ports are named `input`
+and `output` rather than `in`/`out` for the same reason — `in` is a Python keyword, so
+it cannot be a parameter name.

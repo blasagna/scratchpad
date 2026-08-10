@@ -50,6 +50,16 @@ behaviour change lands in `README.md` first, then in every port.
 - **Nodes have no sources.** A node with zero input ports is a validation error;
   graph inputs are the only way data enters, which is most of what makes a recorded
   sequence fully determine a run.
+- **The declared node form is not deprecated.** `INPUTS`/`OUTPUTS`/`PARAMS` plus
+  `run(self, inputs)` is what a node uses when a signature cannot express its ports:
+  parameter-dependent ports, `Registry.register_factory`, and port names that are
+  runtime data. Deleting it would delete the contract's own escape hatch. The
+  framework calls `Node.invoke`, which is the one place the two forms meet — nothing
+  wraps or replaces the `run` an author wrote.
+- **A port's `type_tag` is a string, not a Python type.** The annotation on a typed
+  port says what the payload is; `Port(type_tag=...)` says what the wire is. A tag
+  has to survive JSON and mean the same thing to a port in another language, so
+  deriving one from the other is not available.
 
 ## Naming
 
@@ -64,12 +74,20 @@ to `fusion.pose` and to `fusion.update.fused` observes the same port.
 
 ```sh
 cd dfg/python
-pixi run test      # the whole suite (stdlib unittest, ~420 tests)
+pixi run test      # the whole suite (stdlib unittest, ~470 tests)
 pixi run demos     # every demo script end to end
+pixi run type      # pyrefly over dfg, examples, tests
 pixi run imu       # the README's example graph: namespacing, aliases, $param
 pixi run schedule  # readiness x ordering, both axes
 pixi run replay    # a recording replayed nine ways, one digest
 ```
+
+`type` is an area-level task rather than part of the root `pixi run type-py`, because
+the root environment has no numpy or pyarrow and would report nothing but
+missing-import errors for `examples/`. `rust_python_bindings` sets the same
+precedent. Note that with no `pyrefly.toml` anywhere in the repo it runs at pyrefly's
+`basic` preset, which is permissive — `--preset default` currently surfaces 67 errors
+here, mostly numpy/pyarrow attribute typing, and raising it is its own piece of work.
 
 The suite must also pass with numpy and pyarrow **absent** — `tests/optional.py` plus
 class-level `skipUnless` handles that, and it is the situation a future minimal or
@@ -93,14 +111,41 @@ python/tests/       stdlib unittest, one module per core module plus the example
 
 ## Adding things
 
-**A node type**: subclass `Node`, declare `INPUTS`/`OUTPUTS`/`PARAMS` as class
-attributes (validation runs before any node is constructed, so ports must be
-answerable from the class — override the `input_ports`/`output_ports` classmethods for
-parameter-dependent ports), implement `run`, and register it. **A type name is
-serialized into a blueprint, so it is API**: keep it short and stable. `run` returns a
-mapping of port name to **zero or more** messages; returning a bare `Message` is an
-error, deliberately, because a convenience form would breed nodes that only work one
-way.
+**A node type**: subclass `Node` and register it. **A type name is serialized into a
+blueprint, so it is API**: keep it short and stable. Whichever form you write, a port
+carries **zero or more** messages, never exactly one — returning a bare `Message` is
+an error, deliberately, because a convenience form would breed nodes that only work
+one way.
+
+Prefer the **typed form**, which names parameters and ports as Python identifiers:
+
+```python
+class Decimate(Node):
+    factor: int = 2                              # a parameter; no default = REQUIRED
+
+    class Out(NamedTuple):
+        output: Emit[Any]                        # an output port, in field order
+
+    def __post_init__(self) -> None: ...         # parameter validation goes here
+
+    def run(self, *, input: In[Any] = ()) -> Out:    # an input port; default ()
+        return self.Out(output=tuple(kept))
+```
+
+`__init_subclass__` derives `PARAMS`/`INPUTS`/`OUTPUTS` from those when the class is
+created, so validation still answers from the class and never constructs a node. Two
+rules worth knowing: a class-level annotation is a **parameter** unless it is
+`ClassVar` (that is what makes `video.ToGray.WEIGHTS` a constant), and a port's
+`type_tag` goes in `Annotated[In[T], Port("ImuSample")]` — the annotation types the
+payload, the tag types the wire, and they are not interchangeable.
+
+The **declared form** — `INPUTS`/`OUTPUTS`/`PARAMS` as class attributes and
+`run(self, inputs)` returning a mapping — is **not deprecated**, and the two are
+chosen per *axis*, so a node can mix them. Reach for it when a signature cannot say
+what you mean: parameter-dependent ports via the `input_ports`/`output_ports`
+classmethods, `Registry.register_factory` (no class to read), or a node whose ports
+are runtime data. `tests/helpers.py` keeps several fixtures on it on purpose and each
+says why.
 
 **A readiness rule**: subclass `ReadinessRule` and implement `is_ready`, plus `take` if
 a firing should consume more than one message per port. Give it a `KIND` and

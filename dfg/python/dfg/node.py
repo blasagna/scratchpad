@@ -35,6 +35,11 @@ outputs are detected independently, so the splitter above may still take a typed
 express ports that depend on parameters, and :meth:`dfg.registry.Registry.
 register_factory` has no class to read at all.
 
+The framework calls :meth:`Node.invoke`, which is where the two forms meet and the
+only place that has to know which one an author wrote. Nothing wraps or replaces the
+``run`` an author wrote, so a traceback points at the node and ``super().run(...)``
+from an override is an ordinary call.
+
 Three decisions here are contract, not convenience:
 
 **Ports come from the class.** A blueprint is validated before any node is
@@ -359,6 +364,8 @@ def _derive_params(cls: type[Node]) -> None:
     annotations, inheritance, and its refusal of mutable defaults.
     """
     dataclasses.dataclass(init=False, kw_only=True, eq=False, repr=False)(cls)
+    # dataclasses.fields wants a DataclassInstance; cls became one on the line
+    # above, which is a fact no checker can follow.
     fields = dataclasses.fields(cls)  # pyrefly: ignore[bad-argument-type]
     if not fields:
         return
