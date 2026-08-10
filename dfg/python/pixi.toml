@@ -35,7 +35,7 @@ demos = { depends-on = [
 # environment with no numpy or pyarrow and so reports nothing but missing-import
 # errors for examples/. rust_python_bindings sets the same precedent: an area with
 # its own environment is checked with its own task.
-type = "pyrefly check dfg examples tests"
+type = "pyrefly check"
 
 # numpy and pyarrow are here for examples/ only. The core (dfg/) is stdlib-only,
 # and tests/test_core_is_stdlib_only.py enforces that by walking the imports --

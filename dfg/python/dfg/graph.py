@@ -308,7 +308,10 @@ class Graph:
         is promised, and one node's bad cleanup must not strand another's.
         """
         stats = self._control.node_stats()
-        failures: list[BaseException] = []
+        # Exception, not BaseException: the except clause below catches Exception, and
+        # ExceptionGroup only carries that. A KeyboardInterrupt during teardown should
+        # propagate rather than be collected.
+        failures: list[Exception] = []
         for qid in reversed(self._order):
             if not stats[qid].setup_done or stats[qid].teardown_done:
                 continue

@@ -106,7 +106,8 @@ class TestParamAccess(unittest.TestCase):
 
     def test_the_params_mapping_is_read_only(self):
         with self.assertRaises(TypeError):
-            Doubler().params["gain"] = 3  # type: ignore[index]
+            # A read-only mapping refusing the write is the point of the test.
+            Doubler().params["gain"] = 3  # pyrefly: ignore[unsupported-operation]
 
     def test_post_init_validates_and_raises_from_the_constructor(self):
         class Fussy(Node):
@@ -204,12 +205,18 @@ class TestPortDerivation(unittest.TestCase):
         self.assertEqual(Child.OUTPUTS, Doubler.OUTPUTS)
 
     def test_a_subclass_overriding_run_rederives_its_own_ports(self):
+        # Both suppressions are the honest report of something true: a node that
+        # redeclares its ports is not a *subtype* of the one it inherits from, it is
+        # a different node type reusing its code. Inheritance is available for that,
+        # and a checker is right to say the shapes differ.
         class Child(Doubler):
-            class Out(NamedTuple):
+            class Out(NamedTuple):  # pyrefly: ignore[bad-override]
                 left: Emit[int]
                 right: Emit[int]
 
-            def run(self, *, a: In[int] = (), b: In[int] = ()) -> Out:
+            def run(  # pyrefly: ignore[bad-override]
+                self, *, a: In[int] = (), b: In[int] = ()
+            ) -> Out:
                 return self.Out(left=(), right=())
 
         self.assertEqual([p.name for p in Child.INPUTS], ["a", "b"])
@@ -358,7 +365,7 @@ class TestClassCreationErrors(unittest.TestCase):
 
             class Sneaky(Node):
                 class Out(NamedTuple):
-                    __error__: Emit[Any]
+                    __error__: Emit[Any]  # pyrefly: ignore[bad-class-definition]
 
                 def run(self, *, input: In[Any] = ()) -> Out: ...
 
@@ -446,7 +453,7 @@ class TestOutputContractHolds(unittest.TestCase):
                 output: Emit[Any]
 
             def run(self, *, input: In[Any] = ()):
-                return self.Out(output=msg(1))  # type: ignore[arg-type]
+                return self.Out(output=msg(1))  # pyrefly: ignore[bad-argument-type]
 
         produced = Sloppy().invoke({"input": ()})
         with self.assertRaises(NodeContractError) as caught:

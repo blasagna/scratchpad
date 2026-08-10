@@ -37,7 +37,8 @@ class TestSpecs(unittest.TestCase):
     def test_specs_are_frozen(self):
         spec = NodeSpec(node_id="a", type_name="t.double")
         with self.assertRaises(Exception):
-            spec.node_id = "b"
+            # The assignment being a type error is the point of the test.
+            spec.node_id = "b"  # pyrefly: ignore[read-only]
 
     def test_node_spec_defaults(self):
         spec = NodeSpec(node_id="a", type_name="t.double")
@@ -83,8 +84,14 @@ class TestSpecs(unittest.TestCase):
         self.assertIsInstance(spec.node("calib"), NodeSpec)
         self.assertIsInstance(spec.node("fusion"), SubgraphSpec)
         self.assertIsNone(spec.node("nope"))
-        self.assertEqual(spec.input("imu_raw").targets, (PortRef("calib", "raw"),))
-        self.assertEqual(spec.output("pose").source, PortRef("overlay", "composited"))
+        self.assertEqual(
+            helpers.present(spec.input("imu_raw")).targets,
+            (PortRef("calib", "raw"),),
+        )
+        self.assertEqual(
+            helpers.present(spec.output("pose")).source,
+            PortRef("overlay", "composited"),
+        )
         self.assertIsNone(spec.output("nope"))
 
 
@@ -92,12 +99,13 @@ class TestGraphBuilder(unittest.TestCase):
     def test_add_accepts_a_node_class(self):
         builder = GraphBuilder("g")
         builder.add("double", helpers.Double)
-        self.assertEqual(builder.build().nodes[0].type_name, "helpers.Double")
+        self.assertEqual(helpers.node_spec(builder.build()).type_name, "helpers.Double")
 
     def test_add_rejects_a_non_node_class(self):
         builder = GraphBuilder("g")
         with self.assertRaises(TypeError):
-            builder.add("n", int)
+            # Passing a non-Node class is what is under test.
+            builder.add("n", int)  # pyrefly: ignore[bad-argument-type]
 
     def test_builds_the_spec_a_hand_written_literal_would(self):
         builder = GraphBuilder("chain", params={"gain": 2})
@@ -180,8 +188,8 @@ class TestGraphBuilder(unittest.TestCase):
             [(str(e.src), str(e.dst)) for e in spec.edges],
             [("calib.corrected", "fusion.imu"), ("fusion.pose", "overlay.pose")],
         )
-        fusion = spec.node("fusion")
-        self.assertEqual(len(fusion.graph.input("imu").targets), 2)
+        fusion = helpers.subgraph_spec(spec, "fusion")
+        self.assertEqual(len(helpers.present(fusion.graph.input("imu")).targets), 2)
 
 
 class TestDocstringExamples(unittest.TestCase):

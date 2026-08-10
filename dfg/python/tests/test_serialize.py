@@ -79,7 +79,7 @@ class TestRoundTrip(unittest.TestCase):
         builder.add_input("source", "head.input")
         builder.add_output("output", "head.output")
         restored = loads(dumps(builder.build()))
-        rule = restored.nodes[0].readiness
+        rule = helpers.node_spec(restored).readiness
         self.assertEqual(rule, CountAtLeast(512, port="input"))
 
     def test_a_type_tag_round_trips_including_none(self):
@@ -171,7 +171,7 @@ class TestRegistryIndependence(unittest.TestCase):
         # instantiate. That is the whole reason the registry is a concept.
         text = dumps(helpers.readme_example_spec())
         spec = loads(text)  # no registry in sight
-        self.assertEqual(spec.nodes[0].type_name, "helpers.Calib")
+        self.assertEqual(helpers.node_spec(spec).type_name, "helpers.Calib")
 
         # Instantiating validates first, so every unresolvable type is reported at
         # once rather than one per attempt.
@@ -187,7 +187,9 @@ class TestRegistryIndependence(unittest.TestCase):
         spec = GraphSpec(
             name="g", nodes=(NodeSpec(node_id="a", type_name="never.registered"),)
         )
-        self.assertEqual(loads(dumps(spec)).nodes[0].type_name, "never.registered")
+        self.assertEqual(
+            helpers.node_spec(loads(dumps(spec))).type_name, "never.registered"
+        )
 
 
 class TestRejections(unittest.TestCase):
@@ -278,7 +280,7 @@ class TestDefaultsOnLoad(unittest.TestCase):
                 },
             }
         )
-        node = spec.nodes[0]
+        node = helpers.node_spec(spec)
         self.assertEqual(node.params, {})
         self.assertEqual(node.on_error, "stop")
         self.assertEqual(node.priority, 0)

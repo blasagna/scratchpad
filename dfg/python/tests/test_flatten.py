@@ -70,7 +70,7 @@ class TestReadmeExample(unittest.TestCase):
         )
 
     def test_an_edge_out_of_a_subgraph_resolves_through_the_alias(self):
-        edge = self.flat.writer_of(("overlay", "pose"))
+        edge = helpers.present(self.flat.writer_of(("overlay", "pose")))
         self.assertEqual(edge.src, ("fusion.update", "fused"))
 
     def test_graph_inputs_resolve_to_inner_ports(self):
@@ -142,7 +142,8 @@ class TestNestingTwoDeep(unittest.TestCase):
     def test_an_edge_across_two_boundaries_lands_on_the_real_port(self):
         flat = flatten(self.build(), helpers.build_registry())
         self.assertEqual(
-            flat.writer_of(("tail", "input")).src, ("mid.deep.double", "output")
+            helpers.present(flat.writer_of(("tail", "input"))).src,
+            ("mid.deep.double", "output"),
         )
 
 

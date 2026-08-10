@@ -18,7 +18,8 @@ class TestMessage(unittest.TestCase):
     def test_is_frozen(self):
         msg = Message(payload=1, timestamp=0)
         with self.assertRaises(Exception):
-            msg.payload = 2
+            # The assignment being a type error is the point of the test.
+            msg.payload = 2  # pyrefly: ignore[read-only]
 
     def test_uses_slots_so_a_typo_cannot_add_a_field(self):
         msg = Message(payload=1, timestamp=0)
@@ -27,7 +28,7 @@ class TestMessage(unittest.TestCase):
         # raises AttributeError on 3.13+ and TypeError on 3.12. What matters is
         # that a misspelled field cannot silently become one.
         with self.assertRaises(Exception):
-            msg.timestmap = 5
+            msg.timestmap = 5  # pyrefly: ignore[missing-attribute]
         self.assertFalse(hasattr(msg, "timestmap"))
 
     def test_equality_and_hashing_cover_both_fields(self):

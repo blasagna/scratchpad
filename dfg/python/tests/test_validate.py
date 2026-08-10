@@ -340,7 +340,13 @@ class TestFiringProblems(unittest.TestCase):
         spec = GraphSpec(
             name="g",
             nodes=(
-                NodeSpec(node_id="double", type_name="helpers.Double", readiness="all"),
+                # A readiness rule is an object, not a name; validate reports the
+                # bad value rather than the constructor refusing it.
+                NodeSpec(
+                    node_id="double",
+                    type_name="helpers.Double",
+                    readiness="all",  # pyrefly: ignore[bad-argument-type]
+                ),
             ),
             inputs=(GraphInput("source", (PortRef("double", "input"),)),),
         )

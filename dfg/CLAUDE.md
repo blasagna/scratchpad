@@ -85,9 +85,21 @@ pixi run replay    # a recording replayed nine ways, one digest
 `type` is an area-level task rather than part of the root `pixi run type-py`, because
 the root environment has no numpy or pyarrow and would report nothing but
 missing-import errors for `examples/`. `rust_python_bindings` sets the same
-precedent. Note that with no `pyrefly.toml` anywhere in the repo it runs at pyrefly's
-`basic` preset, which is permissive — `--preset default` currently surfaces 67 errors
-here, mostly numpy/pyarrow attribute typing, and raising it is its own piece of work.
+precedent.
+
+**This is the only area with a `pyrefly.toml`**, and having one is the point: with no
+config pyrefly falls back to its `basic` preset, which is lenient enough to miss
+`x: int = "s"`. The config opts into `default`, which is what makes the typed node
+form worth writing — a misspelled parameter, a port name that is not declared, and a
+payload type that does not match the port it is wired to are all errors. Its
+`search-path` mirrors how the suite runs, so `import dfg` and `import helpers` resolve
+the same way `python -m unittest discover -s tests` makes them resolve.
+
+A suppression is written `# pyrefly: ignore[error-kind]` and every one in this area
+carries a comment saying why. Most are in tests where **the type error is the
+assertion** — writing to a frozen `Message`, passing a non-`Node` to `register`,
+naming a reserved port. Two are in `dfg/node.py`, at the seams where the typed form is
+built by machinery a checker cannot follow.
 
 The suite must also pass with numpy and pyarrow **absent** — `tests/optional.py` plus
 class-level `skipUnless` handles that, and it is the situation a future minimal or

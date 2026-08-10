@@ -19,13 +19,19 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Annotated, Any, ClassVar, NamedTuple
 
 import pyarrow as pa
-import pyarrow.compute as pc
+import pyarrow.compute
 
 from dfg.errors import ParamError
 from dfg.message import Message
 from dfg.node import Emit, In, Node
 from dfg.ports import Port
 from dfg.registry import Registry
+
+# pyarrow ships no py.typed marker and builds its compute kernels at import time, so
+# not one of pc.greater/add/power/sqrt/sum/min/max is visible to a type checker.
+# Saying that once, here, is more honest than a suppression on each of the thirteen
+# call sites -- and it localizes what has to change if pyarrow ever ships stubs.
+pc: Any = pyarrow.compute
 
 RECORD_BATCH = "record_batch"
 TABLE = "table"

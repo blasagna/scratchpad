@@ -44,6 +44,11 @@ class ErrorPolicy(StrEnum):
     DROP = auto()
     ROUTE = auto()
 
+    # Everything that carries one is annotated `ErrorPolicy | str`, because that is
+    # the truth: a spec holds what the author or the JSON said, and `validate` is
+    # what decides whether it is a legal spelling. Narrowing the annotation to the
+    # enum would make the bare string this docstring promises a type error.
+
 
 class Overflow(StrEnum):
     """What a bounded edge does when it is full.
@@ -124,7 +129,7 @@ class NodeSpec:
     type_name: str
     params: Mapping[str, Any] = field(default_factory=dict)
     readiness: ReadinessRule = AllInputs()
-    on_error: ErrorPolicy = ErrorPolicy.STOP
+    on_error: ErrorPolicy | str = ErrorPolicy.STOP
     priority: int = 0
 
     def __post_init__(self) -> None:
@@ -180,7 +185,7 @@ class EdgeSpec:
     src: PortRef
     dst: PortRef
     capacity: int | None = None
-    on_overflow: Overflow = Overflow.ERROR
+    on_overflow: Overflow | str = Overflow.ERROR
     transport: str = EdgeTransport.MEMORY
 
     def __post_init__(self) -> None:
@@ -339,7 +344,7 @@ class GraphBuilder:
         *,
         params: Mapping[str, Any] | None = None,
         readiness: ReadinessRule | None = None,
-        on_error: ErrorPolicy = ErrorPolicy.STOP,
+        on_error: ErrorPolicy | str = ErrorPolicy.STOP,
         priority: int = 0,
     ) -> str:
         """Add a leaf node. Returns ``node_id``, so it reads well inline.
@@ -389,7 +394,7 @@ class GraphBuilder:
         dst: str,
         *,
         capacity: int | None = None,
-        on_overflow: Overflow = Overflow.ERROR,
+        on_overflow: Overflow | str = Overflow.ERROR,
         transport: str = EdgeTransport.MEMORY,
     ) -> None:
         """Connect ``"node.port"`` to ``"node.port"``."""

@@ -40,7 +40,7 @@ class EdgeConfig:
 
     key: str
     capacity: int | None = None
-    on_overflow: Overflow = Overflow.ERROR
+    on_overflow: Overflow | str = Overflow.ERROR
 
 
 @runtime_checkable

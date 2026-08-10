@@ -68,7 +68,8 @@ class TestNodeParams(unittest.TestCase):
     def test_params_view_is_read_only(self):
         node = helpers.EmitN()
         with self.assertRaises(TypeError):
-            node.params["n"] = 9
+            # A read-only mapping refusing the write is the point of the test.
+            node.params["n"] = 9  # pyrefly: ignore[unsupported-operation]
 
     def test_immutable_by_default(self):
         node = helpers.EmitN()
@@ -181,7 +182,7 @@ class TestRegistry(unittest.TestCase):
     def test_one_arg_form_rejects_a_non_node_class(self):
         registry = Registry()
         with self.assertRaises(TypeError):
-            registry.register(int)
+            registry.register(int)  # pyrefly: ignore[bad-argument-type]
 
     def test_decorator_form(self):
         registry = Registry()
@@ -190,7 +191,7 @@ class TestRegistry(unittest.TestCase):
         class Thing(helpers.Passthrough):
             pass
 
-        self.assertIs(registry.describe("t.thing").node_cls, Thing)
+        self.assertIs(registry.describe_or_raise("t.thing").node_cls, Thing)
 
     def test_duplicate_registration_is_rejected(self):
         registry = Registry()
@@ -201,7 +202,7 @@ class TestRegistry(unittest.TestCase):
     def test_registering_a_non_node_is_rejected(self):
         registry = Registry()
         with self.assertRaises(ValueError):
-            registry.register("t.nope", object)
+            registry.register("t.nope", object)  # pyrefly: ignore[bad-argument-type]
 
     def test_unknown_type_names_the_alternatives(self):
         registry = Registry()
@@ -227,7 +228,7 @@ class TestRegistry(unittest.TestCase):
 
         registry = Registry()
         registry.register("t.explodes", Explodes)
-        info = registry.describe("t.explodes")
+        info = registry.describe_or_raise("t.explodes")
         self.assertEqual([p.name for p in info.input_ports({})], ["input"])
         self.assertEqual([p.name for p in info.output_ports({})], ["output"])
         self.assertEqual(info.params, {"x": 1})
@@ -245,7 +246,7 @@ class TestRegistry(unittest.TestCase):
             outputs=(PortSpec("output"),),
             params={"gain": 2},
         )
-        info = registry.describe("t.factory")
+        info = registry.describe_or_raise("t.factory")
         self.assertIsNone(info.node_cls)
         self.assertEqual([p.name for p in info.input_ports({})], ["input"])
         self.assertEqual(info.params, {"gain": 2})

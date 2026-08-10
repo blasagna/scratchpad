@@ -70,7 +70,7 @@ class FlatNode:
     type_name: str
     params: Mapping[str, Any]
     readiness: ReadinessRule
-    on_error: ErrorPolicy
+    on_error: ErrorPolicy | str
     priority: int
     inputs: tuple[PortSpec, ...]
     outputs: tuple[PortSpec, ...]
@@ -102,7 +102,7 @@ class FlatEdge:
     src: Endpoint
     dst: Endpoint
     capacity: int | None
-    on_overflow: Overflow
+    on_overflow: Overflow | str
     transport: str
     declared_in: tuple[str, ...] = ()
 

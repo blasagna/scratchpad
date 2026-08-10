@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Annotated, ClassVar, NamedTuple
+from typing import Annotated, ClassVar, NamedTuple, Protocol
 
 import numpy as np
 
@@ -26,6 +26,18 @@ from dfg.registry import Registry
 
 FRAME_RGB = "frame_rgb"
 FRAME_GRAY = "frame_gray"
+
+
+class Pose(Protocol):
+    """What :class:`OverlayBox` needs of a pose: somewhere to put the box.
+
+    A protocol rather than an import of :class:`examples.nodes.imu.Orientation`,
+    because the drawing has no business knowing where the angle came from -- and
+    because these examples are meant to stay independent of one another.
+    """
+
+    @property
+    def roll(self) -> float: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +87,7 @@ class OverlayBox(Node):
     def run(
         self,
         *,
-        input: Annotated[In[tuple[np.ndarray, object]], Port("frame_and_pose")] = (),
+        input: Annotated[In[tuple[np.ndarray, Pose]], Port("frame_and_pose")] = (),
     ) -> Out:
         size = self.size
         colour = np.array(self.colour, dtype=np.uint8)

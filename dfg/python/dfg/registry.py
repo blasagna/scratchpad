@@ -106,6 +106,9 @@ class Registry:
             TypeError: If called with a single argument that is not a
                 :class:`~dfg.node.Node` subclass.
         """
+        # `name` is separate from the `type_name` parameter because that parameter is
+        # either the name or the class, and the two-argument form leaves it a str only
+        # by convention.
         if node_cls is None:
             if not (isinstance(type_name, type) and issubclass(type_name, Node)):
                 raise TypeError(
@@ -113,15 +116,15 @@ class Registry:
                     f"got {type_name!r}"
                 )
             node_cls = type_name
-            type_name = f"{node_cls.__module__}.{node_cls.__qualname__}"
-        if type_name in self._types:
-            raise ValueError(f"node type {type_name!r} is already registered")
+            name = f"{node_cls.__module__}.{node_cls.__qualname__}"
+        else:
+            name = str(type_name)
+        if name in self._types:
+            raise ValueError(f"node type {name!r} is already registered")
         if not (isinstance(node_cls, type) and issubclass(node_cls, Node)):
-            raise ValueError(
-                f"{type_name!r}: expected a Node subclass, got {node_cls!r}"
-            )
-        self._types[type_name] = NodeTypeInfo(
-            type_name=type_name,
+            raise ValueError(f"{name!r}: expected a Node subclass, got {node_cls!r}")
+        self._types[name] = NodeTypeInfo(
+            type_name=name,
             factory=node_cls,
             params=dict(node_cls.PARAMS),
             mutable_params=frozenset(node_cls.MUTABLE_PARAMS),

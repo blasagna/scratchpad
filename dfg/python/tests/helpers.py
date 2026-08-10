@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, NamedTuple
 
-from dfg.blueprint import GraphBuilder, GraphSpec
+from dfg.blueprint import GraphBuilder, GraphSpec, NodeSpec, SubgraphSpec
 from dfg.message import Message
 from dfg.node import Emit, In, Inputs, Node, Outputs
 from dfg.ports import Port, PortSpec
@@ -41,6 +41,41 @@ def first_payload(messages: Sequence[Message[Any]]) -> Any:
 def payloads(messages: Sequence[Message[Any]]) -> list[Any]:
     """Every payload, in order."""
     return [message.payload for message in messages]
+
+
+def node_spec(graph: GraphSpec, index: int = 0) -> NodeSpec:
+    """The :class:`NodeSpec` at ``index``, narrowed out of the subgraph union.
+
+    ``GraphSpec.nodes`` holds ``NodeSpec | SubgraphSpec``, and a test that reaches
+    for ``.type_name`` has already decided which one it expects. Saying so here
+    keeps the assertion about the value rather than about the type.
+    """
+    child = graph.nodes[index]
+    if not isinstance(child, NodeSpec):
+        raise TypeError(f"nodes[{index}] is a {type(child).__name__}, not a NodeSpec")
+    return child
+
+
+def subgraph_spec(graph: GraphSpec, node_id: str) -> SubgraphSpec:
+    """The :class:`SubgraphSpec` named ``node_id``, narrowed out of the node union."""
+    child = graph.node(node_id)
+    if not isinstance(child, SubgraphSpec):
+        raise TypeError(
+            f"node {node_id!r} is a {type(child).__name__}, not a SubgraphSpec"
+        )
+    return child
+
+
+def present[T](value: T | None) -> T:
+    """Narrow a lookup the test has already arranged to succeed.
+
+    ``GraphSpec.input``, ``GraphSpec.output``, and ``FlatGraph.writer_of`` all
+    return ``None`` for a miss, which is right for callers and noise for a test
+    that is asserting what the hit contains.
+    """
+    if value is None:
+        raise AssertionError("expected a value, got None")
+    return value
 
 
 def digest(messages: Sequence[Message[Any]]) -> list[tuple[Any, int]]:

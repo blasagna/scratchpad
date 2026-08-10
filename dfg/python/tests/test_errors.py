@@ -46,10 +46,10 @@ def spec(policy):
 
 class TestStop(unittest.TestCase):
     def test_stop_is_the_default(self):
-        self.assertEqual(spec("stop").nodes[0].on_error, "stop")
+        self.assertEqual(helpers.node_spec(spec("stop")).on_error, "stop")
         builder = GraphBuilder("g")
         builder.add("n", helpers.Passthrough)
-        self.assertEqual(builder.build().nodes[0].on_error, "stop")
+        self.assertEqual(helpers.node_spec(builder.build()).on_error, "stop")
 
     def test_the_graph_stops_and_the_error_is_chained(self):
         # Silent-continue hides bugs in exactly the case where nobody is watching:

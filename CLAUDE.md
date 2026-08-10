@@ -139,7 +139,10 @@ first Python area that is package-shaped instead — a `dfg/` package beside
 and they are confined to its examples by a test rather than by a pixi environment;
 see [`dfg/CLAUDE.md`](dfg/CLAUDE.md). Because those dependencies are absent from the
 root environment, `dfg/python` type-checks with its own `pixi run type` rather than
-through the root `type-py` — the same arrangement `rust_python_bindings` uses.
+through the root `type-py` — the same arrangement `rust_python_bindings` uses. It is
+also the only area with a `pyrefly.toml`: without a config pyrefly runs its `basic`
+preset, which is lenient enough to miss `x: int = "s"`, and `dfg/python` opts into
+`default` instead. The other areas still run at `basic`.
 
 **New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
 `members` list in the root `Cargo.toml`.

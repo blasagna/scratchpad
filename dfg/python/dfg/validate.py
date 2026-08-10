@@ -263,8 +263,8 @@ def _check_readiness(child: NodeSpec, scope: tuple[str, ...]) -> Iterator[Proble
 
 
 def _check_policies(child: NodeSpec, scope: tuple[str, ...]) -> Iterator[Problem]:
-    # A policy is an ErrorPolicy in the annotation, but a deserialized blueprint
-    # holds whatever the JSON said, so the check is containment rather than
+    # A policy is annotated `ErrorPolicy | str`, because a deserialized blueprint
+    # holds whatever the JSON said. So the check is containment rather than
     # isinstance -- and the message lists spellings, not enum reprs.
     if child.on_error not in ErrorPolicy:
         yield Problem(
