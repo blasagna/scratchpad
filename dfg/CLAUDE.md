@@ -140,7 +140,7 @@ class Decimate(Node):
 
     def __post_init__(self) -> None: ...         # parameter validation goes here
 
-    def run(self, *, input: In[Any] = ()) -> Out:    # an input port; default ()
+    def run(self, *, inp: In[Any] = ()) -> Out:      # an input port; default ()
         return self.Out(output=tuple(kept))
 ```
 
@@ -150,6 +150,14 @@ rules worth knowing: a class-level annotation is a **parameter** unless it is
 `ClassVar` (that is what makes `video.ToGray.WEIGHTS` a constant), and a port's
 `type_tag` goes in `Annotated[In[T], Port("ImuSample")]` — the annotation types the
 payload, the tag types the wire, and they are not interchangeable.
+
+**A port name is a Python identifier, so it cannot be `in` (a keyword) or `input` (a
+builtin a parameter would shadow).** Name a port for what it carries — `raw`, `imu`,
+`window`, `frame`, `batch` — and the question does not come up; that is already what
+every node with two input ports does (`a`/`b`, `slow`/`fast`). `inp` is the fallback
+for the genuinely generic nodes in `examples/nodes/core.py`, and it pairs with
+`output`. Note that `"input"` still appears in `dfg/validate.py` and `dfg/node.py` as a
+**direction label** in error messages — that is not a port name, so leave it alone.
 
 The **declared form** — `INPUTS`/`OUTPUTS`/`PARAMS` as class attributes and
 `run(self, inputs)` returning a mapping — is **not deprecated**, and the two are

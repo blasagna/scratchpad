@@ -27,8 +27,8 @@ class Passthrough(Node):
     class Out(NamedTuple):
         output: Emit[Any]
 
-    def run(self, *, input: In[Any] = ()) -> Out:
-        return self.Out(output=input)
+    def run(self, *, inp: In[Any] = ()) -> Out:
+        return self.Out(output=inp)
 
 
 class Decimate(Node):
@@ -52,10 +52,10 @@ class Decimate(Node):
     def setup(self) -> None:
         self._seen = 0
 
-    def run(self, *, input: In[Any] = ()) -> Out:
+    def run(self, *, inp: In[Any] = ()) -> Out:
         phase = self.phase % self.factor
         kept: list[Message[Any]] = []
-        for message in input:
+        for message in inp:
             if self._seen % self.factor == phase:
                 kept.append(message)
             self._seen += 1
@@ -87,10 +87,10 @@ class Window(Node):
         self._buffer: list[Message[Any]] = []
         self._skip = 0
 
-    def run(self, *, input: In[Any] = ()) -> Out:
+    def run(self, *, inp: In[Any] = ()) -> Out:
         size, hop = self.size, self.hop
         windows: list[Message[Any]] = []
-        for message in input:
+        for message in inp:
             if self._skip:
                 # Only reachable when hop > size, where the frames have gaps.
                 self._skip -= 1
@@ -172,9 +172,9 @@ class Counter(Node):
     def setup(self) -> None:
         self._count = 0
 
-    def run(self, *, input: In[Any] = ()) -> Out:
+    def run(self, *, inp: In[Any] = ()) -> Out:
         out: list[Message[int]] = []
-        for message in input:
+        for message in inp:
             self._count += 1
             out.append(message.with_payload(self._count))
         return self.Out(output=tuple(out))
@@ -193,10 +193,10 @@ class Recorder(Node):
     class Out(NamedTuple):
         output: Emit[Any]
 
-    def run(self, *, input: In[Any] = ()) -> Out:
+    def run(self, *, inp: In[Any] = ()) -> Out:
         if self.sink is not None:
-            self.sink.extend(input)
-        return self.Out(output=input)
+            self.sink.extend(inp)
+        return self.Out(output=inp)
 
 
 class Trace(Node):
@@ -215,9 +215,9 @@ class Trace(Node):
     def setup(self) -> None:
         self._record("setup")
 
-    def run(self, *, input: In[Any] = ()) -> Out:
+    def run(self, *, inp: In[Any] = ()) -> Out:
         self._record("run")
-        return self.Out(output=input)
+        return self.Out(output=inp)
 
     def teardown(self) -> None:
         self._record("teardown")
@@ -247,12 +247,12 @@ class FailRun(Trace):
     scope is not inherited, so a bare ``Out`` would not resolve here.
     """
 
-    def run(self, *, input: In[Any] = ()) -> Trace.Out:
+    def run(self, *, inp: In[Any] = ()) -> Trace.Out:
         self._record("run")
-        for message in input:
+        for message in inp:
             if not message.payload:
                 raise ValueError(f"{self.label}: bad sample {message.payload!r}")
-        return self.Out(output=input)
+        return self.Out(output=inp)
 
 
 def register(registry: Registry) -> Registry:

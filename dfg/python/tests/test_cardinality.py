@@ -19,7 +19,7 @@ from dfg.node import Emit, In, Node
 def one_node_graph(type_name, *, params=None, registry=None):
     builder = GraphBuilder("g")
     builder.add("n", type_name, params=params or {})
-    builder.add_input("source", "n.input")
+    builder.add_input("source", "n.inp")
     builder.add_output("output", "n.output")
     return Graph.instantiate(builder.build(), registry or helpers.build_registry())
 
@@ -55,8 +55,8 @@ class TestZero(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("silent", helpers.EmitNothing)
         builder.add("after", helpers.Passthrough)
-        builder.connect("silent.output", "after.input")
-        builder.add_input("source", "silent.input")
+        builder.connect("silent.output", "after.inp")
+        builder.add_input("source", "silent.inp")
         builder.add_output("output", "after.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             graph.inject("source", Message(1, 10))
@@ -86,8 +86,8 @@ class TestMany(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("fan", helpers.EmitN, params={"n": 4})
         builder.add("after", helpers.Passthrough)
-        builder.connect("fan.output", "after.input")
-        builder.add_input("source", "fan.input")
+        builder.connect("fan.output", "after.inp")
+        builder.add_input("source", "fan.inp")
         builder.add_output("output", "after.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             graph.inject("source", Message("x", 10))
@@ -107,9 +107,9 @@ class TestDecimation(unittest.TestCase):
             def setup(self) -> None:
                 self._seen = 0
 
-            def run(self, *, input: In[Any] = ()) -> Out:
+            def run(self, *, inp: In[Any] = ()) -> Out:
                 out = []
-                for message in input:
+                for message in inp:
                     self._seen += 1
                     if self._seen % self.factor == 0:
                         out.append(message)

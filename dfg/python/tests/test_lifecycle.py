@@ -120,9 +120,9 @@ class TestSetupRaises(unittest.TestCase):
             params={"trace": trace, "label": "raiser"},
         )
         builder.add("n_c", helpers.TraceNode, params={"trace": trace, "label": "c"})
-        builder.connect("n_a.output", "n_raiser.input")
-        builder.connect("n_raiser.output", "n_c.input")
-        builder.add_input("source", "n_a.input")
+        builder.connect("n_a.output", "n_raiser.inp")
+        builder.connect("n_raiser.output", "n_c.inp")
+        builder.add_input("source", "n_a.inp")
         builder.add_output("sink", "n_c.output")
         return builder.build()
 
@@ -169,9 +169,9 @@ class TestSetupRaises(unittest.TestCase):
             helpers.RaiseInSetup,
             params={"trace": trace, "label": "raiser"},
         )
-        builder.connect("n_a.output", "n_b.input")
-        builder.connect("n_b.output", "n_raiser.input")
-        builder.add_input("source", "n_a.input")
+        builder.connect("n_a.output", "n_b.inp")
+        builder.connect("n_b.output", "n_raiser.inp")
+        builder.add_input("source", "n_a.inp")
         builder.add_output("sink", "n_raiser.output")
         graph = Graph.instantiate(builder.build(), helpers.build_registry())
         with self.assertRaises(NodeSetupError):
@@ -205,8 +205,8 @@ class TestTeardownOnErrorStop(unittest.TestCase):
         builder.add(
             "n_bad", helpers.RaiseInRun, params={"trace": trace, "label": "bad"}
         )
-        builder.connect("n_a.output", "n_bad.input")
-        builder.add_input("source", "n_a.input")
+        builder.connect("n_a.output", "n_bad.inp")
+        builder.add_input("source", "n_a.inp")
         builder.add_output("sink", "n_bad.output")
         return builder.build()
 
@@ -252,8 +252,8 @@ class TestTeardownFailures(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("n_good", GoodTeardown)
         builder.add("n_bad", BadTeardown)
-        builder.connect("n_good.output", "n_bad.input")
-        builder.add_input("source", "n_good.input")
+        builder.connect("n_good.output", "n_bad.inp")
+        builder.add_input("source", "n_good.inp")
         builder.add_output("sink", "n_bad.output")
 
         graph = Graph.instantiate(builder.build(), registry)
@@ -275,8 +275,8 @@ class TestTeardownFailures(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("n_clean", BadTeardown)
         builder.add("n_bad", helpers.RaiseInRun, params={"trace": None, "label": "bad"})
-        builder.connect("n_clean.output", "n_bad.input")
-        builder.add_input("source", "n_clean.input")
+        builder.connect("n_clean.output", "n_bad.inp")
+        builder.add_input("source", "n_clean.inp")
         builder.add_output("sink", "n_bad.output")
 
         graph = Graph.instantiate(builder.build(), registry)
@@ -298,8 +298,8 @@ class TestTeardownFailures(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("n_first", BadTeardown)
         builder.add("n_raiser", helpers.RaiseInSetup, params={"trace": None})
-        builder.connect("n_first.output", "n_raiser.input")
-        builder.add_input("source", "n_first.input")
+        builder.connect("n_first.output", "n_raiser.inp")
+        builder.add_input("source", "n_first.inp")
         builder.add_output("sink", "n_raiser.output")
 
         graph = Graph.instantiate(builder.build(), registry)

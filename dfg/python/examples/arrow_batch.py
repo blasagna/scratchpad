@@ -54,12 +54,12 @@ def build_blueprint() -> GraphSpec:
     builder.add("aggregate", arrow.Aggregate, params={"column": "mag"})
     builder.add("table", arrow.ToTable)
 
-    builder.connect("batch.output", "filter.input")
-    builder.connect("filter.output", "project.input")
-    builder.connect("project.output", "aggregate.input")
-    builder.connect("project.output", "table.input")
+    builder.connect("batch.output", "filter.inp")
+    builder.connect("filter.output", "project.inp")
+    builder.connect("project.output", "aggregate.inp")
+    builder.connect("project.output", "table.inp")
 
-    builder.add_input("imu_raw", "batch.input", type_tag="ImuSample")
+    builder.add_input("imu_raw", "batch.inp", type_tag="ImuSample")
     builder.add_output("summary", "aggregate.output")
     builder.add_output("table", "table.output")
     return builder.build()

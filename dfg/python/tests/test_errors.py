@@ -19,9 +19,9 @@ class FailOnOdd(Node):
     class Out(NamedTuple):
         output: Emit[int]
 
-    def run(self, *, input: In[int] = ()) -> Out:
+    def run(self, *, inp: In[int] = ()) -> Out:
         out = []
-        for message in input:
+        for message in inp:
             if message.payload % 2:
                 raise ValueError(f"cannot handle {message.payload}")
             out.append(message)
@@ -38,8 +38,8 @@ def spec(policy):
     builder = GraphBuilder("g")
     builder.add("picky", FailOnOdd, on_error=policy)
     builder.add("after", helpers.Passthrough)
-    builder.connect("picky.output", "after.input")
-    builder.add_input("source", "picky.input")
+    builder.connect("picky.output", "after.inp")
+    builder.add_input("source", "picky.inp")
     builder.add_output("output", "after.output")
     return builder.build()
 
@@ -69,8 +69,8 @@ class TestStop(unittest.TestCase):
             "before", helpers.TraceNode, params={"trace": trace, "label": "before"}
         )
         builder.add("picky", FailOnOdd)
-        builder.connect("before.output", "picky.input")
-        builder.add_input("source", "before.input")
+        builder.connect("before.output", "picky.inp")
+        builder.add_input("source", "before.inp")
         builder.add_output("output", "picky.output")
         graph = Graph.instantiate(builder.build(), registry())
         graph.start()
@@ -185,8 +185,8 @@ class TestEdgeOverflowIsNotANodeError(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("fan", helpers.EmitN, params={"n": 5}, on_error="drop")
         builder.add("after", helpers.Passthrough)
-        builder.connect("fan.output", "after.input", capacity=2, on_overflow="error")
-        builder.add_input("source", "fan.input")
+        builder.connect("fan.output", "after.inp", capacity=2, on_overflow="error")
+        builder.add_input("source", "fan.inp")
         builder.add_output("output", "after.output")
         graph = Graph.instantiate(builder.build(), registry())
         graph.start()
@@ -200,14 +200,14 @@ class TestEdgeOverflowIsNotANodeError(unittest.TestCase):
         builder.add("fan", helpers.EmitN, params={"n": 5})
         builder.add("after", helpers.Passthrough)
         builder.connect(
-            "fan.output", "after.input", capacity=2, on_overflow="drop_oldest"
+            "fan.output", "after.inp", capacity=2, on_overflow="drop_oldest"
         )
-        builder.add_input("source", "fan.input")
+        builder.add_input("source", "fan.inp")
         builder.add_output("output", "after.output")
         with Graph.instantiate(builder.build(), registry()) as graph:
             graph.inject("source", Message("x", 10))
             graph.run_until_idle()
-            stats = graph.control.edge_stats()["fan.output -> after.input"]
+            stats = graph.control.edge_stats()["fan.output -> after.inp"]
             self.assertEqual(stats.dropped, 3)
             self.assertEqual(len(graph.poll("output")), 2)
 

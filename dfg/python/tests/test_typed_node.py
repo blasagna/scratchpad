@@ -28,9 +28,9 @@ class Doubler(Node):
     class Out(NamedTuple):
         output: Emit[int]
 
-    def run(self, *, input: In[int] = ()) -> Out:
+    def run(self, *, inp: In[int] = ()) -> Out:
         return self.Out(
-            output=tuple(m.with_payload(m.payload * self.gain) for m in input)
+            output=tuple(m.with_payload(m.payload * self.gain) for m in inp)
         )
 
 
@@ -45,7 +45,7 @@ class TestParamDerivation(unittest.TestCase):
             second: str = "s"
             third: float = 0.5
 
-            def run(self, *, input: In[Any] = ()) -> None: ...
+            def run(self, *, inp: In[Any] = ()) -> None: ...
 
         self.assertEqual(list(Many.PARAMS), ["first", "second", "third"])
 
@@ -54,7 +54,7 @@ class TestParamDerivation(unittest.TestCase):
             size: int
             hop: int = 1
 
-            def run(self, *, input: In[Any] = ()) -> None: ...
+            def run(self, *, inp: In[Any] = ()) -> None: ...
 
         # The exact predicate validate._check_params uses.
         self.assertIsInstance(NeedsSize.PARAMS["size"], _Required)
@@ -64,7 +64,7 @@ class TestParamDerivation(unittest.TestCase):
         class NeedsSize(Node):
             size: int
 
-            def run(self, *, input: In[Any] = ()) -> None: ...
+            def run(self, *, inp: In[Any] = ()) -> None: ...
 
         with self.assertRaises(ParamError) as caught:
             NeedsSize()
@@ -75,7 +75,7 @@ class TestParamDerivation(unittest.TestCase):
             WEIGHTS: ClassVar[tuple[float, ...]] = (0.2, 0.7, 0.1)
             gain: float = 1.0
 
-            def run(self, *, input: In[Any] = ()) -> None: ...
+            def run(self, *, inp: In[Any] = ()) -> None: ...
 
         self.assertEqual(WithConstant.PARAMS, {"gain": 1.0})
 
@@ -90,7 +90,7 @@ class TestParamDerivation(unittest.TestCase):
         class Child(Doubler):
             offset: int = 0
 
-            def run(self, *, input: In[int] = ()) -> Doubler.Out:
+            def run(self, *, inp: In[int] = ()) -> Doubler.Out:
                 return self.Out(output=())
 
         self.assertEqual(Child.PARAMS, {"gain": 2, "offset": 0})
@@ -117,7 +117,7 @@ class TestParamAccess(unittest.TestCase):
                 if self.factor < 1:
                     raise ParamError(f"factor must be at least 1, got {self.factor}")
 
-            def run(self, *, input: In[Any] = ()) -> None: ...
+            def run(self, *, inp: In[Any] = ()) -> None: ...
 
         self.assertEqual(Fussy(factor=4).factor, 4)
         with self.assertRaises(ParamError):
@@ -134,7 +134,7 @@ class TestParamAccess(unittest.TestCase):
             def on_params_changed(self, changes):
                 self.seen.append(dict(changes))
 
-            def run(self, *, input: In[Any] = ()) -> None: ...
+            def run(self, *, inp: In[Any] = ()) -> None: ...
 
         node = Tunable()
         node.setup()
@@ -150,7 +150,7 @@ class TestParamAccess(unittest.TestCase):
 
 class TestPortDerivation(unittest.TestCase):
     def test_keyword_only_run_parameters_become_input_ports(self):
-        self.assertEqual(Doubler.INPUTS, (PortSpec("input"),))
+        self.assertEqual(Doubler.INPUTS, (PortSpec("inp"),))
         self.assertTrue(Doubler._TYPED_RUN)
 
     def test_out_fields_become_output_ports_in_field_order(self):
@@ -159,7 +159,7 @@ class TestPortDerivation(unittest.TestCase):
                 gravity: Emit[float]
                 linear: Emit[float]
 
-            def run(self, *, input: In[float] = ()) -> Out:
+            def run(self, *, inp: In[float] = ()) -> Out:
                 return self.Out(gravity=(), linear=())
 
         self.assertEqual([port.name for port in Split.OUTPUTS], ["gravity", "linear"])
@@ -179,10 +179,10 @@ class TestPortDerivation(unittest.TestCase):
             class Out(NamedTuple):
                 output: Annotated[Emit[Any], Port("RecordBatch", "one batch")]
 
-            def run(self, *, input: Annotated[In[Any], Port("ImuSample")] = ()) -> Out:
+            def run(self, *, inp: Annotated[In[Any], Port("ImuSample")] = ()) -> Out:
                 return self.Out(output=())
 
-        self.assertEqual(Tagged.INPUTS, (PortSpec("input", "ImuSample"),))
+        self.assertEqual(Tagged.INPUTS, (PortSpec("inp", "ImuSample"),))
         self.assertEqual(
             Tagged.OUTPUTS, (PortSpec("output", "RecordBatch", "one batch"),)
         )
@@ -193,7 +193,7 @@ class TestPortDerivation(unittest.TestCase):
 
     def test_a_run_returning_none_declares_no_output_ports(self):
         class Sink(Node):
-            def run(self, *, input: In[Any] = ()) -> None: ...
+            def run(self, *, inp: In[Any] = ()) -> None: ...
 
         self.assertEqual(Sink.OUTPUTS, ())
 
@@ -221,37 +221,37 @@ class TestPortDerivation(unittest.TestCase):
 
         self.assertEqual([p.name for p in Child.INPUTS], ["a", "b"])
         self.assertEqual([p.name for p in Child.OUTPUTS], ["left", "right"])
-        self.assertEqual([p.name for p in Doubler.INPUTS], ["input"])
+        self.assertEqual([p.name for p in Doubler.INPUTS], ["inp"])
 
     def test_an_overriding_run_may_annotate_the_bases_out(self):
         # A class body's scope is not inherited, so `-> Out` would not resolve in a
         # subclass. `-> Doubler.Out` does, and OUTPUTS comes from the class anyway.
         class Child(Doubler):
-            def run(self, *, input: In[int] = ()) -> Doubler.Out:
+            def run(self, *, inp: In[int] = ()) -> Doubler.Out:
                 return self.Out(output=(msg(1),))
 
         self.assertEqual(Child.OUTPUTS, Doubler.OUTPUTS)
-        self.assertEqual(Child().run(input=()).output, (msg(1),))
+        self.assertEqual(Child().run(inp=()).output, (msg(1),))
 
 
 class TestFormDetection(unittest.TestCase):
     def test_a_positional_parameter_means_the_declared_form(self):
         class Declared(Node):
-            INPUTS = (PortSpec("input"),)
+            INPUTS = (PortSpec("inp"),)
             OUTPUTS = (PortSpec("output"),)
 
             def run(self, inputs):
-                return {"output": list(inputs.get("input", ()))}
+                return {"output": list(inputs.get("inp", ()))}
 
         self.assertFalse(Declared._TYPED_RUN)
         self.assertFalse(Declared._TYPED_PARAMS)
-        self.assertEqual(Declared.INPUTS, (PortSpec("input"),))
+        self.assertEqual(Declared.INPUTS, (PortSpec("inp"),))
 
     def test_the_axes_are_independent(self):
         # Typed params, a declared run, and parameter-dependent output ports: the
         # combination the declared form has to keep existing for.
         class Splitter(Node):
-            INPUTS = (PortSpec("input"),)
+            INPUTS = (PortSpec("inp"),)
             ways: int = 2
 
             @classmethod
@@ -271,23 +271,23 @@ class TestFormDetection(unittest.TestCase):
 
     def test_invoke_routes_each_form(self):
         class Declared(Node):
-            INPUTS = (PortSpec("input"),)
+            INPUTS = (PortSpec("inp"),)
             OUTPUTS = (PortSpec("output"),)
 
             def run(self, inputs):
-                return {"output": list(inputs.get("input", ()))}
+                return {"output": list(inputs.get("inp", ()))}
 
-        self.assertEqual(Declared().invoke({"input": (msg(1),)}), {"output": [msg(1)]})
+        self.assertEqual(Declared().invoke({"inp": (msg(1),)}), {"output": [msg(1)]})
         self.assertEqual(
-            Doubler().invoke({"input": (msg(1),)}), Doubler.Out(output=(msg(2),))
+            Doubler().invoke({"inp": (msg(1),)}), Doubler.Out(output=(msg(2),))
         )
 
     def test_an_absent_port_arrives_as_the_empty_default(self):
         seen: list[tuple[Any, ...]] = []
 
         class Watcher(Node):
-            def run(self, *, input: In[Any] = ()) -> None:
-                seen.append(input)
+            def run(self, *, inp: In[Any] = ()) -> None:
+                seen.append(inp)
 
         Watcher().invoke({})
         self.assertEqual(seen, [()])
@@ -306,7 +306,7 @@ class TestClassCreationErrors(unittest.TestCase):
                 PARAMS = {"gain": 1}
                 offset: int = 0
 
-                def run(self, *, input: In[Any] = ()) -> None: ...
+                def run(self, *, inp: In[Any] = ()) -> None: ...
 
         self.assertIn("one form or the other", str(caught.exception))
 
@@ -314,9 +314,9 @@ class TestClassCreationErrors(unittest.TestCase):
         with self.assertRaises(NodeContractError) as caught:
 
             class Both(Node):
-                INPUTS = (PortSpec("input"),)
+                INPUTS = (PortSpec("inp"),)
 
-                def run(self, *, input: In[Any] = ()) -> None: ...
+                def run(self, *, inp: In[Any] = ()) -> None: ...
 
         self.assertIn("INPUTS", str(caught.exception))
 
@@ -329,7 +329,7 @@ class TestClassCreationErrors(unittest.TestCase):
                 class Out(NamedTuple):
                     output: Emit[Any]
 
-                def run(self, *, input: In[Any] = ()) -> Out:
+                def run(self, *, inp: In[Any] = ()) -> Out:
                     return self.Out(output=())
 
         self.assertIn("one form or the other", str(caught.exception))
@@ -338,7 +338,7 @@ class TestClassCreationErrors(unittest.TestCase):
         with self.assertRaises(NodeContractError) as caught:
 
             class NoDefault(Node):
-                def run(self, *, input: In[Any]) -> None: ...
+                def run(self, *, inp: In[Any]) -> None: ...
 
         self.assertIn("must default to ()", str(caught.exception))
 
@@ -367,7 +367,7 @@ class TestClassCreationErrors(unittest.TestCase):
                 class Out(NamedTuple):
                     __error__: Emit[Any]  # pyrefly: ignore[bad-class-definition]
 
-                def run(self, *, input: In[Any] = ()) -> Out: ...
+                def run(self, *, inp: In[Any] = ()) -> Out: ...
 
         self.assertIn("cannot start with an underscore", str(caught.exception))
 
@@ -378,7 +378,7 @@ class TestClassCreationErrors(unittest.TestCase):
                 class Out(NamedTuple):
                     café: Emit[Any]  # a Python identifier, but not a port name
 
-                def run(self, *, input: In[Any] = ()) -> Out: ...
+                def run(self, *, inp: In[Any] = ()) -> Out: ...
 
         self.assertIn("not a legal port name", str(caught.exception))
 
@@ -388,7 +388,7 @@ class TestClassCreationErrors(unittest.TestCase):
             class Stateful(Node):
                 _seen: int = 0
 
-                def run(self, *, input: In[Any] = ()) -> None: ...
+                def run(self, *, inp: In[Any] = ()) -> None: ...
 
         self.assertIn("setup()", str(caught.exception))
 
@@ -398,7 +398,7 @@ class TestClassCreationErrors(unittest.TestCase):
             class Leaky(Node):
                 sink: list[int] = []
 
-                def run(self, *, input: In[Any] = ()) -> None: ...
+                def run(self, *, inp: In[Any] = ()) -> None: ...
 
 
 class TestOutputContractHolds(unittest.TestCase):
@@ -410,17 +410,17 @@ class TestOutputContractHolds(unittest.TestCase):
                 first: Emit[int]
                 second: Emit[int]
 
-            def run(self, *, input: In[int] = ()) -> Out:
+            def run(self, *, inp: In[int] = ()) -> Out:
                 return self.Out(second=(msg(2),), first=(msg(1),))
 
-        produced = Split().invoke({"input": ()})
+        produced = Split().invoke({"inp": ()})
         self.assertEqual(
             list(normalize_outputs(produced, Split.OUTPUTS, where="s")),
             ["first", "second"],
         )
 
     def test_an_empty_port_publishes_nothing(self):
-        produced = Doubler().invoke({"input": ()})
+        produced = Doubler().invoke({"inp": ()})
         self.assertEqual(normalize_outputs(produced, Doubler.OUTPUTS, where="d"), {})
 
     def test_a_typed_run_returning_none_means_nothing(self):
@@ -428,10 +428,10 @@ class TestOutputContractHolds(unittest.TestCase):
             class Out(NamedTuple):
                 output: Emit[Any]
 
-            def run(self, *, input: In[Any] = ()) -> Out | None:
+            def run(self, *, inp: In[Any] = ()) -> Out | None:
                 return None
 
-        produced = Quiet().invoke({"input": ()})
+        produced = Quiet().invoke({"inp": ()})
         self.assertEqual(normalize_outputs(produced, Quiet.OUTPUTS, where="q"), {})
 
     def test_a_bare_message_is_still_an_error(self):
@@ -439,10 +439,10 @@ class TestOutputContractHolds(unittest.TestCase):
             class Out(NamedTuple):
                 output: Emit[Any]
 
-            def run(self, *, input: In[Any] = ()):
+            def run(self, *, inp: In[Any] = ()):
                 return msg(1)
 
-        produced = Sloppy().invoke({"input": ()})
+        produced = Sloppy().invoke({"inp": ()})
         with self.assertRaises(NodeContractError) as caught:
             normalize_outputs(produced, Sloppy.OUTPUTS, where="s")
         self.assertIn("bare Message", str(caught.exception))
@@ -452,10 +452,10 @@ class TestOutputContractHolds(unittest.TestCase):
             class Out(NamedTuple):
                 output: Emit[Any]
 
-            def run(self, *, input: In[Any] = ()):
+            def run(self, *, inp: In[Any] = ()):
                 return self.Out(output=msg(1))  # pyrefly: ignore[bad-argument-type]
 
-        produced = Sloppy().invoke({"input": ()})
+        produced = Sloppy().invoke({"inp": ()})
         with self.assertRaises(NodeContractError) as caught:
             normalize_outputs(produced, Sloppy.OUTPUTS, where="s")
         self.assertIn("wrap it in a list", str(caught.exception))

@@ -58,7 +58,7 @@ class TestCoreNodes(unittest.TestCase):
     def graph_of(self, type_name, params):
         builder = GraphBuilder("g")
         builder.add("n", type_name, params=params)
-        builder.add_input("source", "n.input")
+        builder.add_input("source", "n.inp")
         builder.add_output("output", "n.output")
         return Graph.instantiate(builder.build(), core.register(Registry()))
 

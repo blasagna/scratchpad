@@ -307,7 +307,7 @@ class GraphBuilder:
 
     >>> builder = GraphBuilder("chain")
     >>> _ = builder.add("double", "demo.double")
-    >>> builder.add_input("samples", "double.input")
+    >>> builder.add_input("samples", "double.inp")
     >>> builder.add_output("result", "double.output")
     >>> spec = builder.build()
     >>> spec.name, len(spec.nodes)
@@ -321,8 +321,8 @@ class GraphBuilder:
     >>> class Double(Node):
     ...     class Out(NamedTuple):
     ...         output: Emit[int]
-    ...     def run(self, *, input: In[int] = ()) -> Out:
-    ...         return self.Out(output=input)
+    ...     def run(self, *, inp: In[int] = ()) -> Out:
+    ...         return self.Out(output=inp)
     >>> by_class = GraphBuilder("chain2")
     >>> _ = by_class.add("double", Double)
     >>> by_class.build().nodes[0].type_name  # doctest: +ELLIPSIS

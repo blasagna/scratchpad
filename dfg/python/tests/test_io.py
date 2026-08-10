@@ -69,7 +69,7 @@ class TestInjectAndPoll(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add("left", helpers.Double)
         builder.add("right", helpers.Double)
-        builder.add_input("shared", "left.input", "right.input")
+        builder.add_input("shared", "left.inp", "right.inp")
         builder.add_output("l", "left.output")
         builder.add_output("r", "right.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
@@ -138,9 +138,9 @@ class TestTaps(unittest.TestCase):
         builder.add("head", helpers.Double)
         builder.add("left", helpers.Passthrough)
         builder.add("right", helpers.Passthrough)
-        builder.connect("head.output", "left.input")
-        builder.connect("head.output", "right.input")
-        builder.add_input("source", "head.input")
+        builder.connect("head.output", "left.inp")
+        builder.connect("head.output", "right.inp")
+        builder.add_input("source", "head.inp")
         builder.add_output("l", "left.output")
         builder.add_output("r", "right.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
@@ -257,16 +257,16 @@ class TestPublishOrder(unittest.TestCase):
                 first: Emit[Any]
                 second: Emit[Any]
 
-            def run(self, *, input: In[Any] = ()) -> Out:
+            def run(self, *, inp: In[Any] = ()) -> Out:
                 # Deliberately built in the wrong order.
-                return self.Out(second=input, first=input)
+                return self.Out(second=inp, first=inp)
 
         registry = helpers.build_registry()
         registry.register(TwoOut)
         seen: list[str] = []
         builder = GraphBuilder("g")
         builder.add("n", TwoOut)
-        builder.add_input("source", "n.input")
+        builder.add_input("source", "n.inp")
         builder.add_output("a", "n.first")
         builder.add_output("b", "n.second")
         with Graph.instantiate(builder.build(), registry) as graph:
@@ -279,7 +279,7 @@ class TestPublishOrder(unittest.TestCase):
     def test_two_outputs_may_alias_the_same_port(self):
         builder = GraphBuilder("g")
         builder.add("n", helpers.Double)
-        builder.add_input("source", "n.input")
+        builder.add_input("source", "n.inp")
         builder.add_output("primary", "n.output")
         builder.add_output("copy", "n.output")
         seen: list[int] = []

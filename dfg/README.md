@@ -358,6 +358,12 @@ the mapping form, not a replacement for it: the mapping is still what the framew
 passes and returns, a port still carries **zero or more** messages, and a node whose
 ports depend on its parameters still declares them as data because no signature can
 say that. A second language port has to implement the mapping form; whether it also
-has a spelling like this one is its own business. The generic ports are named `input`
-and `output` rather than `in`/`out` for the same reason — `in` is a Python keyword, so
-it cannot be a parameter name.
+has a spelling like this one is its own business. Naming ports as identifiers does
+constrain what a port may be called, and the generic ones show it: the pair is
+`inp`/`output` rather than `in`/`out`, because `in` is a Python keyword and so cannot
+be a parameter name at all, while `input` is a builtin that a parameter would shadow
+inside every `run` that declared it. A port named for what it carries — `raw`, `imu`,
+`window`, `frame` — sidesteps the question and reads better, and is what a node with
+more than one input port does anyway; `inp` is the fallback for a node too generic to
+have a better name. A language whose ports are strings in a table has none of this
+problem, which is the cost of the sugar rather than an argument against it.

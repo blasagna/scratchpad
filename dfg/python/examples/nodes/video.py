@@ -59,10 +59,10 @@ class ToGray(Node):
     class Out(NamedTuple):
         output: Annotated[Emit[np.ndarray], Port(FRAME_GRAY)]
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(FRAME_RGB)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(FRAME_RGB)] = ()) -> Out:
         weights = np.array(self.WEIGHTS, dtype=np.float32)
         out: list[Message[np.ndarray]] = []
-        for message in input:
+        for message in inp:
             frame = np.asarray(message.payload)
             luma = frame.astype(np.float32) @ weights
             out.append(message.with_payload(np.round(luma).astype(np.uint8)))
@@ -87,13 +87,13 @@ class OverlayBox(Node):
     def run(
         self,
         *,
-        input: Annotated[In[tuple[np.ndarray, Pose]], Port("frame_and_pose")] = (),
+        inp: Annotated[In[tuple[np.ndarray, Pose]], Port("frame_and_pose")] = (),
     ) -> Out:
         size = self.size
         colour = np.array(self.colour, dtype=np.uint8)
         gain = self.gain
         out: list[Message[np.ndarray]] = []
-        for message in input:
+        for message in inp:
             frame, pose = message.payload
             frame = np.asarray(frame)
             height, width = frame.shape[0], frame.shape[1]
@@ -120,10 +120,10 @@ class FrameStatsNode(Node):
     class Out(NamedTuple):
         output: Annotated[Emit[FrameStats], Port("FrameStats")]
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(FRAME_GRAY)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(FRAME_GRAY)] = ()) -> Out:
         threshold = self.bright_threshold
         out: list[Message[FrameStats]] = []
-        for message in input:
+        for message in inp:
             frame = np.asarray(message.payload)
             out.append(
                 message.with_payload(
@@ -150,10 +150,10 @@ class Downscale(Node):
     class Out(NamedTuple):
         output: Annotated[Emit[np.ndarray], Port(FRAME_RGB)]
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(FRAME_RGB)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(FRAME_RGB)] = ()) -> Out:
         factor = self.factor
         out: list[Message[np.ndarray]] = []
-        for message in input:
+        for message in inp:
             frame = np.asarray(message.payload)
             height, width = frame.shape[0], frame.shape[1]
             if height % factor or width % factor:

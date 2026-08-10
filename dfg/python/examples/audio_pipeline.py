@@ -64,15 +64,15 @@ def build_blueprint(
     builder.add("pack", audio.Pack)
 
     builder.connect(
-        "frame.output", "hann.input", capacity=capacity, on_overflow=on_overflow
+        "frame.output", "hann.inp", capacity=capacity, on_overflow=on_overflow
     )
-    builder.connect("hann.output", "spectrum.input")
-    builder.connect("spectrum.output", "peak.input")
-    builder.connect("frame.output", "rms.input")
+    builder.connect("hann.output", "spectrum.inp")
+    builder.connect("spectrum.output", "peak.inp")
+    builder.connect("frame.output", "rms.inp")
     builder.connect("rms.output", "pack.level")
     builder.connect("peak.output", "pack.peak")
 
-    builder.add_input("blocks", "frame.input", type_tag=audio.AUDIO_BLOCK)
+    builder.add_input("blocks", "frame.inp", type_tag=audio.AUDIO_BLOCK)
     builder.add_output("summary", "pack.output")
     return builder.build()
 
@@ -102,7 +102,7 @@ def run(blocks, *, capacity=None, on_overflow=Overflow.ERROR, drain_each=True):
         stats = dict(graph.control.edge_stats())
         # How many windows `frame` produced, counted on its *unbounded* branch, so a
         # bound on the other branch cannot change the number.
-        windows = stats["frame.output -> rms.input"].enqueued
+        windows = stats["frame.output -> rms.inp"].enqueued
         return graph.poll("summary"), windows, stats
 
 
@@ -174,7 +174,7 @@ def main() -> None:
         dropped_summaries, _, dropped_stats = run(
             blocks, capacity=4, on_overflow=policy, drain_each=False
         )
-        edge = dropped_stats["frame.output -> hann.input"]
+        edge = dropped_stats["frame.output -> hann.inp"]
         print(
             f"  capacity 4, {policy:<11} enqueued: {edge.enqueued}  "
             f"dropped: {edge.dropped}  summaries: {len(dropped_summaries)}"

@@ -54,7 +54,7 @@ class TestNodeParams(unittest.TestCase):
 
     def test_missing_required_parameter_is_rejected(self):
         class NeedsOne(Node):
-            INPUTS = (PortSpec("input"),)
+            INPUTS = (PortSpec("inp"),)
             PARAMS = {"size": REQUIRED}
 
             def run(self, inputs):
@@ -97,7 +97,7 @@ class TestNodeParams(unittest.TestCase):
         # Typed params, a declared run, and parameter-dependent output ports: the
         # combination that keeps the declared form from being deprecated.
         class Splitter(Node):
-            INPUTS = (PortSpec("input"),)
+            INPUTS = (PortSpec("inp"),)
             PARAMS = {"ways": 2}
 
             @classmethod
@@ -216,7 +216,7 @@ class TestRegistry(unittest.TestCase):
         # Validation runs before any node is constructed, so the registry has to
         # answer port and parameter questions from the class.
         class Explodes(Node):
-            INPUTS = (PortSpec("input"),)
+            INPUTS = (PortSpec("inp"),)
             OUTPUTS = (PortSpec("output"),)
             PARAMS = {"x": 1}
 
@@ -229,7 +229,7 @@ class TestRegistry(unittest.TestCase):
         registry = Registry()
         registry.register("t.explodes", Explodes)
         info = registry.describe_or_raise("t.explodes")
-        self.assertEqual([p.name for p in info.input_ports({})], ["input"])
+        self.assertEqual([p.name for p in info.input_ports({})], ["inp"])
         self.assertEqual([p.name for p in info.output_ports({})], ["output"])
         self.assertEqual(info.params, {"x": 1})
 
@@ -242,13 +242,13 @@ class TestRegistry(unittest.TestCase):
         registry.register_factory(
             "t.factory",
             make,
-            inputs=(PortSpec("input"),),
+            inputs=(PortSpec("inp"),),
             outputs=(PortSpec("output"),),
             params={"gain": 2},
         )
         info = registry.describe_or_raise("t.factory")
         self.assertIsNone(info.node_cls)
-        self.assertEqual([p.name for p in info.input_ports({})], ["input"])
+        self.assertEqual([p.name for p in info.input_ports({})], ["inp"])
         self.assertEqual(info.params, {"gain": 2})
         self.assertEqual(registry.create("t.factory", {"gain": 5}).params["n"], 5)
 

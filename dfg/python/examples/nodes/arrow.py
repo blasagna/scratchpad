@@ -73,10 +73,10 @@ class BatchFromSamples(Node):
     def setup(self) -> None:
         self._rows: list[tuple[int, float, float, float, float, float, float]] = []
 
-    def run(self, *, input: Annotated[In[Any], Port("ImuSample")] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[Any], Port("ImuSample")] = ()) -> Out:
         wanted = self.rows
         batches: list[Message[pa.RecordBatch]] = []
-        for message in input:
+        for message in inp:
             sample = message.payload
             self._rows.append(
                 (
@@ -135,12 +135,12 @@ class Filter(Node):
             raise ParamError(f"op must be one of {sorted(self.OPS)}, got {self.op!r}")
 
     def run(
-        self, *, input: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
+        self, *, inp: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
     ) -> Out:
         compare = self.OPS[self.op]
         column, value = self.column, self.value
         out: list[Message[pa.RecordBatch]] = []
-        for message in input:
+        for message in inp:
             batch = message.payload
             mask = compare(batch.column(column), value)
             filtered = batch.filter(mask)
@@ -159,12 +159,12 @@ class Project(Node):
         output: Annotated[Emit[pa.RecordBatch], Port(RECORD_BATCH)]
 
     def run(
-        self, *, input: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
+        self, *, inp: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
     ) -> Out:
         keep = list(self.keep)
         name = self.magnitude_name
         out: list[Message[pa.RecordBatch]] = []
-        for message in input:
+        for message in inp:
             batch = message.payload
             squares = pc.add(
                 pc.add(
@@ -196,11 +196,11 @@ class Aggregate(Node):
         output: Annotated[Emit[dict[str, Any]], Port("aggregate")]
 
     def run(
-        self, *, input: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
+        self, *, inp: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
     ) -> Out:
         column = self.column
         out: list[Message[dict[str, Any]]] = []
-        for message in input:
+        for message in inp:
             values = message.payload.column(column)
             out.append(
                 message.with_payload(
@@ -230,10 +230,10 @@ class ToTable(Node):
         self._batches: list[pa.RecordBatch] = []
 
     def run(
-        self, *, input: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
+        self, *, inp: Annotated[In[pa.RecordBatch], Port(RECORD_BATCH)] = ()
     ) -> Out:
         out: list[Message[pa.Table]] = []
-        for message in input:
+        for message in inp:
             self._batches.append(message.payload)
             out.append(message.with_payload(pa.Table.from_batches(list(self._batches))))
         return self.Out(output=tuple(out))

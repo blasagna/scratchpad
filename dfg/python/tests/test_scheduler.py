@@ -82,7 +82,7 @@ class TestReadinessRules(unittest.TestCase):
         # not a second engine.
         builder = GraphBuilder("g")
         builder.add("batch", helpers.EmitN, params={"n": 1}, readiness=CountAtLeast(4))
-        builder.add_input("source", "batch.input")
+        builder.add_input("source", "batch.inp")
         builder.add_output("output", "batch.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             for i in range(6):
@@ -113,11 +113,11 @@ class TestReadinessRules(unittest.TestCase):
     def test_a_predicate_rule_drives_firing(self):
         # Fire only once two messages have piled up on the single port.
         rule = PredicateRule(
-            lambda queues: len(queues["input"]) >= 2, name="two_buffered"
+            lambda queues: len(queues["inp"]) >= 2, name="two_buffered"
         )
         builder = GraphBuilder("g")
         builder.add("head", helpers.Passthrough, readiness=rule)
-        builder.add_input("source", "head.input")
+        builder.add_input("source", "head.inp")
         builder.add_output("output", "head.output")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
             graph.inject("source", Message(1, 1))
@@ -223,8 +223,8 @@ class TestTieBreaking(unittest.TestCase):
         builder.add("join", helpers.Sum2)
         builder.connect("twin_b.output", "join.b")
         builder.connect("twin_a.output", "join.a")
-        builder.add_input("left", "twin_b.input")
-        builder.add_input("right", "twin_a.input")
+        builder.add_input("left", "twin_b.inp")
+        builder.add_input("right", "twin_a.inp")
         builder.add_output("output", "join.output")
         return builder.build()
 

@@ -58,11 +58,11 @@ class Frame(Node):
         self._origin = 0
         self._have_origin = False
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(AUDIO_BLOCK)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(AUDIO_BLOCK)] = ()) -> Out:
         size, hop = self.size, self.hop
         rate = self.sample_rate
         windows: list[Message[np.ndarray]] = []
-        for message in input:
+        for message in inp:
             block = np.asarray(message.payload, dtype=np.float32)
             if not self._have_origin:
                 self._origin = round(message.timestamp * rate / 1_000_000_000)
@@ -90,9 +90,9 @@ class Hann(Node):
     def setup(self) -> None:
         self._window: np.ndarray | None = None
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(AUDIO_WINDOW)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(AUDIO_WINDOW)] = ()) -> Out:
         out: list[Message[np.ndarray]] = []
-        for message in input:
+        for message in inp:
             samples = np.asarray(message.payload, dtype=np.float32)
             if self._window is None or self._window.size != samples.size:
                 self._window = np.hanning(samples.size).astype(np.float32)
@@ -108,10 +108,10 @@ class Rms(Node):
     class Out(NamedTuple):
         output: Annotated[Emit[float], Port("db")]
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(AUDIO_WINDOW)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(AUDIO_WINDOW)] = ()) -> Out:
         floor = self.floor_db
         out: list[Message[float]] = []
-        for message in input:
+        for message in inp:
             samples = np.asarray(message.payload, dtype=np.float64)
             rms = float(np.sqrt(np.mean(np.square(samples))))
             db = 20.0 * np.log10(rms) if rms > 0.0 else floor
@@ -125,9 +125,9 @@ class Spectrum(Node):
     class Out(NamedTuple):
         output: Annotated[Emit[np.ndarray], Port(SPECTRUM)]
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(AUDIO_WINDOW)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(AUDIO_WINDOW)] = ()) -> Out:
         out: list[Message[np.ndarray]] = []
-        for message in input:
+        for message in inp:
             samples = np.asarray(message.payload, dtype=np.float32)
             out.append(message.with_payload(np.abs(np.fft.rfft(samples))))
         return self.Out(output=tuple(out))
@@ -145,11 +145,11 @@ class PeakBin(Node):
     class Out(NamedTuple):
         output: Annotated[Emit[float], Port("hz")]
 
-    def run(self, *, input: Annotated[In[np.ndarray], Port(SPECTRUM)] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[np.ndarray], Port(SPECTRUM)] = ()) -> Out:
         rate = self.sample_rate
         size = self.window_size
         out: list[Message[float]] = []
-        for message in input:
+        for message in inp:
             magnitudes = np.asarray(message.payload)
             if magnitudes.size < 2:
                 continue

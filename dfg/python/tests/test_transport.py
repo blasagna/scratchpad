@@ -63,13 +63,13 @@ class TestUnbounded(unittest.TestCase):
 class TestOverflowPolicies(unittest.TestCase):
     def test_error_raises_and_names_the_edge(self):
         transport = InMemoryTransport(
-            EdgeConfig("head.output -> tail.input", capacity=2, on_overflow="error")
+            EdgeConfig("head.output -> tail.inp", capacity=2, on_overflow="error")
         )
         transport.put(envelope(0))
         transport.put(envelope(1))
         with self.assertRaises(EdgeOverflowError) as caught:
             transport.put(envelope(2))
-        self.assertIn("head.output -> tail.input", str(caught.exception))
+        self.assertIn("head.output -> tail.inp", str(caught.exception))
         self.assertIn("drop_oldest/drop_newest", str(caught.exception))
         self.assertEqual(len(transport), 2)
 

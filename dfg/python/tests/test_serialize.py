@@ -38,7 +38,7 @@ class TestRoundTrip(unittest.TestCase):
     def test_nested_subgraphs_round_trip(self):
         inner = GraphBuilder("inner")
         inner.add("double", helpers.Double)
-        inner.add_input("x", "double.input")
+        inner.add_input("x", "double.inp")
         inner.add_output("y", "double.output")
         middle = GraphBuilder("middle")
         middle.add_subgraph("deep", inner.build())
@@ -54,7 +54,7 @@ class TestRoundTrip(unittest.TestCase):
     def test_param_refs_round_trip(self):
         builder = GraphBuilder("g", params={"n": 4})
         builder.add("emit", helpers.EmitN, params={"n": ParamRef("n")})
-        builder.add_input("source", "emit.input")
+        builder.add_input("source", "emit.inp")
         builder.add_output("output", "emit.output")
         spec = builder.build()
         restored = loads(dumps(spec))
@@ -66,26 +66,26 @@ class TestRoundTrip(unittest.TestCase):
         builder.add("head", helpers.Double, on_error="drop", priority=3)
         builder.add("sink", helpers.Passthrough, readiness=AnyInput())
         builder.connect(
-            "head.output", "sink.input", capacity=8, on_overflow="drop_oldest"
+            "head.output", "sink.inp", capacity=8, on_overflow="drop_oldest"
         )
-        builder.add_input("source", "head.input")
+        builder.add_input("source", "head.inp")
         builder.add_output("output", "sink.output")
         spec = builder.build()
         self.assertEqual(loads(dumps(spec)), spec)
 
     def test_a_readiness_rule_with_arguments_round_trips(self):
         builder = GraphBuilder("g")
-        builder.add("head", helpers.Double, readiness=CountAtLeast(512, port="input"))
-        builder.add_input("source", "head.input")
+        builder.add("head", helpers.Double, readiness=CountAtLeast(512, port="inp"))
+        builder.add_input("source", "head.inp")
         builder.add_output("output", "head.output")
         restored = loads(dumps(builder.build()))
         rule = helpers.node_spec(restored).readiness
-        self.assertEqual(rule, CountAtLeast(512, port="input"))
+        self.assertEqual(rule, CountAtLeast(512, port="inp"))
 
     def test_a_type_tag_round_trips_including_none(self):
         builder = GraphBuilder("g")
         builder.add("head", helpers.Double)
-        builder.add_input("source", "head.input", type_tag="number")
+        builder.add_input("source", "head.inp", type_tag="number")
         builder.add_output("output", "head.output")
         restored = loads(dumps(builder.build()))
         self.assertEqual(restored.inputs[0].type_tag, "number")
@@ -95,7 +95,7 @@ class TestRoundTrip(unittest.TestCase):
         # Note tuples come back as lists: JSON has one sequence type.
         builder = GraphBuilder("g")
         builder.add("emit", helpers.EmitN, params={"n": 2})
-        builder.add_input("source", "emit.input")
+        builder.add_input("source", "emit.inp")
         spec = builder.build()
         self.assertEqual(loads(dumps(spec)).nodes[0].params, {"n": 2})
 
@@ -196,7 +196,7 @@ class TestRejections(unittest.TestCase):
     def test_a_predicate_rule_cannot_be_written_and_says_which_node(self):
         builder = GraphBuilder("g")
         builder.add("head", helpers.Double, readiness=PredicateRule(lambda q: True))
-        builder.add_input("source", "head.input")
+        builder.add_input("source", "head.inp")
         with self.assertRaises(SerializationError) as caught:
             dumps(builder.build())
         self.assertIn("'head'", str(caught.exception))

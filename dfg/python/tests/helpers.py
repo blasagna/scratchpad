@@ -99,8 +99,8 @@ class Passthrough(Node):
     class Out(NamedTuple):
         output: Emit[Any]
 
-    def run(self, *, input: In[Any] = ()) -> Out:
-        return self.Out(output=input)
+    def run(self, *, inp: In[Any] = ()) -> Out:
+        return self.Out(output=inp)
 
 
 class Double(Node):
@@ -109,8 +109,8 @@ class Double(Node):
     class Out(NamedTuple):
         output: Annotated[Emit[int], Port("number")]
 
-    def run(self, *, input: Annotated[In[int], Port("number")] = ()) -> Out:
-        return self.Out(output=tuple(m.with_payload(m.payload * 2) for m in input))
+    def run(self, *, inp: Annotated[In[int], Port("number")] = ()) -> Out:
+        return self.Out(output=tuple(m.with_payload(m.payload * 2) for m in inp))
 
 
 class Sum2(Node):
@@ -137,13 +137,13 @@ class EmitN(Node):
     so the registry and validate paths that read one stay exercised.
     """
 
-    INPUTS = (PortSpec("input"),)
+    INPUTS = (PortSpec("inp"),)
     OUTPUTS = (PortSpec("output"),)
     PARAMS = {"n": 3}
 
     def run(self, inputs: Inputs) -> Outputs:
         out: list[Message[Any]] = []
-        for msg in inputs.get("input", ()):
+        for msg in inputs.get("inp", ()):
             out.extend(
                 msg.with_payload((msg.payload, i)) for i in range(self.params["n"])
             )
@@ -156,8 +156,8 @@ class EmitNothing(Node):
     class Out(NamedTuple):
         output: Emit[Any]
 
-    def run(self, *, input: In[Any] = ()) -> Out | None:
-        del input
+    def run(self, *, inp: In[Any] = ()) -> Out | None:
+        del inp
         return None
 
 
@@ -167,7 +167,7 @@ class EmitEmptyMapping(Node):
     Declared form necessarily: an empty mapping is not something an ``Out`` can be.
     """
 
-    INPUTS = (PortSpec("input"),)
+    INPUTS = (PortSpec("inp"),)
     OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
@@ -181,8 +181,8 @@ class EmitEmptyPort(Node):
     class Out(NamedTuple):
         output: Emit[Any]
 
-    def run(self, *, input: In[Any] = ()) -> Out:
-        del input
+    def run(self, *, inp: In[Any] = ()) -> Out:
+        del inp
         return self.Out(output=())
 
 
@@ -192,11 +192,11 @@ class ReturnBareMessage(Node):
     Declared form necessarily: this is what ``normalize_outputs`` has to reject.
     """
 
-    INPUTS = (PortSpec("input"),)
+    INPUTS = (PortSpec("inp"),)
     OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
-        return next(iter(inputs["input"]))  # type: ignore[return-value]
+        return next(iter(inputs["inp"]))  # type: ignore[return-value]
 
 
 class ReturnUnknownPort(Node):
@@ -206,11 +206,11 @@ class ReturnUnknownPort(Node):
     typed node cannot name one it does not have.
     """
 
-    INPUTS = (PortSpec("input"),)
+    INPUTS = (PortSpec("inp"),)
     OUTPUTS = (PortSpec("output"),)
 
     def run(self, inputs: Inputs) -> Outputs:
-        return {"nope": list(inputs.get("input", ()))}
+        return {"nope": list(inputs.get("inp", ()))}
 
 
 class NoInputs(Node):
@@ -241,8 +241,8 @@ class RaiseInSetup(Node):
         self._record("setup")
         raise RuntimeError("setup failed on purpose")
 
-    def run(self, *, input: In[Any] = ()) -> Out | None:
-        del input
+    def run(self, *, inp: In[Any] = ()) -> Out | None:
+        del inp
         return None
 
     def teardown(self) -> None:
@@ -264,8 +264,8 @@ class RaiseInRun(Node):
     def setup(self) -> None:
         self._record("setup")
 
-    def run(self, *, input: In[Any] = ()) -> Out:
-        del input
+    def run(self, *, inp: In[Any] = ()) -> Out:
+        del inp
         self._record("run")
         raise ValueError("run failed on purpose")
 
@@ -288,9 +288,9 @@ class TraceNode(Node):
     def setup(self) -> None:
         self._record("setup")
 
-    def run(self, *, input: In[Any] = ()) -> Out:
+    def run(self, *, inp: In[Any] = ()) -> Out:
         self._record("run")
-        return self.Out(output=input)
+        return self.Out(output=inp)
 
     def teardown(self) -> None:
         self._record("teardown")
@@ -310,9 +310,9 @@ class ParamWatcher(Node):
     class Out(NamedTuple):
         output: Emit[Any]
 
-    def run(self, *, input: In[Any] = ()) -> Out:
+    def run(self, *, inp: In[Any] = ()) -> Out:
         out: list[Message[Any]] = []
-        for msg in input:
+        for msg in inp:
             if self.seen is not None:
                 self.seen.append(self.gain)
             out.append(msg.with_payload(msg.payload * self.gain))
@@ -455,11 +455,11 @@ def scheduling_spec(trace: list | None = None, *, side_priority: int = 0) -> Gra
         params={"trace": trace, "label": "side"},
         priority=side_priority,
     )
-    builder.connect("head.output", "chain1.input")
-    builder.connect("chain1.output", "chain2.input")
-    builder.connect("chain2.output", "chain3.input")
-    builder.connect("head.output", "side.input")
-    builder.add_input("source", "head.input")
+    builder.connect("head.output", "chain1.inp")
+    builder.connect("chain1.output", "chain2.inp")
+    builder.connect("chain2.output", "chain3.inp")
+    builder.connect("head.output", "side.inp")
+    builder.add_input("source", "head.inp")
     builder.add_output("chained", "chain3.output")
     builder.add_output("aside", "side.output")
     return builder.build()
@@ -471,7 +471,7 @@ def chain_spec(*, labels: Sequence[str] = ("a", "b", "c"), trace: list | None = 
     for label in labels:
         builder.add("n_" + label, TraceNode, params={"trace": trace, "label": label})
     for left, right in zip(labels, labels[1:]):
-        builder.connect(f"n_{left}.output", f"n_{right}.input")
-    builder.add_input("source", f"n_{labels[0]}.input")
+        builder.connect(f"n_{left}.output", f"n_{right}.inp")
+    builder.add_input("source", f"n_{labels[0]}.inp")
     builder.add_output("sink", f"n_{labels[-1]}.output")
     return builder.build()

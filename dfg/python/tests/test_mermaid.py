@@ -77,8 +77,8 @@ class TestPolicyMarkers(unittest.TestCase):
         builder.add(
             "marked", helpers.Passthrough, readiness=AnyInput(), on_error="drop"
         )
-        builder.connect("plain.output", "marked.input")
-        builder.add_input("source", "plain.input")
+        builder.connect("plain.output", "marked.inp")
+        builder.add_input("source", "plain.inp")
         builder.add_output("output", "marked.output")
         rendered = render_mermaid(builder.build())
         self.assertIn("plain[plain]", rendered)
@@ -91,7 +91,7 @@ class TestUnvalidatedBlueprints(unittest.TestCase):
         # description that is still wrong.
         builder = GraphBuilder("broken")
         builder.add("a", "type.that.is.not.registered")
-        builder.connect("a.output", "ghost.input")
+        builder.connect("a.output", "ghost.inp")
         rendered = render_mermaid(builder.build())
         self.assertIn("a[a]", rendered)
         self.assertIn('a -- "a.output" --> ghost', rendered)

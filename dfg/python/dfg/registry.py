@@ -73,8 +73,8 @@ class Registry:
     ... class Double(Node):
     ...     class Out(NamedTuple):
     ...         output: Emit[int]
-    ...     def run(self, *, input: In[int] = ()) -> Out:
-    ...         return self.Out(output=input)
+    ...     def run(self, *, inp: In[int] = ()) -> Out:
+    ...         return self.Out(output=inp)
     >>> "demo.double" in registry
     True
     """

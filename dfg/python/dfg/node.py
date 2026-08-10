@@ -14,14 +14,14 @@ ports as Python identifiers, so a type checker sees them::
         class Out(NamedTuple):
             output: Emit[Any]                   # an output port
 
-        def run(self, *, input: In[Any] = ()) -> Out:   # an input port
+        def run(self, *, inp: In[Any] = ()) -> Out:   # an input port
             return self.Out(output=tuple(kept))
 
 The **declared** form spells the same things as data, which is what a node needs
 when its ports are not known until it has its parameters::
 
     class Splitter(Node):
-        INPUTS = (PortSpec("input"),)
+        INPUTS = (PortSpec("inp"),)
         PARAMS: ClassVar[Mapping[str, Any]] = {"ways": 2}
 
         @classmethod
@@ -270,7 +270,7 @@ class Node(ABC):
         Typed -- one keyword-only parameter per input port, each defaulting to
         ``()``, returning this class's ``Out`` NamedTuple or ``None``::
 
-            def run(self, *, input: In[float] = ()) -> Out:
+            def run(self, *, inp: In[float] = ()) -> Out:
                 return self.Out(output=tuple(kept))
 
         Declared -- one positional mapping of the ports that had messages,
