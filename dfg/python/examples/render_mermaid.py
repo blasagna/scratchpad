@@ -18,6 +18,7 @@ from dfg.blueprint import GraphBuilder
 from dfg.mermaid import render_mermaid
 from dfg.validate import check
 from examples.imu_pipeline import build_blueprint, build_registry, fusion_blueprint
+from examples.nodes import imu
 
 
 def fenced(diagram: str) -> str:
@@ -53,7 +54,7 @@ def main() -> None:
     print("A blueprint that does not validate still renders")
     print("=" * 74)
     broken = GraphBuilder("broken")
-    broken.add("real", "imu.calibrate")
+    broken.add("real", imu.Calibrate)
     broken.add("imaginary", "not.registered")
     broken.connect("real.corrected", "ghost.raw")
     broken.add_input("source", "real.raw")

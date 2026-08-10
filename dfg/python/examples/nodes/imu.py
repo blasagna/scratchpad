@@ -251,10 +251,10 @@ class Overlay(Node):
 
 def register(registry: Registry) -> Registry:
     """Register every node in this module and return ``registry``."""
-    registry.register("imu.calibrate", Calibrate)
-    registry.register("imu.predict", Predict)
-    registry.register("imu.update", Update)
-    registry.register("imu.gravity_split", GravitySplit)
-    registry.register("imu.stats", Stats)
-    registry.register("imu.overlay", Overlay)
+    registry.register(Calibrate)
+    registry.register(Predict)
+    registry.register(Update)
+    registry.register(GravitySplit)
+    registry.register(Stats)
+    registry.register(Overlay)
     return registry

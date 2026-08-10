@@ -54,7 +54,7 @@ def build_blueprint() -> GraphSpec:
     builder = GraphBuilder("video_tracker", params={"imu_rate_hz": IMU_RATE_HZ})
     builder.add(
         "calib",
-        "imu.calibrate",
+        imu.Calibrate,
         params={
             "accel_bias": [0.05, -0.03, 0.10],
             "gyro_bias": [0.0, 0.0, 0.0],
@@ -64,12 +64,12 @@ def build_blueprint() -> GraphSpec:
     builder.add_subgraph(
         "fusion", fusion_blueprint(), params={"rate_hz": ParamRef("imu_rate_hz")}
     )
-    builder.add("thin", "core.decimate", params={"factor": DECIMATE})
+    builder.add("thin", core.Decimate, params={"factor": DECIMATE})
     # `any`, not the default `all`: a hold must accept a pose with no frame waiting.
-    builder.add("hold", "core.resample", readiness=AnyInput())
-    builder.add("overlay", "video.overlay_box", params={"size": 6})
-    builder.add("gray", "video.to_gray")
-    builder.add("stats", "video.frame_stats")
+    builder.add("hold", core.Resample, readiness=AnyInput())
+    builder.add("overlay", video.OverlayBox, params={"size": 6})
+    builder.add("gray", video.ToGray)
+    builder.add("stats", video.FrameStatsNode)
 
     builder.connect("calib.corrected", "fusion.imu")
     builder.connect("fusion.pose", "hold.fast")

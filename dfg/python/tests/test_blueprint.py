@@ -16,6 +16,8 @@ from dfg.blueprint import (
     SubgraphSpec,
     split_endpoint,
 )
+from dfg.node import Node
+from dfg.ports import PortSpec
 from dfg.readiness import AllInputs, AnyInput
 
 
@@ -85,6 +87,16 @@ class TestSpecs(unittest.TestCase):
 
 
 class TestGraphBuilder(unittest.TestCase):
+    def test_add_accepts_a_node_class(self):
+        builder = GraphBuilder("g")
+        builder.add("double", helpers.Double)
+        self.assertEqual(builder.build().nodes[0].type_name, "helpers.Double")
+
+    def test_add_rejects_a_non_node_class(self):
+        builder = GraphBuilder("g")
+        with self.assertRaises(TypeError):
+            builder.add("n", int)
+
     def test_builds_the_spec_a_hand_written_literal_would(self):
         builder = GraphBuilder("chain", params={"gain": 2})
         builder.add("double", "t.double")
@@ -174,6 +186,8 @@ class TestDocstringExamples(unittest.TestCase):
             "GraphBuilder": GraphBuilder,
             "split_endpoint": split_endpoint,
             "PortRef": PortRef,
+            "Node": Node,
+            "PortSpec": PortSpec,
         }
         result = doctest.testmod(blueprint, globs=registry_globals, verbose=False)
         self.assertEqual(result.failed, 0)

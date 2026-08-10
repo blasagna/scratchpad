@@ -57,7 +57,7 @@ class TestFraming(unittest.TestCase):
         builder = GraphBuilder("g")
         builder.add(
             "frame",
-            "audio.frame",
+            audio.Frame,
             params={"size": size, "hop": hop, "sample_rate": sample_rate},
         )
         builder.add_input("blocks", "frame.in")

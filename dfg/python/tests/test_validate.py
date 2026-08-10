@@ -29,7 +29,7 @@ def codes(spec, registry=None):
 def valid_spec():
     """A minimal blueprint with nothing wrong with it."""
     builder = GraphBuilder("g")
-    builder.add("double", "t.double")
+    builder.add("double", helpers.Double)
     builder.add_input("source", "double.in")
     builder.add_output("result", "double.out")
     return builder.build()
@@ -63,9 +63,9 @@ class TestAggregation(unittest.TestCase):
         spec = GraphSpec(
             name="g",
             nodes=(
-                NodeSpec(node_id="dup", type_name="t.double"),
-                NodeSpec(node_id="dup", type_name="t.double"),
-                NodeSpec(node_id="bad.id", type_name="t.double"),
+                NodeSpec(node_id="dup", type_name="helpers.Double"),
+                NodeSpec(node_id="dup", type_name="helpers.Double"),
+                NodeSpec(node_id="bad.id", type_name="helpers.Double"),
                 NodeSpec(node_id="unknown", type_name="t.nope"),
             ),
             edges=(EdgeSpec(PortRef("dup", "out"), PortRef("missing", "in")),),
@@ -83,14 +83,14 @@ class TestAggregation(unittest.TestCase):
 class TestIdentityProblems(unittest.TestCase):
     def test_duplicate_sibling_node_ids(self):
         builder = GraphBuilder("g")
-        builder.add("twin", "t.double")
-        builder.add("twin", "t.passthrough")
+        builder.add("twin", helpers.Double)
+        builder.add("twin", helpers.Passthrough)
         builder.add_input("source", "twin.in")
         self.assertIn("duplicate_id", codes(builder.build()))
 
     def test_duplicate_boundary_names(self):
         builder = GraphBuilder("g")
-        builder.add("double", "t.double")
+        builder.add("double", helpers.Double)
         builder.add_output("result", "double.out")
         builder.add_output("result", "double.out")
         builder.add_input("source", "double.in")
@@ -134,11 +134,11 @@ class TestTypeAndParamProblems(unittest.TestCase):
         spec = GraphSpec(name="g", nodes=(NodeSpec(node_id="a", type_name="t.nope"),))
         problems = check(spec, helpers.build_registry())
         self.assertEqual([p.code for p in problems], ["unknown_type"])
-        self.assertIn("t.double", problems[0].detail)
+        self.assertIn("helpers.Double", problems[0].detail)
 
     def test_unknown_parameter(self):
         builder = GraphBuilder("g")
-        builder.add("emit", "t.emit_n", params={"nope": 1})
+        builder.add("emit", helpers.EmitN, params={"nope": 1})
         builder.add_input("source", "emit.in")
         self.assertIn("unknown_param", codes(builder.build()))
 
@@ -152,21 +152,21 @@ class TestTypeAndParamProblems(unittest.TestCase):
                 return None
 
         registry = helpers.build_registry()
-        registry.register("t.needs_size", NeedsSize)
+        registry.register(NeedsSize)
         builder = GraphBuilder("g")
-        builder.add("n", "t.needs_size")
+        builder.add("n", NeedsSize)
         builder.add_input("source", "n.in")
         self.assertIn("missing_param", codes(builder.build(), registry))
 
     def test_an_unresolvable_param_ref(self):
         builder = GraphBuilder("g")
-        builder.add("emit", "t.emit_n", params={"n": ParamRef("missing")})
+        builder.add("emit", helpers.EmitN, params={"n": ParamRef("missing")})
         builder.add_input("source", "emit.in")
         self.assertIn("unresolved_param", codes(builder.build()))
 
     def test_a_resolvable_param_ref_is_accepted(self):
         builder = GraphBuilder("g", params={"n": 4})
-        builder.add("emit", "t.emit_n", params={"n": ParamRef("n")})
+        builder.add("emit", helpers.EmitN, params={"n": ParamRef("n")})
         builder.add_input("source", "emit.in")
         builder.add_output("out", "emit.out")
         self.assertEqual(codes(builder.build()), [])
@@ -182,15 +182,15 @@ class TestTypeAndParamProblems(unittest.TestCase):
 class TestWiringProblems(unittest.TestCase):
     def test_an_edge_naming_a_missing_node(self):
         builder = GraphBuilder("g")
-        builder.add("double", "t.double")
+        builder.add("double", helpers.Double)
         builder.connect("double.out", "ghost.in")
         builder.add_input("source", "double.in")
         self.assertIn("dangling_edge", codes(builder.build()))
 
     def test_an_edge_naming_a_missing_port(self):
         builder = GraphBuilder("g")
-        builder.add("double", "t.double")
-        builder.add("sink", "t.passthrough")
+        builder.add("double", helpers.Double)
+        builder.add("sink", helpers.Passthrough)
         builder.connect("double.nope", "sink.in")
         builder.add_input("source", "double.in")
         self.assertIn("dangling_edge", codes(builder.build()))
@@ -198,14 +198,14 @@ class TestWiringProblems(unittest.TestCase):
     def test_an_edge_naming_a_missing_subgraph_boundary(self):
         root = GraphBuilder("root")
         root.add_subgraph("fusion", helpers.fusion_subgraph_spec())
-        root.add("sink", "t.passthrough")
+        root.add("sink", helpers.Passthrough)
         root.connect("fusion.nope", "sink.in")
         root.add_input("source", "fusion.imu")
         self.assertIn("dangling_edge", codes(root.build()))
 
     def test_an_output_aliasing_a_missing_port(self):
         builder = GraphBuilder("g")
-        builder.add("double", "t.double")
+        builder.add("double", helpers.Double)
         builder.add_input("source", "double.in")
         builder.add_output("result", "double.nope")
         self.assertIn("dangling_edge", codes(builder.build()))
@@ -222,9 +222,9 @@ class TestWiringProblems(unittest.TestCase):
         # An input port takes one writer: two producers into one queue would make
         # message order depend on which the scheduler fired first.
         builder = GraphBuilder("g")
-        builder.add("left", "t.double")
-        builder.add("right", "t.double")
-        builder.add("sink", "t.passthrough")
+        builder.add("left", helpers.Double)
+        builder.add("right", helpers.Double)
+        builder.add("sink", helpers.Passthrough)
         builder.connect("left.out", "sink.in")
         builder.connect("right.out", "sink.in")
         builder.add_input("a", "left.in")
@@ -236,8 +236,8 @@ class TestWiringProblems(unittest.TestCase):
 
     def test_an_edge_and_a_graph_input_into_the_same_port(self):
         builder = GraphBuilder("g")
-        builder.add("left", "t.double")
-        builder.add("sink", "t.passthrough")
+        builder.add("left", helpers.Double)
+        builder.add("sink", helpers.Passthrough)
         builder.connect("left.out", "sink.in")
         builder.add_input("a", "left.in")
         builder.add_input("b", "sink.in")
@@ -250,9 +250,9 @@ class TestWiringProblems(unittest.TestCase):
         # scope as the inner edge competing with it. That is why the per-scope
         # check is complete.
         inner = GraphBuilder("fusion")
-        inner.add("predict", "t.predict")
-        inner.add("update", "t.update")
-        inner.add("extra", "t.calib")
+        inner.add("predict", helpers.Predict)
+        inner.add("update", helpers.Update)
+        inner.add("extra", helpers.Calib)
         inner.connect("predict.state", "update.state")
         inner.connect("extra.corrected", "predict.imu")
         inner.add_input("imu", "predict.imu")
@@ -266,9 +266,9 @@ class TestWiringProblems(unittest.TestCase):
     def test_fan_out_from_one_output_is_fine(self):
         # Fan-out is explicitly allowed and is still one topic.
         builder = GraphBuilder("g")
-        builder.add("head", "t.double")
-        builder.add("left", "t.passthrough")
-        builder.add("right", "t.passthrough")
+        builder.add("head", helpers.Double)
+        builder.add("left", helpers.Passthrough)
+        builder.add("right", helpers.Passthrough)
         builder.connect("head.out", "left.in")
         builder.connect("head.out", "right.in")
         builder.add_input("source", "head.in")
@@ -281,8 +281,8 @@ class TestFiringProblems(unittest.TestCase):
     def test_a_node_with_no_input_ports_is_rejected(self):
         # Graph inputs are the only sources.
         builder = GraphBuilder("g")
-        builder.add("src", "t.no_inputs")
-        builder.add("sink", "t.passthrough")
+        builder.add("src", helpers.NoInputs)
+        builder.add("sink", helpers.Passthrough)
         builder.connect("src.out", "sink.in")
         builder.add_output("out", "sink.out")
         problems = check(builder.build(), helpers.build_registry())
@@ -291,7 +291,7 @@ class TestFiringProblems(unittest.TestCase):
 
     def test_all_readiness_with_an_unwired_port_can_never_fire(self):
         builder = GraphBuilder("g")
-        builder.add("sum", "t.sum2")
+        builder.add("sum", helpers.Sum2)
         builder.add_input("a", "sum.a")
         builder.add_output("out", "sum.out")
         problems = check(builder.build(), helpers.build_registry())
@@ -300,7 +300,7 @@ class TestFiringProblems(unittest.TestCase):
 
     def test_any_readiness_with_an_unwired_port_is_allowed(self):
         builder = GraphBuilder("g")
-        builder.add("sum", "t.sum2", readiness=AnyInput())
+        builder.add("sum", helpers.Sum2, readiness=AnyInput())
         builder.add_input("a", "sum.a")
         builder.add_output("out", "sum.out")
         self.assertEqual(codes(builder.build()), [])
@@ -313,7 +313,7 @@ class TestFiringProblems(unittest.TestCase):
                 return True
 
         builder = GraphBuilder("g")
-        builder.add("double", "t.double", readiness=Homemade())
+        builder.add("double", helpers.Double, readiness=Homemade())
         builder.add_input("source", "double.in")
         builder.add_output("out", "double.out")
         self.assertIn("unknown_readiness", codes(builder.build()))
@@ -321,14 +321,16 @@ class TestFiringProblems(unittest.TestCase):
     def test_a_predicate_rule_is_legal_in_memory(self):
         # It just cannot be serialized, which serialize.dumps says, not validation.
         builder = GraphBuilder("g")
-        builder.add("double", "t.double", readiness=PredicateRule(lambda queues: True))
+        builder.add(
+            "double", helpers.Double, readiness=PredicateRule(lambda queues: True)
+        )
         builder.add_input("source", "double.in")
         builder.add_output("out", "double.out")
         self.assertEqual(codes(builder.build()), [])
 
     def test_a_registered_rule_with_arguments_is_accepted(self):
         builder = GraphBuilder("g")
-        builder.add("double", "t.double", readiness=CountAtLeast(4))
+        builder.add("double", helpers.Double, readiness=CountAtLeast(4))
         builder.add_input("source", "double.in")
         builder.add_output("out", "double.out")
         self.assertEqual(codes(builder.build()), [])
@@ -336,7 +338,9 @@ class TestFiringProblems(unittest.TestCase):
     def test_a_non_rule_readiness_is_rejected(self):
         spec = GraphSpec(
             name="g",
-            nodes=(NodeSpec(node_id="double", type_name="t.double", readiness="all"),),
+            nodes=(
+                NodeSpec(node_id="double", type_name="helpers.Double", readiness="all"),
+            ),
             inputs=(GraphInput("source", (PortRef("double", "in"),)),),
         )
         self.assertIn("bad_readiness", codes(spec))
@@ -345,7 +349,7 @@ class TestFiringProblems(unittest.TestCase):
 class TestPolicyProblems(unittest.TestCase):
     def test_an_unknown_error_policy(self):
         builder = GraphBuilder("g")
-        builder.add("double", "t.double", on_error="explode")
+        builder.add("double", helpers.Double, on_error="explode")
         builder.add_input("source", "double.in")
         builder.add_output("out", "double.out")
         self.assertIn("bad_policy", codes(builder.build()))
@@ -353,8 +357,8 @@ class TestPolicyProblems(unittest.TestCase):
     def test_block_is_not_an_overflow_policy(self):
         # It deadlocks a single-threaded scheduler instantly.
         builder = GraphBuilder("g")
-        builder.add("head", "t.double")
-        builder.add("sink", "t.passthrough")
+        builder.add("head", helpers.Double)
+        builder.add("sink", helpers.Passthrough)
         builder.connect("head.out", "sink.in", capacity=2, on_overflow="block")
         builder.add_input("source", "head.in")
         builder.add_output("out", "sink.out")
@@ -363,23 +367,24 @@ class TestPolicyProblems(unittest.TestCase):
         self.assertIn("'block'", problems[0].detail)
 
 
+class Texty(Node):
+    INPUTS = (PortSpec("in", type_tag="text"),)
+    OUTPUTS = (PortSpec("out", type_tag="text"),)
+
+    def run(self, inputs):
+        return None
+
+
 class TestTypeTags(unittest.TestCase):
     def registry_with_tagged_node(self):
-        class Texty(Node):
-            INPUTS = (PortSpec("in", type_tag="text"),)
-            OUTPUTS = (PortSpec("out", type_tag="text"),)
-
-            def run(self, inputs):
-                return None
-
         registry = helpers.build_registry()
-        registry.register("t.texty", Texty)
+        registry.register(Texty)
         return registry
 
     def test_mismatched_tags_are_rejected(self):
         builder = GraphBuilder("g")
-        builder.add("num", "t.double")  # out is tagged "number"
-        builder.add("text", "t.texty")  # in is tagged "text"
+        builder.add("num", helpers.Double)  # out is tagged "number"
+        builder.add("text", Texty)  # in is tagged "text"
         builder.connect("num.out", "text.in")
         builder.add_input("source", "num.in")
         builder.add_output("out", "text.out")
@@ -388,8 +393,8 @@ class TestTypeTags(unittest.TestCase):
 
     def test_matching_tags_are_accepted(self):
         builder = GraphBuilder("g")
-        builder.add("a", "t.double")
-        builder.add("b", "t.double")
+        builder.add("a", helpers.Double)
+        builder.add("b", helpers.Double)
         builder.connect("a.out", "b.in")
         builder.add_input("source", "a.in")
         builder.add_output("out", "b.out")
@@ -398,8 +403,8 @@ class TestTypeTags(unittest.TestCase):
     def test_an_untyped_end_is_never_a_mismatch(self):
         # Untyped is the default, so this check is allowed to stay silent.
         builder = GraphBuilder("g")
-        builder.add("num", "t.double")  # tagged
-        builder.add("any", "t.passthrough")  # untagged
+        builder.add("num", helpers.Double)  # tagged
+        builder.add("any", helpers.Passthrough)  # untagged
         builder.connect("num.out", "any.in")
         builder.add_input("source", "num.in")
         builder.add_output("out", "any.out")
@@ -407,14 +412,14 @@ class TestTypeTags(unittest.TestCase):
 
     def test_a_boundary_tag_is_checked_against_its_target(self):
         builder = GraphBuilder("g")
-        builder.add("num", "t.double")
+        builder.add("num", helpers.Double)
         builder.add_input("source", "num.in", type_tag="text")
         builder.add_output("out", "num.out")
         self.assertIn("type_mismatch", codes(builder.build()))
 
     def test_a_boundary_tag_is_checked_against_its_alias(self):
         builder = GraphBuilder("g")
-        builder.add("num", "t.double")
+        builder.add("num", helpers.Double)
         builder.add_input("source", "num.in")
         builder.add_output("out", "num.out", type_tag="text")
         self.assertIn("type_mismatch", codes(builder.build()))
@@ -423,8 +428,8 @@ class TestTypeTags(unittest.TestCase):
 class TestCycles(unittest.TestCase):
     def test_a_direct_cycle_is_rejected(self):
         builder = GraphBuilder("g")
-        builder.add("a", "t.sum2")
-        builder.add("b", "t.double")
+        builder.add("a", helpers.Sum2)
+        builder.add("b", helpers.Double)
         builder.connect("a.out", "b.in")
         builder.connect("b.out", "a.b")
         builder.add_input("source", "a.a")
@@ -437,13 +442,13 @@ class TestCycles(unittest.TestCase):
         # Checked on the flattened graph, which is the only exact place: treating
         # the subgraph as one vertex would also flag graphs that are really fine.
         inner = GraphBuilder("inner")
-        inner.add("mid", "t.double")
+        inner.add("mid", helpers.Double)
         inner.add_input("x", "mid.in")
         inner.add_output("y", "mid.out")
 
         root = GraphBuilder("root")
         root.add_subgraph("sub", inner.build())
-        root.add("outer", "t.sum2")
+        root.add("outer", helpers.Sum2)
         root.connect("sub.y", "outer.a")
         root.connect("outer.out", "sub.x")
         root.add_input("source", "outer.b")
@@ -452,10 +457,10 @@ class TestCycles(unittest.TestCase):
 
     def test_a_diamond_is_not_a_cycle(self):
         builder = GraphBuilder("g")
-        builder.add("head", "t.double")
-        builder.add("left", "t.passthrough")
-        builder.add("right", "t.passthrough")
-        builder.add("join", "t.sum2")
+        builder.add("head", helpers.Double)
+        builder.add("left", helpers.Passthrough)
+        builder.add("right", helpers.Passthrough)
+        builder.add("join", helpers.Sum2)
         builder.connect("head.out", "left.in")
         builder.connect("head.out", "right.in")
         builder.connect("left.out", "join.a")

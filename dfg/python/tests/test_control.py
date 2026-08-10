@@ -15,7 +15,7 @@ def watcher_spec(seen=None, changes=None):
     builder = GraphBuilder("g")
     builder.add(
         "gainer",
-        "t.param_watcher",
+        helpers.ParamWatcher,
         params={"gain": 1, "seen": seen, "changes": changes},
     )
     builder.add_input("source", "gainer.in")

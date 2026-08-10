@@ -291,32 +291,34 @@ def make_node_type(
     return Generated
 
 
+Calib = make_node_type(["raw"], ["corrected"], name="Calib")
+Predict = make_node_type(["imu"], ["state"], name="Predict")
+Update = make_node_type(["imu", "state"], ["fused"], name="Update")
+Overlay = make_node_type(["frame", "pose"], ["composited"], name="Overlay")
+
+
 def build_registry() -> Registry:
-    """A registry holding every stdlib test fixture, under ``t.*`` type names."""
+    """A registry holding every stdlib test fixture."""
     registry = Registry()
-    registry.register("t.passthrough", Passthrough)
-    registry.register("t.double", Double)
-    registry.register("t.sum2", Sum2)
-    registry.register("t.emit_n", EmitN)
-    registry.register("t.emit_nothing", EmitNothing)
-    registry.register("t.emit_empty_mapping", EmitEmptyMapping)
-    registry.register("t.emit_empty_port", EmitEmptyPort)
-    registry.register("t.bare_message", ReturnBareMessage)
-    registry.register("t.unknown_port", ReturnUnknownPort)
-    registry.register("t.no_inputs", NoInputs)
-    registry.register("t.raise_in_setup", RaiseInSetup)
-    registry.register("t.raise_in_run", RaiseInRun)
-    registry.register("t.trace", TraceNode)
-    registry.register("t.param_watcher", ParamWatcher)
+    registry.register(Passthrough)
+    registry.register(Double)
+    registry.register(Sum2)
+    registry.register(EmitN)
+    registry.register(EmitNothing)
+    registry.register(EmitEmptyMapping)
+    registry.register(EmitEmptyPort)
+    registry.register(ReturnBareMessage)
+    registry.register(ReturnUnknownPort)
+    registry.register(NoInputs)
+    registry.register(RaiseInSetup)
+    registry.register(RaiseInRun)
+    registry.register(TraceNode)
+    registry.register(ParamWatcher)
     # The README example's node types. Only the port names matter.
-    registry.register("t.calib", make_node_type(["raw"], ["corrected"], name="Calib"))
-    registry.register("t.predict", make_node_type(["imu"], ["state"], name="Predict"))
-    registry.register(
-        "t.update", make_node_type(["imu", "state"], ["fused"], name="Update")
-    )
-    registry.register(
-        "t.overlay", make_node_type(["frame", "pose"], ["composited"], name="Overlay")
-    )
+    registry.register(Calib)
+    registry.register(Predict)
+    registry.register(Update)
+    registry.register(Overlay)
     return registry
 
 
@@ -331,8 +333,8 @@ def fusion_subgraph_spec() -> GraphSpec:
     ``pose`` aliases ``update.fused``.
     """
     builder = GraphBuilder("fusion")
-    builder.add("predict", "t.predict")
-    builder.add("update", "t.update")
+    builder.add("predict", Predict)
+    builder.add("update", Update)
     builder.connect("predict.state", "update.state")
     builder.add_input("imu", "predict.imu", "update.imu")
     builder.add_output("pose", "update.fused")
@@ -346,9 +348,9 @@ def readme_example_spec() -> GraphSpec:
     ``overlay.composited``; aliases ``fusion.pose`` and the root output ``pose``.
     """
     builder = GraphBuilder("tracker", params={"imu_rate_hz": 200.0})
-    builder.add("calib", "t.calib")
+    builder.add("calib", Calib)
     builder.add_subgraph("fusion", fusion_subgraph_spec())
-    builder.add("overlay", "t.overlay")
+    builder.add("overlay", Overlay)
     builder.connect("calib.corrected", "fusion.imu")
     builder.connect("fusion.pose", "overlay.pose")
     builder.add_input("imu_raw", "calib.raw", type_tag="ImuSample")
@@ -371,10 +373,10 @@ def scheduling_spec(trace: list | None = None, *, side_priority: int = 0) -> Gra
     """
     builder = GraphBuilder("scheduling")
     for node_id in ("head", "chain1", "chain2", "chain3"):
-        builder.add(node_id, "t.trace", params={"trace": trace, "label": node_id})
+        builder.add(node_id, TraceNode, params={"trace": trace, "label": node_id})
     builder.add(
         "side",
-        "t.trace",
+        TraceNode,
         params={"trace": trace, "label": "side"},
         priority=side_priority,
     )
@@ -392,7 +394,7 @@ def chain_spec(*, labels: Sequence[str] = ("a", "b", "c"), trace: list | None = 
     """A straight chain of :class:`TraceNode`\\ s, for lifecycle-order tests."""
     builder = GraphBuilder("chain")
     for label in labels:
-        builder.add("n_" + label, "t.trace", params={"trace": trace, "label": label})
+        builder.add("n_" + label, TraceNode, params={"trace": trace, "label": label})
     for left, right in zip(labels, labels[1:]):
         builder.connect(f"n_{left}.out", f"n_{right}.in")
     builder.add_input("source", f"n_{labels[0]}.in")

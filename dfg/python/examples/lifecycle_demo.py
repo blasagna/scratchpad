@@ -32,13 +32,13 @@ def build_registry() -> Registry:
 def build_blueprint(trace: list, *, failing: bool = False) -> GraphSpec:
     """A three-node chain. ``failing`` makes the middle node raise in ``setup``."""
     builder = GraphBuilder("lifecycle")
-    builder.add("first", "core.trace", params={"trace": trace, "label": "first"})
+    builder.add("first", core.Trace, params={"trace": trace, "label": "first"})
     builder.add(
         "middle",
-        "core.fail_setup" if failing else "core.trace",
+        core.FailSetup if failing else core.Trace,
         params={"trace": trace, "label": "middle"},
     )
-    builder.add("last", "core.trace", params={"trace": trace, "label": "last"})
+    builder.add("last", core.Trace, params={"trace": trace, "label": "last"})
     builder.connect("first.out", "middle.in")
     builder.connect("middle.out", "last.in")
     builder.add_input("source", "first.in")

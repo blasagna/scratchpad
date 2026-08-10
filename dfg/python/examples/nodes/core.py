@@ -254,14 +254,14 @@ class FailRun(Trace):
 
 def register(registry: Registry) -> Registry:
     """Register every node in this module and return ``registry``."""
-    registry.register("core.passthrough", Passthrough)
-    registry.register("core.decimate", Decimate)
-    registry.register("core.window", Window)
-    registry.register("core.merge", Merge)
-    registry.register("core.resample", Resample)
-    registry.register("core.counter", Counter)
-    registry.register("core.recorder", Recorder)
-    registry.register("core.trace", Trace)
-    registry.register("core.fail_setup", FailSetup)
-    registry.register("core.fail_run", FailRun)
+    registry.register(Passthrough)
+    registry.register(Decimate)
+    registry.register(Window)
+    registry.register(Merge)
+    registry.register(Resample)
+    registry.register(Counter)
+    registry.register(Recorder)
+    registry.register(Trace)
+    registry.register(FailSetup)
+    registry.register(FailRun)
     return registry

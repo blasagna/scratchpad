@@ -152,8 +152,8 @@ class Downscale(Node):
 
 def register(registry: Registry) -> Registry:
     """Register every node in this module and return ``registry``."""
-    registry.register("video.to_gray", ToGray)
-    registry.register("video.overlay_box", OverlayBox)
-    registry.register("video.frame_stats", FrameStatsNode)
-    registry.register("video.downscale", Downscale)
+    registry.register(ToGray)
+    registry.register(OverlayBox)
+    registry.register(FrameStatsNode)
+    registry.register(Downscale)
     return registry

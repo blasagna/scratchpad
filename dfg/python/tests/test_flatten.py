@@ -94,9 +94,9 @@ class TestCapacityAcrossABoundary(unittest.TestCase):
         # capacity=64 edge into a two-target subgraph input is two 64-deep queues,
         # not one shared 64-deep queue.
         builder = GraphBuilder("root")
-        builder.add("calib", "t.calib")
+        builder.add("calib", helpers.Calib)
         builder.add_subgraph("fusion", helpers.fusion_subgraph_spec())
-        builder.add("overlay", "t.overlay")
+        builder.add("overlay", helpers.Overlay)
         builder.connect("calib.corrected", "fusion.imu", capacity=64)
         builder.connect("fusion.pose", "overlay.pose")
         builder.add_input("imu_raw", "calib.raw")
@@ -112,7 +112,7 @@ class TestCapacityAcrossABoundary(unittest.TestCase):
 class TestNestingTwoDeep(unittest.TestCase):
     def build(self):
         inner = GraphBuilder("inner")
-        inner.add("double", "t.double")
+        inner.add("double", helpers.Double)
         inner.add_input("x", "double.in")
         inner.add_output("y", "double.out")
         inner_spec = inner.build()
@@ -125,7 +125,7 @@ class TestNestingTwoDeep(unittest.TestCase):
 
         root = GraphBuilder("root")
         root.add_subgraph("mid", middle_spec)
-        root.add("tail", "t.passthrough")
+        root.add("tail", helpers.Passthrough)
         root.connect("mid.y", "tail.in")
         root.add_input("source", "mid.x")
         root.add_output("result", "tail.out")
@@ -151,7 +151,7 @@ class TestSiblingNamespaces(unittest.TestCase):
         root = GraphBuilder("root")
         root.add_subgraph("left", helpers.fusion_subgraph_spec())
         root.add_subgraph("right", helpers.fusion_subgraph_spec())
-        root.add("merge", "t.sum2")
+        root.add("merge", helpers.Sum2)
         root.connect("left.pose", "merge.a")
         root.connect("right.pose", "merge.b")
         root.add_input("left_imu", "left.imu")
@@ -168,7 +168,7 @@ class TestSiblingNamespaces(unittest.TestCase):
 class TestGraphParameters(unittest.TestCase):
     def build(self, *, override=None):
         inner = GraphBuilder("inner", params={"n": 2})
-        inner.add("emit", "t.emit_n", params={"n": ParamRef("n")})
+        inner.add("emit", helpers.EmitN, params={"n": ParamRef("n")})
         inner.add_input("x", "emit.in")
         inner.add_output("y", "emit.out")
 
@@ -196,7 +196,7 @@ class TestGraphParameters(unittest.TestCase):
 
     def test_an_unresolvable_reference_is_reported(self):
         inner = GraphBuilder("inner")
-        inner.add("emit", "t.emit_n", params={"n": ParamRef("missing")})
+        inner.add("emit", helpers.EmitN, params={"n": ParamRef("missing")})
         inner.add_input("x", "emit.in")
         inner.add_output("y", "emit.out")
         root = GraphBuilder("root")
@@ -221,9 +221,9 @@ class TestGraphAlgorithms(unittest.TestCase):
         # Two structurally symmetric nodes, declared b-then-a. The order must be
         # a-then-b regardless, or replays can legitimately differ.
         builder = GraphBuilder("g")
-        builder.add("n_b", "t.double")
-        builder.add("n_a", "t.double")
-        builder.add("merge", "t.sum2")
+        builder.add("n_b", helpers.Double)
+        builder.add("n_a", helpers.Double)
+        builder.add("merge", helpers.Sum2)
         builder.connect("n_b.out", "merge.b")
         builder.connect("n_a.out", "merge.a")
         builder.add_input("left", "n_b.in")
@@ -236,9 +236,9 @@ class TestGraphAlgorithms(unittest.TestCase):
         # tail is fed by both head (level 0) and mid (level 1), so it is level 2.
         # Shortest-path levels would put it at 1, alongside its own predecessor.
         builder = GraphBuilder("g")
-        builder.add("head", "t.double")
-        builder.add("mid", "t.double")
-        builder.add("tail", "t.sum2")
+        builder.add("head", helpers.Double)
+        builder.add("mid", helpers.Double)
+        builder.add("tail", helpers.Sum2)
         builder.connect("head.out", "mid.in")
         builder.connect("head.out", "tail.a")
         builder.connect("mid.out", "tail.b")
@@ -253,8 +253,8 @@ class TestGraphAlgorithms(unittest.TestCase):
 
     def test_a_cycle_is_found_and_named(self):
         builder = GraphBuilder("g")
-        builder.add("a", "t.sum2")
-        builder.add("b", "t.double")
+        builder.add("a", helpers.Sum2)
+        builder.add("b", helpers.Double)
         builder.connect("a.out", "b.in")
         builder.connect("b.out", "a.b")
         builder.add_input("source", "a.a")

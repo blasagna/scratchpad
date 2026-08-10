@@ -184,10 +184,10 @@ class Pack(Node):
 
 def register(registry: Registry) -> Registry:
     """Register every node in this module and return ``registry``."""
-    registry.register("audio.frame", Frame)
-    registry.register("audio.hann", Hann)
-    registry.register("audio.rms", Rms)
-    registry.register("audio.spectrum", Spectrum)
-    registry.register("audio.peak_bin", PeakBin)
-    registry.register("audio.pack", Pack)
+    registry.register(Frame)
+    registry.register(Hann)
+    registry.register(Rms)
+    registry.register(Spectrum)
+    registry.register(PeakBin)
+    registry.register(Pack)
     return registry

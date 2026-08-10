@@ -46,22 +46,22 @@ def build_blueprint(
     builder = GraphBuilder("audio", params={"sample_rate": DEFAULT_SAMPLE_RATE})
     builder.add(
         "frame",
-        "audio.frame",
+        audio.Frame,
         params={
             "size": WINDOW_SIZE,
             "hop": HOP,
             "sample_rate": DEFAULT_SAMPLE_RATE,
         },
     )
-    builder.add("hann", "audio.hann")
-    builder.add("spectrum", "audio.spectrum")
+    builder.add("hann", audio.Hann)
+    builder.add("spectrum", audio.Spectrum)
     builder.add(
         "peak",
-        "audio.peak_bin",
+        audio.PeakBin,
         params={"sample_rate": DEFAULT_SAMPLE_RATE, "window_size": WINDOW_SIZE},
     )
-    builder.add("rms", "audio.rms")
-    builder.add("pack", "audio.pack")
+    builder.add("rms", audio.Rms)
+    builder.add("pack", audio.Pack)
 
     builder.connect("frame.out", "hann.in", capacity=capacity, on_overflow=on_overflow)
     builder.connect("hann.out", "spectrum.in")

@@ -231,9 +231,9 @@ class ToTable(Node):
 
 def register(registry: Registry) -> Registry:
     """Register every node in this module and return ``registry``."""
-    registry.register("arrow.batch_from_samples", BatchFromSamples)
-    registry.register("arrow.filter", Filter)
-    registry.register("arrow.project", Project)
-    registry.register("arrow.aggregate", Aggregate)
-    registry.register("arrow.to_table", ToTable)
+    registry.register(BatchFromSamples)
+    registry.register(Filter)
+    registry.register(Project)
+    registry.register(Aggregate)
+    registry.register(ToTable)
     return registry

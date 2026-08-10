@@ -9,7 +9,12 @@ have" from the class, without calling ``__init__``.
 **There is no global default registry.** An explicit instance keeps tests
 isolated, and it makes the layering above a fact about the API instead of a
 remark. Type names are serialized, so they are API: keep them short and stable
-(``"imu.calibrate"``, ``"audio.frame"``).
+(``"imu.calibrate"``, ``"audio.frame"``) -- that guidance is for
+:meth:`Registry.register`'s explicit ``(type_name, node_cls)`` form.
+``register(node_cls)`` trades a curated name for zero declaration overhead: it
+derives the name from the class's own import path, ``f"{node_cls.__module__}.
+{node_cls.__qualname__}"``, which is stable across everything except moving or
+renaming the class.
 """
 
 from __future__ import annotations
@@ -84,13 +89,29 @@ class Registry:
 
         return decorate
 
-    def register(self, type_name: str, node_cls: type[Node]) -> None:
+    def register(
+        self, type_name: str | type[Node], node_cls: type[Node] | None = None
+    ) -> None:
         """Register ``node_cls`` under ``type_name``.
 
+        ``type_name`` may instead be the class itself, omitting ``node_cls`` --
+        ``register(SomeNode)`` derives the name from the class's own import path.
+        See the module docstring for the trade this makes against an explicit name.
+
         Raises:
-            ValueError: If the name is already registered, or ``node_cls`` is not a
+            ValueError: If the name is already registered, or the class is not a
+                :class:`~dfg.node.Node` subclass.
+            TypeError: If called with a single argument that is not a
                 :class:`~dfg.node.Node` subclass.
         """
+        if node_cls is None:
+            if not (isinstance(type_name, type) and issubclass(type_name, Node)):
+                raise TypeError(
+                    f"register() with one argument expects a Node subclass, "
+                    f"got {type_name!r}"
+                )
+            node_cls = type_name
+            type_name = f"{node_cls.__module__}.{node_cls.__qualname__}"
         if type_name in self._types:
             raise ValueError(f"node type {type_name!r} is already registered")
         if not (isinstance(node_cls, type) and issubclass(node_cls, Node)):

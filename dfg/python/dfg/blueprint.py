@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from typing import Any
 
+from dfg.node import Node
 from dfg.readiness import AllInputs, ReadinessRule
 
 
@@ -306,6 +307,19 @@ class GraphBuilder:
     >>> spec = builder.build()
     >>> spec.name, len(spec.nodes)
     ('chain', 1)
+
+    A registered node type may also be passed by class instead of by name, so a
+    typo or the wrong class is caught at the call site rather than at validation:
+
+    >>> class Double(Node):
+    ...     INPUTS = (PortSpec("in"),)
+    ...     OUTPUTS = (PortSpec("out"),)
+    ...     def run(self, inputs):
+    ...         return None
+    >>> by_class = GraphBuilder("chain2")
+    >>> _ = by_class.add("double", Double)
+    >>> by_class.build().nodes[0].type_name  # doctest: +ELLIPSIS
+    '...Double'
     """
 
     def __init__(self, name: str, *, params: Mapping[str, Any] | None = None) -> None:
@@ -319,14 +333,29 @@ class GraphBuilder:
     def add(
         self,
         node_id: str,
-        type_name: str,
+        type_name: type[Node] | str,
         *,
         params: Mapping[str, Any] | None = None,
         readiness: ReadinessRule | None = None,
         on_error: ErrorPolicy = ErrorPolicy.STOP,
         priority: int = 0,
     ) -> str:
-        """Add a leaf node. Returns ``node_id``, so it reads well inline."""
+        """Add a leaf node. Returns ``node_id``, so it reads well inline.
+
+        ``type_name`` may be a registered node type name, or the
+        :class:`~dfg.node.Node` subclass itself -- ``add(id, SomeNode)`` derives
+        the name from the class's own import path, the same name it must be
+        registered under (e.g. via ``registry.register(SomeNode)``).
+
+        Raises:
+            TypeError: If ``type_name`` is a class that is not a Node subclass.
+        """
+        if isinstance(type_name, type):
+            if not issubclass(type_name, Node):
+                raise TypeError(
+                    f"add() with a class expects a Node subclass, got {type_name!r}"
+                )
+            type_name = f"{type_name.__module__}.{type_name.__qualname__}"
         self._nodes.append(
             NodeSpec(
                 node_id=node_id,

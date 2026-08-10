@@ -46,11 +46,11 @@ def ordering_blueprint(trace: list, *, side_priority: int = 0) -> GraphSpec:
     for node_id in ("head", "chain1", "chain2", "chain3", "side"):
         builder.add(
             node_id,
-            "core.trace",
+            core.Trace,
             params={"trace": trace, "label": node_id},
             priority=side_priority if node_id == "side" else 0,
         )
-    builder.add("join", "core.merge")
+    builder.add("join", core.Merge)
     builder.connect("head.out", "chain1.in")
     builder.connect("chain1.out", "chain2.in")
     builder.connect("chain2.out", "chain3.in")
@@ -73,10 +73,10 @@ def readiness_blueprint(rule: ReadinessRule) -> GraphSpec:
     correct; they answer different questions.
     """
     builder = GraphBuilder("readiness")
-    builder.add("head", "core.passthrough")
-    builder.add("thin", "core.decimate", params={"factor": 3, "phase": 2})
-    builder.add("side", "core.passthrough")
-    builder.add("join", "core.merge", readiness=rule)
+    builder.add("head", core.Passthrough)
+    builder.add("thin", core.Decimate, params={"factor": 3, "phase": 2})
+    builder.add("side", core.Passthrough)
+    builder.add("join", core.Merge, readiness=rule)
     builder.connect("head.out", "thin.in")
     builder.connect("head.out", "side.in")
     builder.connect("thin.out", "join.a")

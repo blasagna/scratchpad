@@ -26,19 +26,19 @@ def one_node_graph(type_name, *, params=None, registry=None):
 
 class TestZero(unittest.TestCase):
     def test_none_produces_nothing(self):
-        with one_node_graph("t.emit_nothing") as graph:
+        with one_node_graph(helpers.EmitNothing) as graph:
             graph.inject("source", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
             self.assertEqual(graph.poll("out"), ())
 
     def test_an_empty_mapping_produces_nothing(self):
-        with one_node_graph("t.emit_empty_mapping") as graph:
+        with one_node_graph(helpers.EmitEmptyMapping) as graph:
             graph.inject("source", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
             self.assertEqual(graph.poll("out"), ())
 
     def test_an_empty_port_produces_nothing(self):
-        with one_node_graph("t.emit_empty_port") as graph:
+        with one_node_graph(helpers.EmitEmptyPort) as graph:
             graph.inject("source", Message(1, 10))
             self.assertEqual(graph.run_until_idle(), 1)
             self.assertEqual(graph.poll("out"), ())
@@ -46,15 +46,15 @@ class TestZero(unittest.TestCase):
     def test_a_node_that_produces_nothing_still_counts_as_fired(self):
         # The node ran; it just had nothing to say. Conflating the two would make a
         # decimator look broken in the stats.
-        with one_node_graph("t.emit_nothing") as graph:
+        with one_node_graph(helpers.EmitNothing) as graph:
             graph.inject("source", Message(1, 10))
             graph.run_until_idle()
             self.assertEqual(graph.control.node_stats()["n"].fired, 1)
 
     def test_nothing_downstream_fires_either(self):
         builder = GraphBuilder("g")
-        builder.add("silent", "t.emit_nothing")
-        builder.add("after", "t.passthrough")
+        builder.add("silent", helpers.EmitNothing)
+        builder.add("after", helpers.Passthrough)
         builder.connect("silent.out", "after.in")
         builder.add_input("source", "silent.in")
         builder.add_output("out", "after.out")
@@ -66,7 +66,7 @@ class TestZero(unittest.TestCase):
 
 class TestMany(unittest.TestCase):
     def test_three_messages_arrive_in_order(self):
-        with one_node_graph("t.emit_n", params={"n": 3}) as graph:
+        with one_node_graph(helpers.EmitN, params={"n": 3}) as graph:
             graph.inject("source", Message("x", 10))
             graph.run_until_idle()
             self.assertEqual(
@@ -75,7 +75,7 @@ class TestMany(unittest.TestCase):
             )
 
     def test_every_emitted_message_keeps_the_sample_time(self):
-        with one_node_graph("t.emit_n", params={"n": 3}) as graph:
+        with one_node_graph(helpers.EmitN, params={"n": 3}) as graph:
             graph.inject("source", Message("x", 4242))
             graph.run_until_idle()
             self.assertEqual(
@@ -84,8 +84,8 @@ class TestMany(unittest.TestCase):
 
     def test_all_of_them_reach_a_downstream_node(self):
         builder = GraphBuilder("g")
-        builder.add("fan", "t.emit_n", params={"n": 4})
-        builder.add("after", "t.passthrough")
+        builder.add("fan", helpers.EmitN, params={"n": 4})
+        builder.add("after", helpers.Passthrough)
         builder.connect("fan.out", "after.in")
         builder.add_input("source", "fan.in")
         builder.add_output("out", "after.out")
@@ -115,10 +115,8 @@ class TestDecimation(unittest.TestCase):
                 return {"out": out}
 
         registry = helpers.build_registry()
-        registry.register("t.decimate", Decimate)
-        with one_node_graph(
-            "t.decimate", params={"factor": 3}, registry=registry
-        ) as graph:
+        registry.register(Decimate)
+        with one_node_graph(Decimate, params={"factor": 3}, registry=registry) as graph:
             for i in range(7):
                 graph.inject("source", Message(i, i))
             self.assertEqual(graph.run_until_idle(), 7)
@@ -127,14 +125,14 @@ class TestDecimation(unittest.TestCase):
 
 class TestContractViolations(unittest.TestCase):
     def test_a_bare_message_is_rejected_at_run_time(self):
-        with one_node_graph("t.bare_message") as graph:
+        with one_node_graph(helpers.ReturnBareMessage) as graph:
             graph.inject("source", Message(1, 10))
             with self.assertRaises(NodeContractError) as caught:
                 graph.run_until_idle()
             self.assertIn("n.run returned a bare Message", str(caught.exception))
 
     def test_an_unknown_output_port_is_rejected(self):
-        with one_node_graph("t.unknown_port") as graph:
+        with one_node_graph(helpers.ReturnUnknownPort) as graph:
             graph.inject("source", Message(1, 10))
             with self.assertRaises(NodeContractError) as caught:
                 graph.run_until_idle()
@@ -143,7 +141,7 @@ class TestContractViolations(unittest.TestCase):
     def test_a_contract_violation_still_tears_the_graph_down(self):
         # It is a bug in the node, not a bad message, so no error policy applies --
         # but teardown is still promised.
-        graph = one_node_graph("t.bare_message")
+        graph = one_node_graph(helpers.ReturnBareMessage)
         graph.start()
         graph.inject("source", Message(1, 10))
         with self.assertRaises(NodeContractError):

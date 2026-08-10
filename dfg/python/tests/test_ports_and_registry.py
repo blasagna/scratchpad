@@ -168,6 +168,17 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(registry.names(), ("t.double",))
         self.assertIsInstance(registry.create("t.double", {}), helpers.Double)
 
+    def test_one_arg_form_derives_the_name_from_the_class(self):
+        registry = Registry()
+        registry.register(helpers.Double)
+        self.assertIn("helpers.Double", registry)
+        self.assertIsInstance(registry.create("helpers.Double", {}), helpers.Double)
+
+    def test_one_arg_form_rejects_a_non_node_class(self):
+        registry = Registry()
+        with self.assertRaises(TypeError):
+            registry.register(int)
+
     def test_decorator_form(self):
         registry = Registry()
 
@@ -254,7 +265,7 @@ class TestRegistry(unittest.TestCase):
 
     def test_fixture_registry_is_complete(self):
         registry = helpers.build_registry()
-        self.assertIn("t.calib", registry)
+        self.assertIn("helpers.Calib", registry)
         self.assertEqual(len(registry), len(registry.names()))
 
 

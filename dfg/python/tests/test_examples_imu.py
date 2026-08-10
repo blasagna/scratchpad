@@ -63,14 +63,14 @@ class TestCoreNodes(unittest.TestCase):
         return Graph.instantiate(builder.build(), core.register(Registry()))
 
     def test_decimate_keeps_one_in_three(self):
-        with self.graph_of("core.decimate", {"factor": 3, "phase": 0}) as graph:
+        with self.graph_of(core.Decimate, {"factor": 3, "phase": 0}) as graph:
             for i in range(7):
                 graph.inject("source", Message(i, i))
             graph.run_until_idle()
             self.assertEqual([m.payload for m in graph.poll("out")], [0, 3, 6])
 
     def test_decimate_phase_shifts_which_one_survives(self):
-        with self.graph_of("core.decimate", {"factor": 3, "phase": 2}) as graph:
+        with self.graph_of(core.Decimate, {"factor": 3, "phase": 2}) as graph:
             for i in range(7):
                 graph.inject("source", Message(i, i))
             graph.run_until_idle()
@@ -83,7 +83,7 @@ class TestCoreNodes(unittest.TestCase):
     def test_window_count_matches_the_framing_formula(self):
         for n, size, hop in ((10, 4, 2), (10, 4, 4), (10, 3, 1), (9, 4, 5)):
             with self.subTest(n=n, size=size, hop=hop):
-                with self.graph_of("core.window", {"size": size, "hop": hop}) as graph:
+                with self.graph_of(core.Window, {"size": size, "hop": hop}) as graph:
                     for i in range(n):
                         graph.inject("source", Message(i, i))
                     graph.run_until_idle()
@@ -92,7 +92,7 @@ class TestCoreNodes(unittest.TestCase):
                 self.assertTrue(all(len(w.payload) == size for w in windows))
 
     def test_a_window_carries_its_first_samples_time(self):
-        with self.graph_of("core.window", {"size": 3, "hop": 2}) as graph:
+        with self.graph_of(core.Window, {"size": 3, "hop": 2}) as graph:
             for i in range(7):
                 graph.inject("source", Message(i, i * 1000))
             graph.run_until_idle()
@@ -101,7 +101,7 @@ class TestCoreNodes(unittest.TestCase):
         self.assertEqual([w.payload[0].payload for w in windows], [0, 2, 4])
 
     def test_overlapping_windows_share_samples(self):
-        with self.graph_of("core.window", {"size": 4, "hop": 2}) as graph:
+        with self.graph_of(core.Window, {"size": 4, "hop": 2}) as graph:
             for i in range(8):
                 graph.inject("source", Message(i, i))
             graph.run_until_idle()
@@ -114,7 +114,7 @@ class TestCoreNodes(unittest.TestCase):
     def test_resample_holds_the_newest_fast_value(self):
         builder = GraphBuilder("g")
         # `any`, not the default `all`: the fast stream has to run ahead.
-        builder.add("hold", "core.resample", readiness=AnyInput())
+        builder.add("hold", core.Resample, readiness=AnyInput())
         builder.add_input("slow", "hold.slow")
         builder.add_input("fast", "hold.fast")
         builder.add_output("out", "hold.out")

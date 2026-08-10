@@ -113,11 +113,13 @@ class TestSetupRaises(unittest.TestCase):
     def spec(self, trace):
         """a -> raiser -> c, so there is a node before and a node after."""
         builder = GraphBuilder("g")
-        builder.add("n_a", "t.trace", params={"trace": trace, "label": "a"})
+        builder.add("n_a", helpers.TraceNode, params={"trace": trace, "label": "a"})
         builder.add(
-            "n_raiser", "t.raise_in_setup", params={"trace": trace, "label": "raiser"}
+            "n_raiser",
+            helpers.RaiseInSetup,
+            params={"trace": trace, "label": "raiser"},
         )
-        builder.add("n_c", "t.trace", params={"trace": trace, "label": "c"})
+        builder.add("n_c", helpers.TraceNode, params={"trace": trace, "label": "c"})
         builder.connect("n_a.out", "n_raiser.in")
         builder.connect("n_raiser.out", "n_c.in")
         builder.add_input("source", "n_a.in")
@@ -160,10 +162,12 @@ class TestSetupRaises(unittest.TestCase):
         builder = GraphBuilder("g")
         for label in ("a", "b"):
             builder.add(
-                f"n_{label}", "t.trace", params={"trace": trace, "label": label}
+                f"n_{label}", helpers.TraceNode, params={"trace": trace, "label": label}
             )
         builder.add(
-            "n_raiser", "t.raise_in_setup", params={"trace": trace, "label": "raiser"}
+            "n_raiser",
+            helpers.RaiseInSetup,
+            params={"trace": trace, "label": "raiser"},
         )
         builder.connect("n_a.out", "n_b.in")
         builder.connect("n_b.out", "n_raiser.in")
@@ -197,8 +201,10 @@ class TestSetupRaises(unittest.TestCase):
 class TestTeardownOnErrorStop(unittest.TestCase):
     def spec(self, trace):
         builder = GraphBuilder("g")
-        builder.add("n_a", "t.trace", params={"trace": trace, "label": "a"})
-        builder.add("n_bad", "t.raise_in_run", params={"trace": trace, "label": "bad"})
+        builder.add("n_a", helpers.TraceNode, params={"trace": trace, "label": "a"})
+        builder.add(
+            "n_bad", helpers.RaiseInRun, params={"trace": trace, "label": "bad"}
+        )
         builder.connect("n_a.out", "n_bad.in")
         builder.add_input("source", "n_a.in")
         builder.add_output("sink", "n_bad.out")
@@ -240,12 +246,12 @@ class TestTeardownFailures(unittest.TestCase):
                 torn.append("good")
 
         registry = helpers.build_registry()
-        registry.register("t.bad_teardown", BadTeardown)
-        registry.register("t.good_teardown", GoodTeardown)
+        registry.register(BadTeardown)
+        registry.register(GoodTeardown)
 
         builder = GraphBuilder("g")
-        builder.add("n_good", "t.good_teardown")
-        builder.add("n_bad", "t.bad_teardown")
+        builder.add("n_good", GoodTeardown)
+        builder.add("n_bad", BadTeardown)
         builder.connect("n_good.out", "n_bad.in")
         builder.add_input("source", "n_good.in")
         builder.add_output("sink", "n_bad.out")
@@ -264,11 +270,11 @@ class TestTeardownFailures(unittest.TestCase):
                 raise RuntimeError("cleanup failed")
 
         registry = helpers.build_registry()
-        registry.register("t.bad_teardown", BadTeardown)
+        registry.register(BadTeardown)
 
         builder = GraphBuilder("g")
-        builder.add("n_clean", "t.bad_teardown")
-        builder.add("n_bad", "t.raise_in_run", params={"trace": None, "label": "bad"})
+        builder.add("n_clean", BadTeardown)
+        builder.add("n_bad", helpers.RaiseInRun, params={"trace": None, "label": "bad"})
         builder.connect("n_clean.out", "n_bad.in")
         builder.add_input("source", "n_clean.in")
         builder.add_output("sink", "n_bad.out")
@@ -287,11 +293,11 @@ class TestTeardownFailures(unittest.TestCase):
                 raise RuntimeError("cleanup failed")
 
         registry = helpers.build_registry()
-        registry.register("t.bad_teardown", BadTeardown)
+        registry.register(BadTeardown)
 
         builder = GraphBuilder("g")
-        builder.add("n_first", "t.bad_teardown")
-        builder.add("n_raiser", "t.raise_in_setup", params={"trace": None})
+        builder.add("n_first", BadTeardown)
+        builder.add("n_raiser", helpers.RaiseInSetup, params={"trace": None})
         builder.connect("n_first.out", "n_raiser.in")
         builder.add_input("source", "n_first.in")
         builder.add_output("sink", "n_raiser.out")

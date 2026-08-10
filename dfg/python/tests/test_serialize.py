@@ -37,7 +37,7 @@ class TestRoundTrip(unittest.TestCase):
 
     def test_nested_subgraphs_round_trip(self):
         inner = GraphBuilder("inner")
-        inner.add("double", "t.double")
+        inner.add("double", helpers.Double)
         inner.add_input("x", "double.in")
         inner.add_output("y", "double.out")
         middle = GraphBuilder("middle")
@@ -53,7 +53,7 @@ class TestRoundTrip(unittest.TestCase):
 
     def test_param_refs_round_trip(self):
         builder = GraphBuilder("g", params={"n": 4})
-        builder.add("emit", "t.emit_n", params={"n": ParamRef("n")})
+        builder.add("emit", helpers.EmitN, params={"n": ParamRef("n")})
         builder.add_input("source", "emit.in")
         builder.add_output("out", "emit.out")
         spec = builder.build()
@@ -63,8 +63,8 @@ class TestRoundTrip(unittest.TestCase):
 
     def test_policies_and_capacities_round_trip(self):
         builder = GraphBuilder("g")
-        builder.add("head", "t.double", on_error="drop", priority=3)
-        builder.add("sink", "t.passthrough", readiness=AnyInput())
+        builder.add("head", helpers.Double, on_error="drop", priority=3)
+        builder.add("sink", helpers.Passthrough, readiness=AnyInput())
         builder.connect("head.out", "sink.in", capacity=8, on_overflow="drop_oldest")
         builder.add_input("source", "head.in")
         builder.add_output("out", "sink.out")
@@ -73,7 +73,7 @@ class TestRoundTrip(unittest.TestCase):
 
     def test_a_readiness_rule_with_arguments_round_trips(self):
         builder = GraphBuilder("g")
-        builder.add("head", "t.double", readiness=CountAtLeast(512, port="in"))
+        builder.add("head", helpers.Double, readiness=CountAtLeast(512, port="in"))
         builder.add_input("source", "head.in")
         builder.add_output("out", "head.out")
         restored = loads(dumps(builder.build()))
@@ -82,7 +82,7 @@ class TestRoundTrip(unittest.TestCase):
 
     def test_a_type_tag_round_trips_including_none(self):
         builder = GraphBuilder("g")
-        builder.add("head", "t.double")
+        builder.add("head", helpers.Double)
         builder.add_input("source", "head.in", type_tag="number")
         builder.add_output("out", "head.out")
         restored = loads(dumps(builder.build()))
@@ -92,7 +92,7 @@ class TestRoundTrip(unittest.TestCase):
     def test_container_params_round_trip(self):
         # Note tuples come back as lists: JSON has one sequence type.
         builder = GraphBuilder("g")
-        builder.add("emit", "t.emit_n", params={"n": 2})
+        builder.add("emit", helpers.EmitN, params={"n": 2})
         builder.add_input("source", "emit.in")
         spec = builder.build()
         self.assertEqual(loads(dumps(spec)).nodes[0].params, {"n": 2})
@@ -128,7 +128,7 @@ class TestSerializedShape(unittest.TestCase):
             {
                 "kind": "node",
                 "id": "calib",
-                "type": "t.calib",
+                "type": "helpers.Calib",
                 "params": {},
                 "readiness": {"kind": "all"},
                 "on_error": "stop",
@@ -169,7 +169,7 @@ class TestRegistryIndependence(unittest.TestCase):
         # instantiate. That is the whole reason the registry is a concept.
         text = dumps(helpers.readme_example_spec())
         spec = loads(text)  # no registry in sight
-        self.assertEqual(spec.nodes[0].type_name, "t.calib")
+        self.assertEqual(spec.nodes[0].type_name, "helpers.Calib")
 
         # Instantiating validates first, so every unresolvable type is reported at
         # once rather than one per attempt.
@@ -191,7 +191,7 @@ class TestRegistryIndependence(unittest.TestCase):
 class TestRejections(unittest.TestCase):
     def test_a_predicate_rule_cannot_be_written_and_says_which_node(self):
         builder = GraphBuilder("g")
-        builder.add("head", "t.double", readiness=PredicateRule(lambda q: True))
+        builder.add("head", helpers.Double, readiness=PredicateRule(lambda q: True))
         builder.add_input("source", "head.in")
         with self.assertRaises(SerializationError) as caught:
             dumps(builder.build())
@@ -200,7 +200,7 @@ class TestRejections(unittest.TestCase):
 
     def test_a_non_json_param_names_the_node_and_the_param(self):
         builder = GraphBuilder("g")
-        builder.add("head", "t.double", params={})
+        builder.add("head", helpers.Double, params={})
         spec = builder.build()
         spec = GraphSpec(
             name=spec.name,

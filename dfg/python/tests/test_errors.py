@@ -29,14 +29,14 @@ class FailOnOdd(Node):
 
 def registry():
     reg = helpers.build_registry()
-    reg.register("t.fail_on_odd", FailOnOdd)
+    reg.register(FailOnOdd)
     return reg
 
 
 def spec(policy):
     builder = GraphBuilder("g")
-    builder.add("picky", "t.fail_on_odd", on_error=policy)
-    builder.add("after", "t.passthrough")
+    builder.add("picky", FailOnOdd, on_error=policy)
+    builder.add("after", helpers.Passthrough)
     builder.connect("picky.out", "after.in")
     builder.add_input("source", "picky.in")
     builder.add_output("out", "after.out")
@@ -47,7 +47,7 @@ class TestStop(unittest.TestCase):
     def test_stop_is_the_default(self):
         self.assertEqual(spec("stop").nodes[0].on_error, "stop")
         builder = GraphBuilder("g")
-        builder.add("n", "t.passthrough")
+        builder.add("n", helpers.Passthrough)
         self.assertEqual(builder.build().nodes[0].on_error, "stop")
 
     def test_the_graph_stops_and_the_error_is_chained(self):
@@ -64,8 +64,10 @@ class TestStop(unittest.TestCase):
     def test_teardown_still_runs(self):
         trace: list[tuple[str, str]] = []
         builder = GraphBuilder("g")
-        builder.add("before", "t.trace", params={"trace": trace, "label": "before"})
-        builder.add("picky", "t.fail_on_odd")
+        builder.add(
+            "before", helpers.TraceNode, params={"trace": trace, "label": "before"}
+        )
+        builder.add("picky", FailOnOdd)
         builder.connect("before.out", "picky.in")
         builder.add_input("source", "before.in")
         builder.add_output("out", "picky.out")
@@ -180,8 +182,8 @@ class TestEdgeOverflowIsNotANodeError(unittest.TestCase):
     def test_an_overflowing_edge_stops_the_graph_whatever_the_node_policy(self):
         # The node did nothing wrong, so its error policy has no say.
         builder = GraphBuilder("g")
-        builder.add("fan", "t.emit_n", params={"n": 5}, on_error="drop")
-        builder.add("after", "t.passthrough")
+        builder.add("fan", helpers.EmitN, params={"n": 5}, on_error="drop")
+        builder.add("after", helpers.Passthrough)
         builder.connect("fan.out", "after.in", capacity=2, on_overflow="error")
         builder.add_input("source", "fan.in")
         builder.add_output("out", "after.out")
@@ -194,8 +196,8 @@ class TestEdgeOverflowIsNotANodeError(unittest.TestCase):
 
     def test_a_dropping_edge_keeps_going_and_counts_the_drops(self):
         builder = GraphBuilder("g")
-        builder.add("fan", "t.emit_n", params={"n": 5})
-        builder.add("after", "t.passthrough")
+        builder.add("fan", helpers.EmitN, params={"n": 5})
+        builder.add("after", helpers.Passthrough)
         builder.connect("fan.out", "after.in", capacity=2, on_overflow="drop_oldest")
         builder.add_input("source", "fan.in")
         builder.add_output("out", "after.out")

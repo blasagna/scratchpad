@@ -55,8 +55,8 @@ def fusion_blueprint() -> GraphSpec:
     ``pose`` aliases ``update.fused``.
     """
     builder = GraphBuilder("fusion", params={"rate_hz": RATE_HZ})
-    builder.add("predict", "imu.predict", params={"rate_hz": ParamRef("rate_hz")})
-    builder.add("update", "imu.update", params={"alpha": 0.05})
+    builder.add("predict", imu.Predict, params={"rate_hz": ParamRef("rate_hz")})
+    builder.add("update", imu.Update, params={"alpha": 0.05})
     builder.connect("predict.state", "update.state")
     builder.add_input("imu", "predict.imu", "update.imu", type_tag="ImuSample")
     builder.add_output("pose", "update.fused", type_tag="Orientation")
@@ -68,7 +68,7 @@ def build_blueprint() -> GraphSpec:
     builder = GraphBuilder("tracker", params={"imu_rate_hz": RATE_HZ})
     builder.add(
         "calib",
-        "imu.calibrate",
+        imu.Calibrate,
         params={
             # Lists rather than tuples: JSON has one sequence type, so a tuple
             # would come back a list and the round-trip would not be exact.
@@ -80,7 +80,7 @@ def build_blueprint() -> GraphSpec:
     builder.add_subgraph(
         "fusion", fusion_blueprint(), params={"rate_hz": ParamRef("imu_rate_hz")}
     )
-    builder.add("overlay", "imu.overlay")
+    builder.add("overlay", imu.Overlay)
     builder.connect("calib.corrected", "fusion.imu")
     builder.connect("fusion.pose", "overlay.pose")
     builder.add_input("imu_raw", "calib.raw", type_tag="ImuSample")

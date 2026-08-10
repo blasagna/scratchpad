@@ -73,8 +73,10 @@ class TestOptions(unittest.TestCase):
 class TestPolicyMarkers(unittest.TestCase):
     def test_non_default_policies_are_drawn_on_the_node(self):
         builder = GraphBuilder("g")
-        builder.add("plain", "t.double")
-        builder.add("marked", "t.passthrough", readiness=AnyInput(), on_error="drop")
+        builder.add("plain", helpers.Double)
+        builder.add(
+            "marked", helpers.Passthrough, readiness=AnyInput(), on_error="drop"
+        )
         builder.connect("plain.out", "marked.in")
         builder.add_input("source", "plain.in")
         builder.add_output("out", "marked.out")

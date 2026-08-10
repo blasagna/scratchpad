@@ -42,17 +42,17 @@ def build_registry() -> Registry:
 def build_blueprint() -> GraphSpec:
     """The columnar chain. ``rows`` is a graph parameter, so it is one knob."""
     builder = GraphBuilder("columnar", params={"rows": 64})
-    builder.add("batch", "arrow.batch_from_samples", params={"rows": ParamRef("rows")})
+    builder.add("batch", arrow.BatchFromSamples, params={"rows": ParamRef("rows")})
     builder.add(
         "filter",
-        "arrow.filter",
+        arrow.Filter,
         params={"column": "az", "op": "greater", "value": 0.0},
     )
     builder.add(
-        "project", "arrow.project", params={"keep": ["t_ns"], "magnitude_name": "mag"}
+        "project", arrow.Project, params={"keep": ["t_ns"], "magnitude_name": "mag"}
     )
-    builder.add("aggregate", "arrow.aggregate", params={"column": "mag"})
-    builder.add("table", "arrow.to_table")
+    builder.add("aggregate", arrow.Aggregate, params={"column": "mag"})
+    builder.add("table", arrow.ToTable)
 
     builder.connect("batch.out", "filter.in")
     builder.connect("filter.out", "project.in")

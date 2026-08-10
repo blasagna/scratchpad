@@ -67,8 +67,8 @@ class TestInjectAndPoll(unittest.TestCase):
 
     def test_injecting_into_a_fan_out_input_reaches_every_target(self):
         builder = GraphBuilder("g")
-        builder.add("left", "t.double")
-        builder.add("right", "t.double")
+        builder.add("left", helpers.Double)
+        builder.add("right", helpers.Double)
         builder.add_input("shared", "left.in", "right.in")
         builder.add_output("l", "left.out")
         builder.add_output("r", "right.out")
@@ -135,9 +135,9 @@ class TestTaps(unittest.TestCase):
         # port, not each edge leaving it.
         seen: list[int] = []
         builder = GraphBuilder("g")
-        builder.add("head", "t.double")
-        builder.add("left", "t.passthrough")
-        builder.add("right", "t.passthrough")
+        builder.add("head", helpers.Double)
+        builder.add("left", helpers.Passthrough)
+        builder.add("right", helpers.Passthrough)
         builder.connect("head.out", "left.in")
         builder.connect("head.out", "right.in")
         builder.add_input("source", "head.in")
@@ -261,10 +261,10 @@ class TestPublishOrder(unittest.TestCase):
                 return {"second": messages, "first": messages}
 
         registry = helpers.build_registry()
-        registry.register("t.two_out", TwoOut)
+        registry.register(TwoOut)
         seen: list[str] = []
         builder = GraphBuilder("g")
-        builder.add("n", "t.two_out")
+        builder.add("n", TwoOut)
         builder.add_input("source", "n.in")
         builder.add_output("a", "n.first")
         builder.add_output("b", "n.second")
@@ -277,7 +277,7 @@ class TestPublishOrder(unittest.TestCase):
 
     def test_two_outputs_may_alias_the_same_port(self):
         builder = GraphBuilder("g")
-        builder.add("n", "t.double")
+        builder.add("n", helpers.Double)
         builder.add_input("source", "n.in")
         builder.add_output("primary", "n.out")
         builder.add_output("copy", "n.out")

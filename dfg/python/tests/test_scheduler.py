@@ -33,7 +33,7 @@ def fired(trace):
 class TestReadinessRules(unittest.TestCase):
     def join_spec(self, rule):
         builder = GraphBuilder("g")
-        builder.add("join", "t.sum2", readiness=rule)
+        builder.add("join", helpers.Sum2, readiness=rule)
         builder.add_input("left", "join.a")
         builder.add_input("right", "join.b")
         builder.add_output("out", "join.out")
@@ -81,7 +81,7 @@ class TestReadinessRules(unittest.TestCase):
         # This is how "a batch is a very large sample" gets expressed: one rule,
         # not a second engine.
         builder = GraphBuilder("g")
-        builder.add("batch", "t.emit_n", params={"n": 1}, readiness=CountAtLeast(4))
+        builder.add("batch", helpers.EmitN, params={"n": 1}, readiness=CountAtLeast(4))
         builder.add_input("source", "batch.in")
         builder.add_output("out", "batch.out")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
@@ -93,7 +93,7 @@ class TestReadinessRules(unittest.TestCase):
 
     def test_count_on_a_named_port_takes_one_from_the_others(self):
         builder = GraphBuilder("g")
-        builder.add("join", "t.sum2", readiness=CountAtLeast(3, port="a"))
+        builder.add("join", helpers.Sum2, readiness=CountAtLeast(3, port="a"))
         builder.add_input("left", "join.a")
         builder.add_input("right", "join.b")
         builder.add_output("out", "join.out")
@@ -114,7 +114,7 @@ class TestReadinessRules(unittest.TestCase):
         # Fire only once two messages have piled up on the single port.
         rule = PredicateRule(lambda queues: len(queues["in"]) >= 2, name="two_buffered")
         builder = GraphBuilder("g")
-        builder.add("head", "t.passthrough", readiness=rule)
+        builder.add("head", helpers.Passthrough, readiness=rule)
         builder.add_input("source", "head.in")
         builder.add_output("out", "head.out")
         with Graph.instantiate(builder.build(), helpers.build_registry()) as graph:
@@ -216,9 +216,9 @@ class TestTieBreaking(unittest.TestCase):
     def symmetric_spec(self, trace):
         """Two structurally identical nodes, declared b-then-a on purpose."""
         builder = GraphBuilder("g")
-        builder.add("twin_b", "t.trace", params={"trace": trace, "label": "b"})
-        builder.add("twin_a", "t.trace", params={"trace": trace, "label": "a"})
-        builder.add("join", "t.sum2")
+        builder.add("twin_b", helpers.TraceNode, params={"trace": trace, "label": "b"})
+        builder.add("twin_a", helpers.TraceNode, params={"trace": trace, "label": "a"})
+        builder.add("join", helpers.Sum2)
         builder.connect("twin_b.out", "join.b")
         builder.connect("twin_a.out", "join.a")
         builder.add_input("left", "twin_b.in")
