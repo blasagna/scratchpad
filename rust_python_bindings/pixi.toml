@@ -9,8 +9,12 @@ version = "0.1.0"
 # `maturin develop` compiles the cdylib and installs statkit into this pixi
 # environment in editable form. VIRTUAL_ENV points maturin at the pixi env, which
 # it would otherwise not recognize as an install target. cargo comes from the
-# system toolchain, as it does everywhere else in this repo.
-build = "VIRTUAL_ENV=$CONDA_PREFIX maturin develop"
+# system toolchain, as it does everywhere else in this repo. maturin shells out to
+# `uv` for the install step whenever uv is on PATH, and recent uv versions refuse
+# to trust VIRTUAL_ENV unless it has a venv's pyvenv.cfg marker -- which a conda/pixi
+# env never has. UV_SYSTEM_PYTHON=1 tells uv to install into whatever Python it
+# finds instead of demanding that marker.
+build = "VIRTUAL_ENV=$CONDA_PREFIX UV_SYSTEM_PYTHON=1 maturin develop"
 test = { cmd = "python -m unittest discover -s tests -v", depends-on = ["build"] }
 cli = { cmd = "python -m statkit", depends-on = ["build"] }
 # --search-path lets `import statkit` resolve to `python/statkit` via its
