@@ -93,6 +93,8 @@ class TestNodeParams(unittest.TestCase):
         self.assertEqual([p.name for p in helpers.Sum2.output_ports({})], ["output"])
 
     def test_parameter_dependent_ports(self):
+        # Typed params, a declared run, and parameter-dependent output ports: the
+        # combination that keeps the declared form from being deprecated.
         class Splitter(Node):
             INPUTS = (PortSpec("input"),)
             PARAMS = {"ways": 2}

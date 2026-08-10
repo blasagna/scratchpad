@@ -1,30 +1,31 @@
 """The three error policies, and why `stop` is the default."""
 
 import unittest
+from typing import NamedTuple
 
 import helpers
 from dfg.blueprint import GraphBuilder
 from dfg.errors import EdgeOverflowError, NodeRunError
 from dfg.graph import Graph
 from dfg.message import Message
-from dfg.node import Inputs, Node, Outputs
-from dfg.ports import ERROR_PORT, PortSpec
+from dfg.node import Emit, In, Node
+from dfg.ports import ERROR_PORT
 from dfg.scheduler import ErrorEvent
 
 
 class FailOnOdd(Node):
     """Raises for odd payloads, passes even ones through."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
+    class Out(NamedTuple):
+        output: Emit[int]
 
-    def run(self, inputs: Inputs) -> Outputs:
+    def run(self, *, input: In[int] = ()) -> Out:
         out = []
-        for message in inputs.get("input", ()):
+        for message in input:
             if message.payload % 2:
                 raise ValueError(f"cannot handle {message.payload}")
             out.append(message)
-        return {"output": out}
+        return self.Out(output=tuple(out))
 
 
 def registry():

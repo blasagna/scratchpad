@@ -311,11 +311,13 @@ class GraphBuilder:
     A registered node type may also be passed by class instead of by name, so a
     typo or the wrong class is caught at the call site rather than at validation:
 
+    >>> from typing import NamedTuple
+    >>> from dfg.node import Emit, In
     >>> class Double(Node):
-    ...     INPUTS = (PortSpec("input"),)
-    ...     OUTPUTS = (PortSpec("output"),)
-    ...     def run(self, inputs):
-    ...         return None
+    ...     class Out(NamedTuple):
+    ...         output: Emit[int]
+    ...     def run(self, *, input: In[int] = ()) -> Out:
+    ...         return self.Out(output=input)
     >>> by_class = GraphBuilder("chain2")
     >>> _ = by_class.add("double", Double)
     >>> by_class.build().nodes[0].type_name  # doctest: +ELLIPSIS

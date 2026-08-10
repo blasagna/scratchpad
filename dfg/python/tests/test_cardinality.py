@@ -6,14 +6,14 @@ neither, and audio and video are mostly these.
 """
 
 import unittest
+from typing import Any, NamedTuple
 
 import helpers
 from dfg.blueprint import GraphBuilder
 from dfg.errors import NodeContractError
 from dfg.graph import Graph
 from dfg.message import Message
-from dfg.node import Inputs, Node, Outputs
-from dfg.ports import PortSpec
+from dfg.node import Emit, In, Node
 
 
 def one_node_graph(type_name, *, params=None, registry=None):
@@ -99,20 +99,21 @@ class TestMany(unittest.TestCase):
 class TestDecimation(unittest.TestCase):
     def test_a_decimator_emits_on_every_nth_firing_only(self):
         class Decimate(Node):
-            INPUTS = (PortSpec("input"),)
-            OUTPUTS = (PortSpec("output"),)
-            PARAMS = {"factor": 3}
+            factor: int = 3
+
+            class Out(NamedTuple):
+                output: Emit[Any]
 
             def setup(self) -> None:
                 self._seen = 0
 
-            def run(self, inputs: Inputs) -> Outputs:
+            def run(self, *, input: In[Any] = ()) -> Out:
                 out = []
-                for message in inputs.get("input", ()):
+                for message in input:
                     self._seen += 1
-                    if self._seen % self.params["factor"] == 0:
+                    if self._seen % self.factor == 0:
                         out.append(message)
-                return {"output": out}
+                return self.Out(output=tuple(out))
 
         registry = helpers.build_registry()
         registry.register(Decimate)

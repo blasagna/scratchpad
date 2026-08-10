@@ -66,13 +66,15 @@ class NodeTypeInfo:
 class Registry:
     """A mapping from node type names to factories.
 
+    >>> from typing import NamedTuple
+    >>> from dfg.node import Emit, In
     >>> registry = Registry()
     >>> @registry.node("demo.double")
     ... class Double(Node):
-    ...     INPUTS = (PortSpec("input"),)
-    ...     OUTPUTS = (PortSpec("output"),)
-    ...     def run(self, inputs):
-    ...         return None
+    ...     class Out(NamedTuple):
+    ...         output: Emit[int]
+    ...     def run(self, *, input: In[int] = ()) -> Out:
+    ...         return self.Out(output=input)
     >>> "demo.double" in registry
     True
     """

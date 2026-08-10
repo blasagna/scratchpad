@@ -8,12 +8,12 @@ document and the code cannot drift apart without a test noticing.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Annotated, Any, NamedTuple
 
 from dfg.blueprint import GraphBuilder, GraphSpec
 from dfg.message import Message
-from dfg.node import Inputs, Node, Outputs
-from dfg.ports import PortSpec
+from dfg.node import Emit, In, Inputs, Node, Outputs
+from dfg.ports import Port, PortSpec
 from dfg.registry import Registry
 
 
@@ -52,48 +52,55 @@ def digest(messages: Sequence[Message[Any]]) -> list[tuple[Any, int]]:
 
 
 # --- Node fixtures -----------------------------------------------------------
+#
+# Most of these use the typed node form. The ones that stay on the declared form
+# do so on purpose, and each says why: together they are the standing check that
+# the two forms still work side by side in one registry and one graph.
 
 
 class Passthrough(Node):
     """One in, one out, unchanged."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
+    class Out(NamedTuple):
+        output: Emit[Any]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        return {"output": list(inputs.get("input", ()))}
+    def run(self, *, input: In[Any] = ()) -> Out:
+        return self.Out(output=input)
 
 
 class Double(Node):
     """Doubles a numeric payload, keeping the sample time."""
 
-    INPUTS = (PortSpec("input", type_tag="number"),)
-    OUTPUTS = (PortSpec("output", type_tag="number"),)
+    class Out(NamedTuple):
+        output: Annotated[Emit[int], Port("number")]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        return {
-            "output": [
-                msg.with_payload(msg.payload * 2) for msg in inputs.get("input", ())
-            ]
-        }
+    def run(self, *, input: Annotated[In[int], Port("number")] = ()) -> Out:
+        return self.Out(output=tuple(m.with_payload(m.payload * 2) for m in input))
 
 
 class Sum2(Node):
     """Adds one message from each of two ports. The `all`-readiness workhorse."""
 
-    INPUTS = (PortSpec("a", type_tag="number"), PortSpec("b", type_tag="number"))
-    OUTPUTS = (PortSpec("output", type_tag="number"),)
+    class Out(NamedTuple):
+        output: Annotated[Emit[int], Port("number")]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        a = inputs.get("a", ())
-        b = inputs.get("b", ())
+    def run(
+        self,
+        *,
+        a: Annotated[In[int], Port("number")] = (),
+        b: Annotated[In[int], Port("number")] = (),
+    ) -> Out:
         total = sum(msg.payload for msg in a) + sum(msg.payload for msg in b)
         newest = max(msg.timestamp for msg in (*a, *b))
-        return {"output": [Message(total, newest)]}
+        return self.Out(output=(Message(total, newest),))
 
 
 class EmitN(Node):
-    """Emits ``n`` messages per firing. The many-outputs case."""
+    """Emits ``n`` messages per firing. The many-outputs case.
+
+    Declared form on purpose: the fixture that keeps a ``PARAMS`` mapping in play,
+    so the registry and validate paths that read one stay exercised.
+    """
 
     INPUTS = (PortSpec("input"),)
     OUTPUTS = (PortSpec("output"),)
@@ -111,16 +118,19 @@ class EmitN(Node):
 class EmitNothing(Node):
     """Consumes and emits nothing. The zero-outputs case."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
+    class Out(NamedTuple):
+        output: Emit[Any]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        del inputs
+    def run(self, *, input: In[Any] = ()) -> Out | None:
+        del input
         return None
 
 
 class EmitEmptyMapping(Node):
-    """Returns ``{}``, which must mean the same as ``None``."""
+    """Returns ``{}``, which must mean the same as ``None``.
+
+    Declared form necessarily: an empty mapping is not something an ``Out`` can be.
+    """
 
     INPUTS = (PortSpec("input"),)
     OUTPUTS = (PortSpec("output"),)
@@ -131,18 +141,21 @@ class EmitEmptyMapping(Node):
 
 
 class EmitEmptyPort(Node):
-    """Returns ``{"output": ()}``, which must also mean nothing was produced."""
+    """Returns an ``Out`` whose only port is empty -- also nothing produced."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
+    class Out(NamedTuple):
+        output: Emit[Any]
 
-    def run(self, inputs: Inputs) -> Outputs:
-        del inputs
-        return {"output": ()}
+    def run(self, *, input: In[Any] = ()) -> Out:
+        del input
+        return self.Out(output=())
 
 
 class ReturnBareMessage(Node):
-    """Breaks the output contract by returning a message instead of a mapping."""
+    """Breaks the output contract by returning a message instead of a mapping.
+
+    Declared form necessarily: this is what ``normalize_outputs`` has to reject.
+    """
 
     INPUTS = (PortSpec("input"),)
     OUTPUTS = (PortSpec("output"),)
@@ -152,7 +165,11 @@ class ReturnBareMessage(Node):
 
 
 class ReturnUnknownPort(Node):
-    """Breaks the output contract by naming a port it did not declare."""
+    """Breaks the output contract by naming a port it did not declare.
+
+    Declared form necessarily: an ``Out``'s fields *are* the declared ports, so a
+    typed node cannot name one it does not have.
+    """
 
     INPUTS = (PortSpec("input"),)
     OUTPUTS = (PortSpec("output"),)
@@ -162,7 +179,11 @@ class ReturnUnknownPort(Node):
 
 
 class NoInputs(Node):
-    """A free-running source, which the contract does not allow."""
+    """A free-running source, which the contract does not allow.
+
+    Declared form, to keep the rejection about validation rather than about which
+    form the author happened to write.
+    """
 
     INPUTS = ()
     OUTPUTS = (PortSpec("output"),)
@@ -175,87 +196,101 @@ class NoInputs(Node):
 class RaiseInSetup(Node):
     """``setup`` raises, so the graph must fail to start."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
-    PARAMS = {"trace": None, "label": "raiser"}
+    trace: list[tuple[str, str]] | None = None
+    label: str = "raiser"
+
+    class Out(NamedTuple):
+        output: Emit[Any]
 
     def setup(self) -> None:
-        _record(self.params, "setup")
+        self._record("setup")
         raise RuntimeError("setup failed on purpose")
 
-    def run(self, inputs: Inputs) -> Outputs:
-        del inputs
+    def run(self, *, input: In[Any] = ()) -> Out | None:
+        del input
         return None
 
     def teardown(self) -> None:
-        _record(self.params, "teardown")
+        self._record("teardown")
+
+    def _record(self, phase: str) -> None:
+        _record(self.trace, self.label, phase)
 
 
 class RaiseInRun(Node):
     """``run`` raises, so the node's error policy decides what happens."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
-    PARAMS = {"trace": None, "label": "failing"}
+    trace: list[tuple[str, str]] | None = None
+    label: str = "failing"
+
+    class Out(NamedTuple):
+        output: Emit[Any]
 
     def setup(self) -> None:
-        _record(self.params, "setup")
+        self._record("setup")
 
-    def run(self, inputs: Inputs) -> Outputs:
-        del inputs
-        _record(self.params, "run")
+    def run(self, *, input: In[Any] = ()) -> Out:
+        del input
+        self._record("run")
         raise ValueError("run failed on purpose")
 
     def teardown(self) -> None:
-        _record(self.params, "teardown")
+        self._record("teardown")
+
+    def _record(self, phase: str) -> None:
+        _record(self.trace, self.label, phase)
 
 
 class TraceNode(Node):
     """Appends ``(label, phase)`` to a shared list on every lifecycle call."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
-    PARAMS = {"trace": None, "label": "node"}
+    trace: list[tuple[str, str]] | None = None
+    label: str = "node"
+
+    class Out(NamedTuple):
+        output: Emit[Any]
 
     def setup(self) -> None:
-        _record(self.params, "setup")
+        self._record("setup")
 
-    def run(self, inputs: Inputs) -> Outputs:
-        _record(self.params, "run")
-        return {"output": list(inputs.get("input", ()))}
+    def run(self, *, input: In[Any] = ()) -> Out:
+        self._record("run")
+        return self.Out(output=input)
 
     def teardown(self) -> None:
-        _record(self.params, "teardown")
+        self._record("teardown")
+
+    def _record(self, phase: str) -> None:
+        _record(self.trace, self.label, phase)
 
 
 class ParamWatcher(Node):
     """Records the value of a live-changeable parameter it saw on each firing."""
 
-    INPUTS = (PortSpec("input"),)
-    OUTPUTS = (PortSpec("output"),)
-    PARAMS = {"gain": 1, "seen": None, "changes": None}
+    gain: int = 1
+    seen: list[int] | None = None
+    changes: list[dict[str, Any]] | None = None
     MUTABLE_PARAMS = frozenset({"gain"})
 
-    def run(self, inputs: Inputs) -> Outputs:
-        seen = self.params.get("seen")
-        gain = self.params["gain"]
+    class Out(NamedTuple):
+        output: Emit[Any]
+
+    def run(self, *, input: In[Any] = ()) -> Out:
         out: list[Message[Any]] = []
-        for msg in inputs.get("input", ()):
-            if seen is not None:
-                seen.append(gain)
-            out.append(msg.with_payload(msg.payload * gain))
-        return {"output": out}
+        for msg in input:
+            if self.seen is not None:
+                self.seen.append(self.gain)
+            out.append(msg.with_payload(msg.payload * self.gain))
+        return self.Out(output=tuple(out))
 
     def on_params_changed(self, changes: Mapping[str, Any]) -> None:
-        recorded = self.params.get("changes")
-        if recorded is not None:
-            recorded.append(dict(changes))
+        if self.changes is not None:
+            self.changes.append(dict(changes))
 
 
-def _record(params: Mapping[str, Any], phase: str) -> None:
-    trace = params.get("trace")
+def _record(trace: list[tuple[str, str]] | None, label: str, phase: str) -> None:
     if trace is not None:
-        trace.append((params.get("label"), phase))
+        trace.append((label, phase))
 
 
 def make_node_type(
@@ -268,6 +303,9 @@ def make_node_type(
 
     Used for the README example graph, where the port names carry the meaning and
     the computation does not.
+
+    Declared form necessarily, and the clearest case for why that form has to stay:
+    the port names are runtime data, so there is no signature to read them from.
     """
 
     class Generated(Node):

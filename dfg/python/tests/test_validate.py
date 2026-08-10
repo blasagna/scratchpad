@@ -1,6 +1,7 @@
 """Blueprint validation: one test per rejection, plus the aggregation promise."""
 
 import unittest
+from typing import Annotated, NamedTuple
 
 import helpers
 from dfg.blueprint import (
@@ -14,8 +15,8 @@ from dfg.blueprint import (
     SubgraphSpec,
 )
 from dfg.errors import ValidationError
-from dfg.node import REQUIRED, Node
-from dfg.ports import PortSpec
+from dfg.node import REQUIRED, Emit, In, Node
+from dfg.ports import Port, PortSpec
 from dfg.readiness import AnyInput, CountAtLeast, PredicateRule, ReadinessRule
 from dfg.registry import Registry
 from dfg.validate import check, validate
@@ -368,10 +369,10 @@ class TestPolicyProblems(unittest.TestCase):
 
 
 class Texty(Node):
-    INPUTS = (PortSpec("input", type_tag="text"),)
-    OUTPUTS = (PortSpec("output", type_tag="text"),)
+    class Out(NamedTuple):
+        output: Annotated[Emit[str], Port("text")]
 
-    def run(self, inputs):
+    def run(self, *, input: Annotated[In[str], Port("text")] = ()) -> Out | None:
         return None
 
 

@@ -248,17 +248,18 @@ class TestTaps(unittest.TestCase):
 
 class TestPublishOrder(unittest.TestCase):
     def test_ports_publish_in_declared_order_not_returned_order(self):
-        from dfg.node import Inputs, Node, Outputs
-        from dfg.ports import PortSpec
+        from typing import Any, NamedTuple
+
+        from dfg.node import Emit, In, Node
 
         class TwoOut(Node):
-            INPUTS = (PortSpec("input"),)
-            OUTPUTS = (PortSpec("first"), PortSpec("second"))
+            class Out(NamedTuple):
+                first: Emit[Any]
+                second: Emit[Any]
 
-            def run(self, inputs: Inputs) -> Outputs:
-                messages = list(inputs.get("input", ()))
+            def run(self, *, input: In[Any] = ()) -> Out:
                 # Deliberately built in the wrong order.
-                return {"second": messages, "first": messages}
+                return self.Out(second=input, first=input)
 
         registry = helpers.build_registry()
         registry.register(TwoOut)
