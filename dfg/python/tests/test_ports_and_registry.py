@@ -182,6 +182,7 @@ class TestRegistry(unittest.TestCase):
     def test_one_arg_form_rejects_a_non_node_class(self):
         registry = Registry()
         with self.assertRaises(TypeError):
+            # Passing a non-Node class is what is under test.
             registry.register(int)  # pyrefly: ignore[bad-argument-type]
 
     def test_decorator_form(self):
@@ -202,6 +203,7 @@ class TestRegistry(unittest.TestCase):
     def test_registering_a_non_node_is_rejected(self):
         registry = Registry()
         with self.assertRaises(ValueError):
+            # Passing a non-Node class is what is under test.
             registry.register("t.nope", object)  # pyrefly: ignore[bad-argument-type]
 
     def test_unknown_type_names_the_alternatives(self):

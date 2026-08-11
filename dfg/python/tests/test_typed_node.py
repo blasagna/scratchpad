@@ -453,6 +453,7 @@ class TestOutputContractHolds(unittest.TestCase):
                 output: Emit[Any]
 
             def run(self, *, inp: In[Any] = ()):
+                # A bare Message where Emit expects a sequence is the point of the test.
                 return self.Out(output=msg(1))  # pyrefly: ignore[bad-argument-type]
 
         produced = Sloppy().invoke({"inp": ()})
