@@ -65,8 +65,11 @@ class TopologicalOrdering(Ordering):
     def __init__(self) -> None:
         self._index: dict[str, int] = {}
 
-    def prepare(self, flat: FlatGraph) -> None:
-        self._index = {qid: i for i, qid in enumerate(topological_order(flat))}
+    def prepare(self, flat: FlatGraph, order: tuple[str, ...] | None = None) -> None:
+        """Precompute the index. ``order``, if given, is a precomputed
+        ``topological_order(flat)`` a caller already has, to skip recomputing it."""
+        resolved = order if order is not None else topological_order(flat)
+        self._index = {qid: i for i, qid in enumerate(resolved)}
 
     def key(self, qid: str) -> tuple[Any, ...]:
         return (self._index.get(qid, len(self._index)), qid)
@@ -86,8 +89,10 @@ class LevelOrdering(Ordering):
     def __init__(self) -> None:
         self._levels: dict[str, int] = {}
 
-    def prepare(self, flat: FlatGraph) -> None:
-        self._levels = levels(flat)
+    def prepare(self, flat: FlatGraph, order: tuple[str, ...] | None = None) -> None:
+        """Precompute levels. ``order``, if given, is a precomputed
+        ``topological_order(flat)`` a caller already has, to skip recomputing it."""
+        self._levels = levels(flat, order)
 
     def key(self, qid: str) -> tuple[Any, ...]:
         return (self._levels.get(qid, 0), qid)

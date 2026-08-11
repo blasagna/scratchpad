@@ -469,19 +469,23 @@ def topological_order(flat: FlatGraph) -> tuple[str, ...]:
     return tuple(order)
 
 
-def levels(flat: FlatGraph) -> dict[str, int]:
+def levels(flat: FlatGraph, order: tuple[str, ...] | None = None) -> dict[str, int]:
     """Longest-path level per node: ``0`` for nodes fed only by graph inputs.
 
     Longest path, not shortest: with ``1 + max(pred)`` a node is never at a lower
     level than something feeding it, so a level-ordered run cannot fire a node
     ahead of its own predecessor. Shortest-path levels would allow exactly that.
 
+    Args:
+        order: A precomputed ``topological_order(flat)``, for a caller that
+            already has one. Computed fresh when omitted.
+
     Raises:
         ValidationError: If the graph has a cycle.
     """
     preds = predecessors(flat)
     result: dict[str, int] = {}
-    for qid in topological_order(flat):
+    for qid in order if order is not None else topological_order(flat):
         parents = preds[qid]
         result[qid] = 1 + max((result[p] for p in parents), default=-1)
     return result

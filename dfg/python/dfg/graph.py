@@ -22,10 +22,10 @@ from typing import Any
 from dfg.blueprint import GraphSpec
 from dfg.control import Clock, ControlPlane, default_clock
 from dfg.errors import LifecycleError, NodeSetupError
-from dfg.flatten import Endpoint, FlatGraph, flatten, topological_order
+from dfg.flatten import Endpoint, FlatEdge, FlatGraph, flatten, topological_order
 from dfg.message import Envelope, Message
 from dfg.node import Node
-from dfg.ordering import Ordering, TopologicalOrdering, make_ordering
+from dfg.ordering import LevelOrdering, Ordering, TopologicalOrdering, make_ordering
 from dfg.ports import ERROR_PORT, topic_of
 from dfg.readiness import PortQueue
 from dfg.registry import Registry
@@ -124,11 +124,14 @@ class Graph:
             }
             for qid, node in flat.nodes.items()
         }
+        edges_by_src: dict[Endpoint, list[FlatEdge]] = {}
+        for edge in flat.edges:
+            edges_by_src.setdefault(edge.src, []).append(edge)
         self._outgoing: dict[Endpoint, tuple[Transport, ...]] = {
             (qid, port.name): tuple(
                 self._inbox[edge.dst]
                 for edge in sorted(
-                    flat.edges_from((qid, port.name)), key=lambda e: e.dst
+                    edges_by_src.get((qid, port.name), ()), key=lambda e: e.dst
                 )
             )
             for qid, node in flat.nodes.items()
@@ -144,7 +147,10 @@ class Graph:
         self._started = False
         self._stopped = False
 
-        self._ordering.prepare(flat)
+        if isinstance(self._ordering, (TopologicalOrdering, LevelOrdering)):
+            self._ordering.prepare(flat, order=self._order)
+        else:
+            self._ordering.prepare(flat)
         self._scheduler = Scheduler(
             flat=flat,
             nodes=nodes,
@@ -520,19 +526,20 @@ class Graph:
         ``outputs`` already arrives in *declared* port order, so the iteration order
         of the mapping a node returned is never trusted.
         """
+        now = self._control.now()
         for port_name, messages in outputs.items():
             endpoint = (qid, port_name)
             for message in messages:
                 self._fire_taps(endpoint, message)
             for transport in self._outgoing.get(endpoint, ()):
                 for message in messages:
-                    envelope = Envelope(message, self._control.now())
+                    envelope = Envelope(message, now)
                     transport.put(envelope)
                     self._control._record_enqueue(transport)
             for output_name in self._output_sinks.get(endpoint, ()):
                 sink = self._sinks[output_name]
                 for message in messages:
-                    envelope = Envelope(message, self._control.now())
+                    envelope = Envelope(message, now)
                     sink.put(envelope)
                     self._control._record_enqueue(sink)
                     for callback in self._output_callbacks.get(output_name, ()):
