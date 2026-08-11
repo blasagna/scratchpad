@@ -16,7 +16,13 @@ lint-py = "ruff check"
 # pair under one root and can't resolve the sibling imports. rust_python_bindings needs
 # its own pixi env (a compiled extension's stub lives under its own search path) and is
 # checked with its own `pixi run type` — see rust_python_bindings/CLAUDE.md.
-type-py = "pyrefly check algo_little_book/*/ leetcode/*/ text_analyzer/bench"
+# `-p default` opts these areas into the same stricter preset dfg/python gets from having
+# a pyrefly.toml (without one, pyrefly falls back to `basic`, lenient enough to miss
+# `x: int = "s"`). A pyrefly.toml here instead of the flag was tried and rejected: any
+# config file switches pyrefly from its per-file "guess the import root" heuristic to one
+# shared inferred root, which collides every same-named `solution.py` above and reports
+# them as unresolvable imports.
+type-py = "pyrefly check -p default algo_little_book/*/ leetcode/*/ text_analyzer/bench"
 # .c files that #include gtest are compiled as C++ (copts = ["-x", "c++"] in their
 # BUILD targets, see root CLAUDE.md), so cppcheck needs to treat them as C++ too, or
 # it reports their C++ syntax as invalid C. Found by grep rather than hardcoded, so
