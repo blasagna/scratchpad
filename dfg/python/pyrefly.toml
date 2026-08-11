@@ -1,0 +1,11 @@
+# Without a config file pyrefly falls back to its `basic` preset, which is lenient
+# enough to miss `x: int = "s"`. This area opts into `default` -- the preset you get
+# simply by having a config -- so that the typed node form (annotated parameters,
+# ports as `run` parameters and `Out` fields) is actually checked rather than merely
+# written down.
+project-includes = ["dfg", "examples", "tests"]
+
+# Mirrors how the suite runs: `python -m unittest discover -s tests` from this
+# directory puts both on sys.path, which is how `import dfg` and `import helpers`
+# resolve with no pyproject.toml and no install step.
+search-path = [".", "tests"]

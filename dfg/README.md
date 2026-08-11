@@ -171,11 +171,16 @@ are then hours apart while the actual processing took milliseconds.
 
 ### Output cardinality
 
-`run` returns a mapping of output port name to **zero or more** messages. One-in-one-out
-is the common case, not the contract: decimation emits nothing on most invocations, and
-framing a stream of audio samples into overlapping windows emits several. An API that
-returns one value per output port cannot express either without a side channel, and audio
-and video are mostly these.
+`run` returns, addressed by output port name, **zero or more** messages per port.
+One-in-one-out is the common case, not the contract: decimation emits nothing on most
+invocations, and framing a stream of audio samples into overlapping windows emits
+several. An API that returns one value per output port cannot express either without a
+side channel, and audio and video are mostly these.
+
+How a port names that structure is its own business — a mapping is the obvious
+spelling and the one the Python port's framework passes around, but a language with
+named fields may offer those instead, so long as a field holds zero or more messages
+rather than one.
 
 ### Sources
 
@@ -317,3 +322,48 @@ The first implementation is expected to demonstrate: the node lifecycle includin
 through serialization and a registry, mermaid rendering from a blueprint, at least two
 points in the readiness × ordering space, and a recorded-input replay that produces
 identical output twice.
+
+### The port
+
+It lives in [`python/`](python/) — ports are per-language subdirectories, so a second
+language is a sibling rather than a rewrite. `cd python && pixi run test` runs the
+suite and `pixi run demos` runs every example. The framework itself is stdlib-only;
+numpy and pyarrow appear only in the examples, and a test enforces that by walking the
+core's imports.
+
+Everything the list above asks for is covered by a demo *and* a test — see the
+checklist table in [`../dfg/CLAUDE.md`](CLAUDE.md) for which is which. Three further
+examples exercise the payload types this document names: `pixi run audio` (numpy
+blocks, several windows out of one firing, a bounded edge dropping), `pixi run video`
+(uint8 frames, decimation, and the 200 Hz-against-30 fps alignment done by an ordinary
+node, as [Messages and time](#messages-and-time) requires), and `pixi run arrow` (the
+same blueprint over pyarrow record batches at four chunk sizes, producing identical
+aggregates — the [one engine vs. columnar batch](#tensions) bet checked as far as
+agreement can check it, which is not the same as checking that it is fast).
+
+Three things the contract leaves open, decided here and worth knowing before reading
+the code. A subgraph's parameters reach the nodes inside it through `{"$param":
+"name"}` references resolved when the blueprint is flattened, which is what makes the
+same subgraph reusable at two rates. And an input port takes exactly one writer:
+fan-in is rejected at validation, because two producers sharing a queue would order
+messages by which node the scheduler happened to fire first, so a merge node with one
+port per producer says it explicitly instead.
+
+The third is how a node says what its parameters and ports are. Python can name them
+as identifiers rather than as strings in a table, so a node here may declare a
+parameter as an annotated class attribute, an input port as a keyword-only parameter
+of `run`, and an output port as a field of a nested `Out` — read off the class when it
+is created, so validation still answers without building a node. This is sugar over
+the mapping form, not a replacement for it: the mapping is still what the framework
+passes and returns, a port still carries **zero or more** messages, and a node whose
+ports depend on its parameters still declares them as data because no signature can
+say that. A second language port has to implement the mapping form; whether it also
+has a spelling like this one is its own business. Naming ports as identifiers does
+constrain what a port may be called, and the generic ones show it: the pair is
+`inp`/`output` rather than `in`/`out`, because `in` is a Python keyword and so cannot
+be a parameter name at all, while `input` is a builtin that a parameter would shadow
+inside every `run` that declared it. A port named for what it carries — `raw`, `imu`,
+`window`, `frame` — sidesteps the question and reads better, and is what a node with
+more than one input port does anyway; `inp` is the fallback for a node too generic to
+have a better name. A language whose ports are strings in a table has none of this
+problem, which is the cost of the sugar rather than an argument against it.
