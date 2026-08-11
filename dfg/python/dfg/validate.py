@@ -32,7 +32,7 @@ from dfg.blueprint import (
 from dfg.errors import Problem, ValidationError
 from dfg.flatten import find_cycle, flatten
 from dfg.node import _Required
-from dfg.ports import PortSpec, is_reserved_name, is_valid_name
+from dfg.ports import PortSpec, by_name, is_reserved_name, is_valid_name
 from dfg.readiness import AllInputs, PredicateRule, ReadinessRule, is_registered_kind
 from dfg.registry import Registry
 
@@ -84,14 +84,18 @@ def _check_scope(
             yield from _check_scope(
                 child.graph, registry, scope=(*scope, child.node_id)
             )
-            inputs[child.node_id] = {
-                boundary.name: PortSpec(boundary.name, boundary.type_tag)
-                for boundary in child.graph.inputs
-            }
-            outputs[child.node_id] = {
-                boundary.name: PortSpec(boundary.name, boundary.type_tag)
-                for boundary in child.graph.outputs
-            }
+            inputs[child.node_id] = by_name(
+                tuple(
+                    PortSpec(boundary.name, boundary.type_tag)
+                    for boundary in child.graph.inputs
+                )
+            )
+            outputs[child.node_id] = by_name(
+                tuple(
+                    PortSpec(boundary.name, boundary.type_tag)
+                    for boundary in child.graph.outputs
+                )
+            )
             yield from _check_params(
                 child.params, dict.fromkeys(child.graph.params), graph, child, scope
             )
@@ -123,8 +127,8 @@ def _check_scope(
                 f"are the only sources",
                 scope,
             )
-        inputs[child.node_id] = {port.name: port for port in node_inputs}
-        outputs[child.node_id] = {port.name: port for port in node_outputs}
+        inputs[child.node_id] = by_name(node_inputs)
+        outputs[child.node_id] = by_name(node_outputs)
 
     yield from _check_edges(graph, inputs, outputs, scope)
     yield from _check_boundaries(graph, inputs, outputs, scope)

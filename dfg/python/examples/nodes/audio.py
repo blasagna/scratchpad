@@ -16,7 +16,7 @@ from typing import Annotated, NamedTuple
 import numpy as np
 
 from dfg.errors import ParamError
-from dfg.message import Message
+from dfg.message import Message, ts_from_sample_index
 from dfg.node import Emit, In, Node
 from dfg.ports import Port
 from dfg.registry import Registry
@@ -70,7 +70,7 @@ class Frame(Node):
             self._buffer = np.concatenate([self._buffer, block])
             while self._buffer.size >= size:
                 window = self._buffer[:size].copy()
-                timestamp = round(self._origin * 1_000_000_000 / rate)
+                timestamp = ts_from_sample_index(self._origin, rate)
                 windows.append(Message(window, timestamp))
                 self._buffer = self._buffer[hop:]
                 self._origin += hop
