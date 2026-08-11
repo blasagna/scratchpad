@@ -3,8 +3,7 @@
 Algorithm and data-structure exercises in Python, each a pixi workspace in its own
 directory (e.g. `stack_and_queue/`).
 
-**Task names differ from `leetcode/`.** These are exploratory scripts, not
-unittest problems, so the tasks are named per script rather than `test`/`main`.
+These are exploratory scripts, not unittest problems, so the tasks are named per script rather than `test`/`main`.
 `stack_and_queue` exposes:
 
 ```sh

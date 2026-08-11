@@ -15,7 +15,6 @@ work in that subtree) and usually a `README.md` with the full narrative.
 |------|------|---------|
 | `c_little_book/` | C exercises from the little book of C (Bazel) | [`c_little_book/CLAUDE.md`](c_little_book/CLAUDE.md) |
 | `algo_little_book/` | Algorithm/data-structure exercises in Python (pixi) | [`algo_little_book/CLAUDE.md`](algo_little_book/CLAUDE.md) |
-| `leetcode/` | LeetCode solutions in Python, one pixi workspace per problem | [`leetcode/CLAUDE.md`](leetcode/CLAUDE.md) |
 | `copy_file/` | A `cp`-like file copier, ported to C / C++ / Rust | [`copy_file/CLAUDE.md`](copy_file/CLAUDE.md) |
 | `text_analyzer/` | A text-stats CLI, ported to C / C++ / Rust with cross-port parity | [`text_analyzer/CLAUDE.md`](text_analyzer/CLAUDE.md) |
 | `simple_logger/` | A timestamped log-appender CLI, ported to C / C++ / Rust | [`simple_logger/CLAUDE.md`](simple_logger/CLAUDE.md) |
