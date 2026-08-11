@@ -234,7 +234,7 @@ class TestLifecycleDemo(unittest.TestCase):
         self.assertEqual(
             lifecycle_demo.phases_of(trace, "teardown"), ["last", "middle", "first"]
         )
-        self.assertEqual(produced, 2)
+        self.assertEqual(len(produced), 2)
 
     def test_the_failing_run_shows_who_gets_a_teardown(self):
         trace, error = lifecycle_demo.run_failing()

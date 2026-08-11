@@ -16,6 +16,8 @@ tears down before anything it depends on. The second has a middle node whose
 
 from __future__ import annotations
 
+from typing import Any
+
 from dfg.blueprint import GraphBuilder, GraphSpec
 from dfg.errors import NodeSetupError
 from dfg.graph import Graph
@@ -57,16 +59,15 @@ def phases_of(trace: list[tuple[str, str]], phase: str) -> list[str]:
     return [label for label, seen in trace if seen == phase]
 
 
-def run_clean() -> tuple[list[tuple[str, str]], int]:
-    """Start, fire twice, stop. Returns the trace and the output count."""
+def run_clean() -> tuple[list[tuple[str, str]], tuple[Message[Any], ...]]:
+    """Start, fire twice, stop. Returns the trace and the messages produced."""
     trace: list[tuple[str, str]] = []
     registry = build_registry()
-    produced = 0
     with Graph.instantiate(build_blueprint(trace), registry) as graph:
         for i in range(2):
             graph.inject("source", Message(f"sample{i}", i * 1_000_000))
             graph.run_until_idle()
-        produced = len(graph.poll("sink"))
+        produced = graph.poll("sink")
     return trace, produced
 
 
@@ -88,7 +89,8 @@ def main() -> None:
     clean, produced = run_clean()
     show(clean)
     print()
-    print(f"  produced:       {produced} messages on 'sink'")
+    print(f"  outputs:        {produced}")
+    print(f"  produced:       {len(produced)} messages on 'sink'")
     print(f"  setup order:    {phases_of(clean, 'setup')}")
     print(f"  teardown order: {phases_of(clean, 'teardown')}  <- exactly reversed")
 
