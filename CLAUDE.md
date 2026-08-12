@@ -45,6 +45,10 @@ work in that subtree) and usually a `README.md` with the full narrative.
 
 Formatting is repo-wide via `pixi run fmt` (ruff + clang-format + cargo fmt) and
 runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
+`fmt-c` takes its file list from `git ls-files` rather than a `**` glob, so that
+gitignored build directories are skipped. That matters because some of them hold
+symlinks that lead out of the repo — `microbit_v2_zephyr/build/` links to the
+Zephyr installation, and a glob that follows them reformats it in place.
 
 `pixi run lint-c` runs cppcheck over the 7 Bazel C/C++ areas. Memory checking for a
 given area is `bazel test <targets> --config=valgrind` (needs the system package
