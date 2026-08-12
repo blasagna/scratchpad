@@ -4,6 +4,11 @@ Learn [Zephyr RTOS](https://docs.zephyrproject.org/latest/index.html) by buildin
 
 This application sits in a repo outside of the standard zephyr workspace. See [zephyr application development](https://docs.zephyrproject.org/latest/develop/application/index.html#application), focusing on the "Zephyr freestanding application" pattern. The zephyr workspace is at ~/zephyrproject.
 
+All six requirements have been run and checked on a real micro:bit V2. The measurements
+behind that, and the three defects the hardware turned up, are in
+[known limitations](#known-limitations) — most usefully, the accelerometer's data-ready
+trigger cannot work on this board, so it is polled.
+
 ## requirements
 
 1. Sample the accelerometer at 100 Hz continuously
@@ -142,5 +147,6 @@ board's `board.cmake`. Console is on `uart0` at 115200.
 - **The P0.05 and P0.20 pin assignments come from the micro:bit hardware documentation,
   not from Zephyr**, since the board files describe no microphone at all. The
   [V2 pinmap](https://tech.microbit.org/hardware/schematic/) names them `MIC_IN` and
-  `RUN_MIC`, and capture does produce a plausible spectrum, but the numbers have not been
-  checked against a known tone.
+  `RUN_MIC`. Confirmed on hardware against a known tone, so `app.overlay` is describing
+  the real microphone — but it is describing it from documentation, and a board revision
+  that moved either pin would break audio capture with no build-time warning.
