@@ -1,8 +1,20 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * LSM303AGR accelerometer at 100 Hz, driven by the chip's data-ready interrupt
- * on INT1 (P0.25) rather than by polling.
+ * LSM303AGR accelerometer at 100 Hz.
+ *
+ * This polls on a kernel timer rather than using the chip's data-ready
+ * interrupt, and that is forced by the board. P0.25 is COMBINED_SENSOR_INT: a
+ * single open-drain, ACTIVE-LOW line shared by the accelerometer, the
+ * magnetometer and the KL27 interface chip. The lis2dh binding documents
+ * irq-gpios as "active-high as produced by the sensor" and the driver never
+ * reconfigures the chip's INT1 polarity or drive, so a DRDY trigger on this
+ * board arms an edge that never comes -- measured: P0.25 sits low forever while
+ * ZYXDA stays latched. Zephyr's own board DTS declares the pin GPIO_ACTIVE_HIGH
+ * on both sensor nodes, which is what makes the trigger look like it should
+ * work. See README.md, "known limitations".
+ *
+ * Polling costs little: a 6-byte burst at 100 Hz is ~2 % of a 400 kHz I2C bus.
  */
 
 #include "accel.h"
@@ -14,16 +26,22 @@
 LOG_MODULE_REGISTER(accel, LOG_LEVEL_INF);
 
 #define ACCEL_SAMPLE_RATE_HZ 100
+#define ACCEL_PERIOD_MS      (1000 / ACCEL_SAMPLE_RATE_HZ)
 
 /* One second of headroom. The BLE thread drains far faster than this when a
  * central is subscribed; the depth only matters while nobody is listening.
  */
 #define ACCEL_QUEUE_DEPTH 128
 
+#define ACCEL_STACK_SIZE 1024
+#define ACCEL_PRIORITY   5
+
 K_MSGQ_DEFINE(accel_msgq, sizeof(struct accel_sample), ACCEL_QUEUE_DEPTH, 4);
 
 static const struct device *const accel_dev = DEVICE_DT_GET(DT_ALIAS(accel0));
+static K_TIMER_DEFINE(accel_timer, NULL, NULL);
 static uint32_t dropped;
+static uint32_t overruns;
 
 /* The sensor API reports m/s^2. Convert via micro-m/s^2 so the whole thing stays
  * in integer arithmetic: 1 g = 9.80665 m/s^2.
@@ -35,21 +53,27 @@ static int16_t to_milli_g(const struct sensor_value *val)
 	return (int16_t)CLAMP((micro_m_s2 * 1000) / 9806650, INT16_MIN, INT16_MAX);
 }
 
-static void drdy_handler(const struct device *dev, const struct sensor_trigger *trig)
+static void sample_once(void)
 {
 	struct sensor_value val[3];
 	struct accel_sample sample;
 	int err;
 
-	ARG_UNUSED(trig);
-
-	err = sensor_sample_fetch_chan(dev, SENSOR_CHAN_ACCEL_XYZ);
+	err = sensor_sample_fetch_chan(accel_dev, SENSOR_CHAN_ACCEL_XYZ);
+	if (err == -ENODATA) {
+		/* The chip had no new sample: its data-ready bit was still clear. Normal
+		 * for a poller -- it happens on the first read after the ODR change, and
+		 * whenever our 10 ms tick drifts just ahead of the sensor's own clock.
+		 */
+		LOG_DBG("no new sample");
+		return;
+	}
 	if (err) {
 		LOG_ERR("fetch failed (%d)", err);
 		return;
 	}
 
-	err = sensor_channel_get(dev, SENSOR_CHAN_ACCEL_XYZ, val);
+	err = sensor_channel_get(accel_dev, SENSOR_CHAN_ACCEL_XYZ, val);
 	if (err) {
 		LOG_ERR("channel get failed (%d)", err);
 		return;
@@ -72,12 +96,33 @@ static void drdy_handler(const struct device *dev, const struct sensor_trigger *
 	}
 }
 
+static void accel_thread(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	k_timer_start(&accel_timer, K_MSEC(ACCEL_PERIOD_MS), K_MSEC(ACCEL_PERIOD_MS));
+
+	for (;;) {
+		/* Counts every expiry, so the period stays anchored to the timer
+		 * instead of drifting by however long each read takes.
+		 */
+		uint32_t ticks = k_timer_status_sync(&accel_timer);
+
+		if (ticks > 1) {
+			overruns += ticks - 1;
+		}
+
+		sample_once();
+	}
+}
+
+K_THREAD_DEFINE(accel_tid, ACCEL_STACK_SIZE, accel_thread, NULL, NULL, NULL, ACCEL_PRIORITY, 0,
+		K_TICKS_FOREVER);
+
 int accel_start(void)
 {
-	struct sensor_trigger trig = {
-		.type = SENSOR_TRIG_DATA_READY,
-		.chan = SENSOR_CHAN_ACCEL_XYZ,
-	};
 	struct sensor_value odr = {.val1 = ACCEL_SAMPLE_RATE_HZ, .val2 = 0};
 	int err;
 
@@ -86,6 +131,9 @@ int accel_start(void)
 		return -ENODEV;
 	}
 
+	/* Match the chip's output rate to the poll rate, so each read returns a
+	 * fresh sample rather than repeating one.
+	 */
 	err = sensor_attr_set(accel_dev, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_SAMPLING_FREQUENCY,
 			      &odr);
 	if (err) {
@@ -93,17 +141,17 @@ int accel_start(void)
 		return err;
 	}
 
-	err = sensor_trigger_set(accel_dev, &trig, drdy_handler);
-	if (err) {
-		LOG_ERR("cannot set data-ready trigger (%d)", err);
-		return err;
-	}
-
-	LOG_INF("accelerometer streaming at %d Hz", ACCEL_SAMPLE_RATE_HZ);
+	k_thread_start(accel_tid);
+	LOG_INF("accelerometer polling at %d Hz", ACCEL_SAMPLE_RATE_HZ);
 	return 0;
 }
 
 uint32_t accel_dropped(void)
 {
 	return dropped;
+}
+
+uint32_t accel_overruns(void)
+{
+	return overruns;
 }

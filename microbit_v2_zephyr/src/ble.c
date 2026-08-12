@@ -56,7 +56,16 @@ static void accel_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
 	ARG_UNUSED(attr);
 	atomic_set(&accel_notify_on, value == BT_GATT_CCC_NOTIFY);
-	LOG_INF("accel notifications %s", value == BT_GATT_CCC_NOTIFY ? "on" : "off");
+
+	/* Report the MTU here rather than on connect: the central negotiates it
+	 * moments after connecting, so by subscribe time it has settled, and it is
+	 * what decides how many samples fit in each notification.
+	 */
+	if (value == BT_GATT_CCC_NOTIFY && default_conn != NULL) {
+		LOG_INF("accel notifications on, ATT MTU %u", bt_gatt_get_mtu(default_conn));
+	} else {
+		LOG_INF("accel notifications off");
+	}
 }
 
 static void temp_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
@@ -101,22 +110,6 @@ static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, UUID_SERVICE_VAL),
 };
 
-static void mtu_exchanged(struct bt_conn *conn, uint8_t err, struct bt_gatt_exchange_params *params)
-{
-	ARG_UNUSED(params);
-
-	if (err) {
-		LOG_WRN("MTU exchange failed (0x%02x), staying at %u", err, bt_gatt_get_mtu(conn));
-		return;
-	}
-
-	LOG_INF("ATT MTU is now %u", bt_gatt_get_mtu(conn));
-}
-
-static struct bt_gatt_exchange_params exchange_params = {
-	.func = mtu_exchanged,
-};
-
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
@@ -127,12 +120,14 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	default_conn = bt_conn_ref(conn);
 	LOG_INF("connected");
 
-	/* Do not wait to find out whether the central bothers to ask: without a
-	 * bigger MTU a notification carries 20 bytes, which is three samples.
+	/* Deliberately no bt_gatt_exchange_mtu() here. Initiating the exchange from
+	 * the peripheral looks like a way to avoid depending on the central asking,
+	 * but it kills the link against BlueZ: the request draws no response, and
+	 * 30 s later the ATT transaction times out and takes the connection with it
+	 * (observed as "MTU exchange failed (0x0e)" then disconnect reason 0x16).
+	 * Centrals negotiate the MTU themselves on connect, so just use what they
+	 * agree to -- CONFIG_BT_L2CAP_TX_MTU sets our side of that ceiling.
 	 */
-	if (bt_gatt_exchange_mtu(conn, &exchange_params) != 0) {
-		LOG_WRN("could not start MTU exchange");
-	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)

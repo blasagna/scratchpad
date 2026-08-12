@@ -60,9 +60,10 @@ int main(void)
 
 	for (;;) {
 		k_sleep(K_MSEC(STATS_PERIOD_MS));
-		LOG_INF("accel queue %u/%u, dropped %u", k_msgq_num_used_get(&accel_msgq),
+		LOG_INF("accel queue %u/%u, dropped %u, overruns %u",
+			k_msgq_num_used_get(&accel_msgq),
 			k_msgq_num_free_get(&accel_msgq) + k_msgq_num_used_get(&accel_msgq),
-			accel_dropped());
+			accel_dropped(), accel_overruns());
 	}
 
 	return 0;

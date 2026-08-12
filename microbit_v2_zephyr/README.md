@@ -55,7 +55,7 @@ temperature sensor. The nRF52833's on-die sensor is the same source MakeCode's
 
 | Thread | Rate | Does |
 |---|---|---|
-| lis2dh trigger (driver-owned) | 100 Hz | DRDY → read 3×`int16` → push milli-g to a ring buffer |
+| accel | 100 Hz | `k_timer` tick → read 3×`int16` → push milli-g to a ring buffer |
 | BLE tx | per connection interval | drain the ring → `bt_gatt_notify` |
 | temp | 1 Hz | `sensor_sample_fetch` on the die sensor → notify |
 | audio | on demand | capture → FFT → display |
@@ -113,18 +113,34 @@ board's `board.cmake`. Console is on `uart0` at 115200.
 
 ## known limitations
 
+- **The accelerometer is polled, not interrupt-driven.** P0.25 is `COMBINED_SENSOR_INT`, a
+  single open-drain, *active-low* line shared by the accelerometer, the magnetometer and
+  the KL27 interface chip. The `st,lis2dh` binding documents `irq-gpios` as "active-high as
+  produced by the sensor" and the driver never reconfigures the chip's INT1 polarity or
+  drive, so a `SENSOR_TRIG_DATA_READY` trigger arms an edge that never arrives — measured
+  on hardware, P0.25 sits low indefinitely while the data-ready flag stays latched and not
+  one sample is delivered. Zephyr's own board DTS declares the pin `GPIO_ACTIVE_HIGH` on
+  both sensor nodes, which is what makes the trigger look like it ought to work. A 10 ms
+  kernel timer is used instead; a 6-byte burst at 100 Hz is about 2 % of the I²C bus.
 - **The capture is not quite gapless.** The FFT for each block runs between `adc_read()`
-  calls, so roughly 1 ms of every 65.5 ms block interval is not sampled — about 1.5 % duty
-  loss. Harmless for peak detection. Truly gapless capture would mean bypassing the Zephyr
-  ADC API for raw `nrfx_saadc` double-buffering.
+  calls, so roughly 4 ms of every 65.5 ms block interval is not sampled — about 6 % duty
+  loss, measured as a 1056 ms wall time for 993 ms of audio. Harmless for peak detection.
+  Truly gapless capture would mean bypassing the Zephyr ADC API for raw `nrfx_saadc`
+  double-buffering.
 - **Die temperature is not ambient temperature.** See the hardware notes above.
 - **The usable audio band ends around 10 kHz**, limited by the microphone element rather
   than by the sample rate.
 - **ATT MTU must be negotiated above the 23-byte default**, or the accelerometer batching
   is pointless — 20 usable bytes is only three samples. `CONFIG_BT_L2CAP_TX_MTU` and
-  `CONFIG_BT_BUF_ACL_TX_SIZE` are both raised in `prj.conf`, but the central has to
-  actually perform the exchange.
+  `CONFIG_BT_BUF_ACL_TX_SIZE` are both raised in `prj.conf`, but the negotiation is the
+  central's to start. The peripheral deliberately does not call `bt_gatt_exchange_mtu()`
+  itself: against BlueZ that request draws no response at all, and 30 s later the ATT
+  transaction times out and takes the connection down with it. BlueZ settles on 247.
+- **Unsubscribing logs one `accel notify failed (-22)`.** The transmit thread can have a
+  batch in flight when the CCC is cleared. It is a benign race — the thread carries on and
+  the next batch is simply not sent.
 - **The P0.05 and P0.20 pin assignments come from the micro:bit hardware documentation,
-  not from Zephyr**, since the board files describe no microphone at all. Confirm them
-  against the V2 schematic at [tech.microbit.org](https://tech.microbit.org/hardware/) if
-  audio capture misbehaves.
+  not from Zephyr**, since the board files describe no microphone at all. The
+  [V2 pinmap](https://tech.microbit.org/hardware/schematic/) names them `MIC_IN` and
+  `RUN_MIC`, and capture does produce a plausible spectrum, but the numbers have not been
+  checked against a known tone.

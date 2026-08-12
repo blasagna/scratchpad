@@ -175,9 +175,11 @@ static float32_t peak_frequency(void)
 static void run_capture(void)
 {
 	float32_t hz;
+	uint32_t started;
 	int err;
 
 	memset(mag_avg, 0, sizeof(mag_avg));
+	started = k_uptime_get_32();
 
 	err = gpio_pin_set_dt(&mic_power, 1);
 	if (err) {
@@ -197,6 +199,14 @@ static void run_capture(void)
 	}
 
 	(void)gpio_pin_set_dt(&mic_power, 0);
+
+	/* Sanity check on the sample clock. The SAADC silently falls back to
+	 * software-timed sampling if any precondition slips, so a capture that
+	 * takes much longer than BLOCK_COUNT * FFT_SIZE / SAMPLE_RATE_HZ means the
+	 * hardware timer did not engage and the reported frequency is wrong.
+	 */
+	LOG_INF("capture took %u ms (expected ~%u)", k_uptime_get_32() - started,
+		(BLOCK_COUNT * FFT_SIZE * 1000U) / SAMPLE_RATE_HZ + MIC_SETTLE_MS);
 
 	hz = peak_frequency();
 	if (hz <= 0.0f) {

@@ -35,6 +35,21 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
   is an integer, so 32 µs → 31250 Hz exactly — that is why the sample rate is 31250 and
   not 32000.
 
+- **The accelerometer data-ready trigger does not work on this board — do not "fix" the
+  polling back into a trigger.** P0.25 is `COMBINED_SENSOR_INT`: one open-drain,
+  *active-low* line shared by the accelerometer, magnetometer and KL27. The `st,lis2dh`
+  driver assumes a per-sensor active-high push-pull INT1 and never reconfigures polarity or
+  drive, so `SENSOR_TRIG_DATA_READY` arms an edge that never comes. Confirmed on hardware:
+  P0.25 reads low forever and zero samples arrive, while `sensor_attr_set` and
+  `sensor_trigger_set` both return success. The board DTS declaring `GPIO_ACTIVE_HIGH` on
+  both sensor nodes is what makes it look like it should work.
+
+- **The peripheral must not call `bt_gatt_exchange_mtu()`.** Against BlueZ the request gets
+  no response; the ATT transaction times out after 30 s and drops the connection
+  (`MTU exchange failed (0x0e)`, then disconnect reason `0x16`). Let the central negotiate
+  — BlueZ settles on 247, which is what `CONFIG_BT_L2CAP_TX_MTU` asks for. This is also why
+  `CONFIG_BT_GATT_CLIENT` is *not* set: nothing here is a GATT client.
+
 - **Peripheral ownership is already crowded.** `timer4` + `pwm0` belong to the LED matrix
   driver, `pwm1` to the buzzer, and `timer0`/`rtc0`/RADIO to the BLE controller. Anything
   new has to avoid all of them. The SAADC is safe — it drives its own `SAMPLERATE` timer
@@ -66,6 +81,14 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
   first `.clang-format` it finds walking up from a file, so this scopes Zephyr style to
   this area and leaves the rest of the repo alone. Do not delete it.
 
+- **`build/` contains symlinks that point out of the repo, into `~/zephyrproject`.** Zephyr
+  generates `build/zephyr/misc/generated/syscalls_links/include_zephyr_*` as symlinked
+  *directories* to the real Zephyr headers. Any repo-wide tool that walks `**` and follows
+  symlinks will edit the Zephyr installation in place — the root `fmt-c` task once did
+  exactly that and reformatted 1268 headers, which broke the assembler macros and stopped
+  the tree building. `fmt-c` now takes its file list from `git ls-files`, so ignored
+  directories are skipped; keep it that way rather than reintroducing a bare glob.
+
 ## Layout
 
 - `CMakeLists.txt` — the freestanding-application boilerplate;
@@ -75,7 +98,7 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
 - `app.overlay` — enables `&adc` (disabled in the SoC dtsi) with a single AIN3 channel,
   and declares the mic-enable GPIO under `zephyr,user`.
 - `src/main.c` — device readiness checks and thread startup.
-- `src/accel.c` — LSM303AGR at 100 Hz via the data-ready trigger, into a ring buffer.
+- `src/accel.c` — LSM303AGR at 100 Hz, polled on a `k_timer`, into a ring buffer.
 - `src/temp.c` — 1 Hz poll of the nRF52833 die sensor.
 - `src/buttons.c` — `input` subsystem callback: BLE events for both buttons, buzz on B,
   audio trigger on A.
