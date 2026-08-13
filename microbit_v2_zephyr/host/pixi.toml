@@ -1,0 +1,22 @@
+[workspace]
+authors = ["Bob DiMaiolo <bdimaiolo@gmail.com>"]
+channels = ["conda-forge"]
+name = "microbit_v2_zephyr_host"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+# Trailing arguments pass through, so `pixi run stream --seconds 20 --print all`
+# works. Needs the host's Bluetooth adapter up and the board advertising.
+stream = "python ble_stream.py"
+# Checked here rather than by the root `type-py` task, whose environment has no
+# bleak and would report nothing but a missing import. dfg/python and
+# rust_python_bindings set the same precedent: an area with its own environment
+# is checked with its own task. `-p default` matches the preset the root task
+# uses; without it pyrefly falls back to the lenient `basic`.
+type = "pyrefly check -p default ."
+
+[dependencies]
+python = ">=3.14.6,<3.15"
+bleak = ">=3.0.2,<4"
+pyrefly = ">=1.1.1,<2"

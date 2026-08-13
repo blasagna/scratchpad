@@ -22,6 +22,17 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
   *freestanding* Zephyr application living outside `~/zephyrproject`, so `ZEPHYR_BASE`
   must be exported before `west build`.
 
+- **There are two toolchains here**: west/CMake for the firmware in `src/`, and a nested
+  pixi environment in `host/` for the BLE reader. They share nothing, so `pixi run` in
+  this area means `cd host` first. bleak lives in that environment rather than the root
+  one, which is dev-tools-only.
+
+- **`client.mtu_size` is not the negotiated MTU on BlueZ.** bleak's BlueZ backend returns
+  a placeholder 23 (with a `UserWarning`) until the characteristic is acquired, and
+  acquisition needs a writable characteristic — all three here are notify-only. Do not
+  print it as if it were real: the firmware logs the true value on subscribe, and
+  `host/ble_stream.py` infers a lower bound from the observed payload size instead.
+
 - **The microphone is analog and is captured via SAADC on AIN3 (P0.05), with enable on
   P0.20.** Do not reach for the PDM/DMIC driver: `pdm0` is `status = "disabled"` on this
   board and the mic is not wired to it. Neither pin appears anywhere in Zephyr's board
@@ -106,6 +117,9 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
   parabolic peak interpolation.
 - `src/display.c` — `mb_display` wrapper for scrolling the frequency.
 - `src/ble.c` — the GATT service, subscription state, and MTU-derived accel batching.
+- `host/ble_stream.py` — host-side bleak reader: subscribes to all three characteristics,
+  decodes them, prints button events, and measures throughput. `host/pixi.toml` is its
+  environment (`pixi run stream`, `pixi run type`).
 - `.clang-format` — Zephyr's, scoping this area's style away from the repo default.
 
 `build/` is produced by west and is already covered by the repo `.gitignore`.

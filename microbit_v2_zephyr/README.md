@@ -116,6 +116,55 @@ west flash -r pyocd
 The micro:bit V2 exposes a DAPLink interface; `--target=nrf52833` is already in the
 board's `board.cmake`. Console is on `uart0` at 115200.
 
+## host-side BLE reader
+
+`host/ble_stream.py` subscribes to all three characteristics at once, decodes each
+payload, and measures the link. It lives in its own pixi environment, since bleak is not
+a repo-wide dependency.
+
+```sh
+cd host
+pixi run stream --seconds 20
+pixi run stream --streams accel      # isolate one stream's throughput
+pixi run stream --print all          # dump every decoded message, not just events
+```
+
+Button presses are not periodic, so they are printed as they happen rather than only
+counted. Everything else is summarised once a second:
+
+```
+   t(s)  stream   notif/s    msg/s      B/s     bit/s   dev Hz  gap ms  bad
+   14.2  accel        9.9     98.6    640.9    5126.8     99.9     101    0
+         temp         1.0      1.0      2.0      15.8        -       -    0
+         button       0.0      0.0      0.0       0.0        -       -    0
+         TOTAL       10.8     99.6    642.8    5142.6        -       -    0
+```
+
+Reading the columns:
+
+- **msg/s** counts what the notifications *delivered* — accelerometer samples, not
+  packets, since each accel notification carries a batch of 10. Both are reported because
+  the ratio between them is the batching.
+- **bit/s** is the characteristic payload alone. The summary additionally reports ATT
+  bytes, which add the 3-byte notification header per packet.
+- **dev Hz** is derived from the device's own timestamps, so it says what the board did
+  rather than how the host was scheduled. Only the first sample of a batch is stamped,
+  so it is computed across whole batches.
+- **gap ms** is the largest interval between consecutive batch timestamps; 101 ms against
+  a nominal 100 ms is the expected quantisation.
+
+Two things about these numbers are worth knowing before trusting them:
+
+- **The first window always over-reads** — around 217 msg/s. Nothing drains the device's
+  128-sample queue while no central is subscribed, so the first second flushes a backlog
+  rather than measuring a rate. The cumulative summary carries that inflation; the
+  steady-state windows do not.
+- **bleak cannot report the negotiated ATT MTU on the BlueZ backend.** `client.mtu_size`
+  stays at its placeholder 23 unless the characteristic is acquired, and acquiring needs
+  a writable one — all three of these are notify-only. Printing it would be misleading, so
+  the reader measures the consequence instead: a 65-byte accel payload is 10 samples,
+  which puts the MTU at 68 or above. The firmware logs the real value (247) on subscribe.
+
 ## known limitations
 
 - **The accelerometer is polled, not interrupt-driven.** P0.25 is `COMBINED_SENSOR_INT`, a
