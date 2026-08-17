@@ -66,9 +66,11 @@ temperature sensor. The nRF52833's on-die sensor is the same source MakeCode's
 | temp | 1 Hz | `sensor_sample_fetch` on the die sensor → notify |
 | audio | on demand | capture → FFT → display |
 
-Button events arrive on the `input` subsystem callback with no thread of their own: the
-callback pushes the event to a `k_msgq` that the BLE tx thread drains, buzzes on B, and
-signals the audio thread on A.
+Button events arrive on the `input` subsystem callback with no thread of their own, and
+they do not go through a queue: the callback calls `bt_gatt_notify` itself, buzzes on B,
+and requests a capture on A, all inline. The only `k_msgq` in the firmware is
+`accel_msgq`. One consequence is that a button event is fire-and-forget — if nothing is
+connected or the CCC is off, it is dropped rather than queued.
 
 ### audio pipeline
 
@@ -117,11 +119,18 @@ west flash -r pyocd
 The micro:bit V2 exposes a DAPLink interface; `--target=nrf52833` is already in the
 board's `board.cmake`. Console is on `uart0` at 115200.
 
-## host-side BLE reader
+## host side
+
+Two programs, one pixi environment (`host/`, separate because neither bleak nor rerun is
+a repo-wide dependency). `ble_stream.py` measures the link; `ble_rerun.py` visualizes it.
+Both subscribe to the same three characteristics, and `ble_rerun.py` imports the UUIDs,
+the `struct` formats, and the decoders from `ble_stream.py`, so the wire format above has
+exactly one host-side definition.
+
+### measuring the link
 
 `host/ble_stream.py` subscribes to all three characteristics at once, decodes each
-payload, and measures the link. It lives in its own pixi environment, since bleak is not
-a repo-wide dependency.
+payload, and measures the link.
 
 ```sh
 cd host
@@ -165,6 +174,84 @@ Two things about these numbers are worth knowing before trusting them:
   a writable one — all three of these are notify-only. Printing it would be misleading, so
   the reader measures the consequence instead: a 65-byte accel payload is 10 samples,
   which puts the MTU at 68 or above. The firmware logs the real value (247) on subscribe.
+
+### visualizing the streams
+
+`host/ble_rerun.py` feeds the same decoded stream into [rerun](https://rerun.io) as live
+time-series plots, modelled on `~/code/remapy/rerun_viewer/`.
+
+```sh
+cd host
+pixi run viz                              # spawn the viewer, until Ctrl-C
+pixi run viz --seconds 30 --window 10     # a 10 s window instead of 5
+pixi run viz --no-spawn --save run.rrd    # headless; open later with `rerun run.rrd`
+```
+
+Four views. Three of them scroll with the play cursor rather than growing without bound,
+each carrying a `VisibleTimeRange` built from `TimeRangeBoundary.cursor_relative`, with
+`--window` setting the width (5 s by default). Only the event log is left unwindowed, so
+the full history of presses stays readable.
+
+| View | Type | Entity paths | Shows |
+|---|---|---|---|
+| accelerometer | `TimeSeriesView` | `accel/x`, `/y`, `/z`, `/magnitude` | m/s², one line per axis plus the magnitude |
+| temperature | `TimeSeriesView` | `temp/fahrenheit` | °F |
+| button state | `TimeSeriesView` | `button/state/A`, `/B` | 0 or 1 per button, held between events |
+| button events | `TextLogView` | `button/raw` | one text line per notification, as received |
+
+**Units are converted on the host, not the wire.** Milli-g becomes m/s² by multiplying by
+9.80665/1000 — the exact inverse of `to_milli_g()` in `src/accel.c`, so the only loss is
+the int16 quantisation of about 0.0098 m/s² per count. `accel/magnitude` is the quickest
+check that this is right: it should sit near 9.81 with the board at rest. Centi-°C
+becomes °F the usual way, but note this is the **nRF52833 die**, not the room — it idles
+well above ambient, so 90-110 °F is normal.
+
+The buttons get two views on purpose. The state plot uses
+`SeriesLines(interpolation_mode="StepAfter")`, so the value holds until the next event
+and a press and its release read as one filled interval rather than a ramp between two
+points. A plotted line has no notion of "hold until the next event on this entity", so
+every event restates *both* buttons and neither staircase is left with a gap; both are
+also seeded at 0 when the session starts, so a button never touched still has a line.
+
+Beside it, a `TextLogView` lists each notification as it was received — the decoded
+fields next to the bytes they were unpacked from, so it doubles as a wire-format check:
+
+```
+A press  button=0 state=1 t=12345 ms  raw=00 01 39 30 00 00
+A release  button=0 state=0 t=12345 ms  raw=00 00 39 30 00 00
+```
+
+Being a log list rather than a plot, it has no time axis; it keeps the whole session and
+scrolls on its own.
+
+### why button state is a plot and not a StateTimelineView
+
+`StateTimelineView` with `rr.StateChange(state="pressed"|"released")` is the obvious fit
+for this — purpose-built for state transitions, and it draws named bands instead of a 0/1
+line. It was tried here and reverted, because **it cannot scroll with the time cursor in
+rerun 0.36.**
+
+Windowing is not a universal view property: it is a per-view-class opt-in,
+`ViewClass::supports_visible_time_range`, and `re_view_state_timeline` does not implement
+it. The failure is silent and looks like an SDK bug rather than a viewer limitation —
+`VisibleTimeRanges` is accepted, stored, and written into the blueprint exactly as it is
+for a plot (confirmed in the saved `.rrd`), and then ignored at render time. So do not
+re-try this by checking whether the property lands; it always does.
+
+Two things follow. `StateTimelineView` has no `time_ranges` keyword at all, which is the
+first hint — it can be forced on via `view.properties["VisibleTimeRanges"]`, since that is
+all `TimeSeriesView`'s keyword does underneath, but forcing it achieves nothing here. And
+rerun marks both `StateTimelineView` and `StateChange` **unstable**, so this may simply
+change in a later release; it is worth re-testing on a version bump, at which point the
+labelled bands are the nicer view.
+
+One thing to know about the accelerometer trace: the samples arrive ten to a
+notification, and by default every sample in a batch is stamped with that
+notification's arrival time, so a batch lands as ten points at one instant. That is the
+honest picture of when the host learned each value. `--accel-batch-time spread`
+back-dates within the batch at the firmware's 100 Hz to recover a continuous waveform —
+still purely from the host clock, so no device-clock drift is folded in; it only undoes
+the batching.
 
 ## known limitations
 

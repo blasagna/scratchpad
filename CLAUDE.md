@@ -26,7 +26,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
 | `rust_hosted_cpp/` | A C++ library with no build system of its own, built/tested/run entirely from Rust | [`rust_hosted_cpp/CLAUDE.md`](rust_hosted_cpp/CLAUDE.md) |
 | `dfg/` | A dataflow graph framework for real-time and batch processing — a language-independent design contract plus a Python port (pixi) | [`dfg/CLAUDE.md`](dfg/CLAUDE.md) |
-| `microbit_v2_zephyr/` | A Zephyr RTOS application for the BBC micro:bit V2 — sensors, buzzer, on-device FFT, and BLE notifications (west), plus a host-side bleak reader in its own pixi env | [`microbit_v2_zephyr/CLAUDE.md`](microbit_v2_zephyr/CLAUDE.md) |
+| `microbit_v2_zephyr/` | A Zephyr RTOS application for the BBC micro:bit V2 — sensors, buzzer, on-device FFT, and BLE notifications (west), plus host-side bleak programs in their own pixi env — a throughput reader and a rerun visualizer | [`microbit_v2_zephyr/CLAUDE.md`](microbit_v2_zephyr/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -150,9 +150,11 @@ preset, which is lenient enough to miss `x: int = "s"`, and `dfg/python` opts in
 `default` instead. The other areas still run at `basic`.
 
 `microbit_v2_zephyr/host/` is the third area with its own environment, for the same
-reason: it needs bleak to talk to the board over BLE, and the root environment holds only
-dev tools. Its `pixi run type` passes `-p default` on the command line rather than adding
-a `pyrefly.toml`.
+reason: it needs bleak to talk to the board over BLE and rerun-sdk to plot what it hears,
+and the root environment holds only dev tools. Its `pixi run type` passes `-p default` on
+the command line rather than adding a `pyrefly.toml`. Both of its programs are plain
+scripts rather than a package, and the second one imports the first directly — the wire
+format is defined once, in `ble_stream.py`.
 
 **New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
 `members` list in the root `Cargo.toml`.

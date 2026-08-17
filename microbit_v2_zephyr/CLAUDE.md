@@ -23,9 +23,48 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
   must be exported before `west build`.
 
 - **There are two toolchains here**: west/CMake for the firmware in `src/`, and a nested
-  pixi environment in `host/` for the BLE reader. They share nothing, so `pixi run` in
-  this area means `cd host` first. bleak lives in that environment rather than the root
-  one, which is dev-tools-only.
+  pixi environment in `host/` for the two host programs. They share nothing, so `pixi run`
+  in this area means `cd host` first. bleak and rerun-sdk live in that environment rather
+  than the root one, which is dev-tools-only.
+
+- **`ble_stream.py` is the single host-side definition of the wire format.**
+  `ble_rerun.py` imports the UUIDs, the `struct.Struct` formats, the decoders, and
+  `find_device` from it — do not restate any of them in a second file. The decoders
+  return both a preformatted `text` (what `ble_stream.py` prints) and a structured
+  `value` (`AccelBatch` / `TempReading` / `ButtonEvent`, what `ble_rerun.py` plots);
+  a new consumer should read `value` and leave `text` alone.
+
+- **rerun comes from PyPI, not conda-forge, and the package is `rerun-sdk` — it imports
+  as `rerun`.** The PyPI package named plain `rerun` is an unrelated file watcher; do not
+  add it. `rerun-sdk` is the only `[pypi-dependencies]` entry here, so this is the one
+  area whose lock is not all-conda; `~/code/remapy` sources it the same way. The
+  conda-forge build of the same version exists but is not what upstream ships — take the
+  wheel.
+
+- **Do not switch the button-state plot to a `StateTimelineView`: it cannot scroll with
+  the time cursor in rerun 0.36.** It is the natural fit — purpose-built for
+  press/release, drawing named bands rather than a 0/1 line — and it was tried here and
+  reverted. Windowing is a per-view-class opt-in in the viewer
+  (`ViewClass::supports_visible_time_range`) and `re_view_state_timeline` does not
+  implement it. **The failure is silent**: `VisibleTimeRanges` is accepted, stored, and
+  written into the blueprint exactly as for a plot — verified in the saved `.rrd` — and
+  then ignored at render time, so confirming that the property lands proves nothing.
+  Verified on hardware with real button presses. `StateTimelineView` also has no
+  `time_ranges` keyword (it can be forced via `view.properties["VisibleTimeRanges"]`,
+  which is all the keyword does underneath, but that changes nothing here). Both it and
+  `StateChange` are marked unstable, so re-test on a version bump — if windowing ever
+  lands, the bands are the better view.
+
+- **`--window` reaches three of the four views.** The `TextLogView` for button events is
+  deliberately unwindowed so the press history stays readable; a log list scrolls on its
+  own anyway.
+
+- **Accelerometer samples arrive ten to a notification, so arrival-time stamping piles
+  ten samples on one instant.** `ble_rerun.py` stamps on the host's monotonic clock only
+  — the device's `t_ms` is deliberately not used as a timeline, so there is no clock
+  anchoring to drift. `--accel-batch-time spread` back-dates within the batch at the
+  firmware's nominal 100 Hz when a continuous waveform is wanted; it is off by default
+  because the default is the literal truth about when the host learned each value.
 
 - **`client.mtu_size` is not the negotiated MTU on BlueZ.** bleak's BlueZ backend returns
   a placeholder 23 (with a `UserWarning`) until the characteristic is acquired, and
@@ -135,8 +174,14 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
 - `src/display.c` — `mb_display` wrapper for scrolling the frequency.
 - `src/ble.c` — the GATT service, subscription state, and MTU-derived accel batching.
 - `host/ble_stream.py` — host-side bleak reader: subscribes to all three characteristics,
-  decodes them, prints button events, and measures throughput. `host/pixi.toml` is its
-  environment (`pixi run stream`, `pixi run type`).
+  decodes them, prints button events, and measures throughput. Also the home of the wire
+  format, the decoders, and `find_device`, which `ble_rerun.py` imports.
+- `host/ble_rerun.py` — the same streams plotted live in rerun: accelerometer in m/s²,
+  temperature in °F, and button state as a `StepAfter` staircase, all three as
+  rolling-window plots, plus a `TextLogView` listing each button notification as
+  received. The three plots are windowed; the event log is not.
+- `host/pixi.toml` — the environment for both (`pixi run stream`, `pixi run viz`,
+  `pixi run type`).
 - `.clang-format` — Zephyr's, scoping this area's style away from the repo default.
 
 `build/` is produced by west and is already covered by the repo `.gitignore`.

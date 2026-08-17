@@ -9,6 +9,8 @@ version = "0.1.0"
 # Trailing arguments pass through, so `pixi run stream --seconds 20 --print all`
 # works. Needs the host's Bluetooth adapter up and the board advertising.
 stream = "python ble_stream.py"
+# Same, for the rerun viewer: `pixi run viz --seconds 30 --window 10`.
+viz = "python ble_rerun.py"
 # Checked here rather than by the root `type-py` task, whose environment has no
 # bleak and would report nothing but a missing import. dfg/python and
 # rust_python_bindings set the same precedent: an area with its own environment
@@ -20,3 +22,10 @@ type = "pyrefly check -p default ."
 python = ">=3.14.6,<3.15"
 bleak = ">=3.0.2,<4"
 pyrefly = ">=1.1.1,<2"
+
+# The upstream wheel, which is what rerun actually ships and what ~/code/remapy
+# uses. Not the conda-forge build. The package is `rerun-sdk` and it imports as
+# `rerun`; the PyPI package named plain `rerun` is an unrelated file watcher --
+# do not add it.
+[pypi-dependencies]
+rerun-sdk = ">=0.36.0,<0.37"

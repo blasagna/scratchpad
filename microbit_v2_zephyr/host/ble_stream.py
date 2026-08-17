@@ -16,6 +16,11 @@ Usage, from this directory with the host's Bluetooth adapter up::
 The wire format is defined by ``../src/ble.c`` and tabulated in ``../README.md``.
 Everything is little-endian.
 
+This module is also where the wire format lives for the host side: ``ble_rerun.py``
+imports the UUIDs, the ``struct`` formats, the decoders, and ``find_device`` from
+here rather than restating them, so there is exactly one definition to keep in step
+with the firmware.
+
 This is a single script, unlike the two-file arrangement in
 ``~/code/remapy/adafruit_feather_sense/`` that it is modelled on. That one splits
 the stream from the CLI and runs bleak on a background asyncio thread, because its
@@ -33,6 +38,7 @@ from dataclasses import dataclass
 
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
+from bleak.backends.device import BLEDevice
 
 DEFAULT_NAME = "microbit-v2"
 
@@ -57,17 +63,51 @@ BUTTON_NAMES = {0: "A", 1: "B"}
 
 
 @dataclass
+class AccelBatch:
+    """One accelerometer notification, in the firmware's own units.
+
+    Only the first sample is stamped on the wire; the rest are implicitly 10 ms
+    apart at the firmware's 100 Hz. ``samples`` is (x, y, z) in milli-g.
+    """
+
+    t_ms: int
+    samples: list[tuple[int, int, int]]
+
+
+@dataclass
+class TempReading:
+    """One temperature notification: hundredths of a degree Celsius, unstamped.
+
+    This is the nRF52833 die, not the room.
+    """
+
+    centi_c: int
+
+
+@dataclass
+class ButtonEvent:
+    """One button notification. ``button`` is 0 for A and 1 for B."""
+
+    button: int
+    pressed: bool
+    t_ms: int
+
+
+@dataclass
 class Decoded:
     """One notification, unpacked.
 
     ``messages`` is what the notification actually delivered: a count of samples
     for the batched accelerometer stream, 1 for the other two. ``t_ms`` is the
-    device's own uptime stamp where the payload carries one, else None.
+    device's own uptime stamp where the payload carries one, else None. ``value``
+    carries the payload itself, for consumers that want the numbers rather than
+    the preformatted ``text`` -- ``ble_rerun.py`` is the one that does.
     """
 
     messages: int
     t_ms: int | None
     text: str
+    value: AccelBatch | TempReading | ButtonEvent
     is_event: bool = False
 
 
@@ -82,13 +122,22 @@ def decode_accel(data: bytes) -> Decoded:
         )
     if count == 0:
         raise ValueError("accel batch carries no samples")
-    x, y, z = ACCEL_SAMPLE.unpack_from(data, ACCEL_HDR.size)
+    # The length check above guarantees the tail is exactly `count` samples, so
+    # iter_unpack cannot come up short. Unpacking the whole batch rather than
+    # just the first sample costs nothing at ~10 notifications/s of 65 bytes.
+    samples = list(ACCEL_SAMPLE.iter_unpack(data[ACCEL_HDR.size :]))
+    x, y, z = samples[0]
     magnitude = math.sqrt(x * x + y * y + z * z)
     text = (
         f"accel   t={t_ms} ms  n={count}  "
         f"first x={x} y={y} z={z}  |a|={magnitude:.0f} milli-g"
     )
-    return Decoded(messages=count, t_ms=t_ms, text=text)
+    return Decoded(
+        messages=count,
+        t_ms=t_ms,
+        text=text,
+        value=AccelBatch(t_ms=t_ms, samples=samples),
+    )
 
 
 def decode_temp(data: bytes) -> Decoded:
@@ -97,7 +146,12 @@ def decode_temp(data: bytes) -> Decoded:
             f"temperature payload is {len(data)} B, not {TEMP_VALUE.size} B"
         )
     (centi_c,) = TEMP_VALUE.unpack(data)
-    return Decoded(messages=1, t_ms=None, text=f"temp    {centi_c / 100:.2f} C")
+    return Decoded(
+        messages=1,
+        t_ms=None,
+        text=f"temp    {centi_c / 100:.2f} C",
+        value=TempReading(centi_c=centi_c),
+    )
 
 
 def decode_button(data: bytes) -> Decoded:
@@ -110,6 +164,7 @@ def decode_button(data: bytes) -> Decoded:
         messages=1,
         t_ms=t_ms,
         text=f"button  {name} {action}  t={t_ms} ms",
+        value=ButtonEvent(button=button, pressed=bool(state), t_ms=t_ms),
         is_event=True,
     )
 
@@ -199,6 +254,25 @@ HEADER = (
     f"{'t(s)':>7}  {'stream':<7}{'notif/s':>9}{'msg/s':>9}"
     f"{'B/s':>9}{'bit/s':>10}{'dev Hz':>9}{'gap ms':>8}{'bad':>5}"
 )
+
+
+async def find_device(
+    *, name: str, address: str | None, timeout: float
+) -> BLEDevice | None:
+    """Scan for the board by address if given, else by advertised name.
+
+    Reports the miss on stderr and returns None rather than raising, so each entry
+    point can just turn it into an exit status.
+    """
+    target = address or f'"{name}"'
+    print(f"Scanning for {target} ...", file=sys.stderr)
+    if address:
+        device = await BleakScanner.find_device_by_address(address, timeout=timeout)
+    else:
+        device = await BleakScanner.find_device_by_name(name, timeout=timeout)
+    if device is None:
+        print("micro:bit not found. Is it powered and advertising?", file=sys.stderr)
+    return device
 
 
 class Reader:
@@ -297,20 +371,12 @@ class Reader:
 
     # --- the session ---------------------------------------------------------
     async def run(self) -> int:
-        target = self.args.address or f'"{self.args.name}"'
-        print(f"Scanning for {target} ...", file=sys.stderr)
-        if self.args.address:
-            device = await BleakScanner.find_device_by_address(
-                self.args.address, timeout=self.args.scan_timeout
-            )
-        else:
-            device = await BleakScanner.find_device_by_name(
-                self.args.name, timeout=self.args.scan_timeout
-            )
+        device = await find_device(
+            name=self.args.name,
+            address=self.args.address,
+            timeout=self.args.scan_timeout,
+        )
         if device is None:
-            print(
-                "micro:bit not found. Is it powered and advertising?", file=sys.stderr
-            )
             return 1
 
         async with BleakClient(device) as client:
