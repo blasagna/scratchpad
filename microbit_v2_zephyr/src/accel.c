@@ -4,17 +4,30 @@
  * LSM303AGR accelerometer at 100 Hz.
  *
  * This polls on a kernel timer rather than using the chip's data-ready
- * interrupt, and that is forced by the board. P0.25 is COMBINED_SENSOR_INT: a
- * single open-drain, ACTIVE-LOW line shared by the accelerometer, the
- * magnetometer and the KL27 interface chip. The lis2dh binding documents
- * irq-gpios as "active-high as produced by the sensor" and the driver never
- * reconfigures the chip's INT1 polarity or drive, so a DRDY trigger on this
- * board arms an edge that never comes -- measured: P0.25 sits low forever while
- * ZYXDA stays latched. Zephyr's own board DTS declares the pin GPIO_ACTIVE_HIGH
- * on both sensor nodes, which is what makes the trigger look like it should
- * work. See README.md, "known limitations".
+ * interrupt. The board makes the trigger unusable as Zephyr describes it, but
+ * not for the reason the polarity of the pin suggests.
  *
- * Polling costs little: a 6-byte burst at 100 Hz is ~2 % of a 400 kHz I2C bus.
+ * On the V2 schematic the sensor's INT1_XL drives the base of T7, a DTC143E
+ * digital NPN, whose collector is COMBINED_SENSOR_INT on P0.25. (The
+ * magnetometer's DRDY drives T5 onto the same net, as does the interface MCU.)
+ * That common-emitter stage inverts, so the chip's default ACTIVE-HIGH INT1 is
+ * already the right polarity here -- the board is what makes the line
+ * active-low and open-collector, and the LSM303AGR's own polarity bit should be
+ * left alone.
+ *
+ * What is missing is a pull-up. Nothing on the board pulls this net high, and
+ * Zephyr's board DTS declares irq-gpios without GPIO_PULL_UP, so lis2dh's bare
+ * gpio_pin_configure_dt(..., GPIO_INPUT) leaves the pin floating. The first
+ * data-ready pulls it to 0 V, the read releases T7, and the floating input just
+ * stays there: measured, P0.25 sits low forever and no further edge occurs.
+ * Polarity is provably not the blocker -- int1-gpio-config defaults to
+ * EDGE_BOTH, which would have caught an edge in either direction.
+ *
+ * An overlay setting GPIO_PULL_UP on the accel's irq-gpios (plus
+ * int1-gpio-config = LEVEL_LOW) would make the trigger work. Polling is kept
+ * anyway because the line is shared: the interface MCU can assert it while the
+ * accelerometer is idle, and hold it low across our own edges. A 6-byte burst
+ * at 100 Hz is ~2 % of a 400 kHz I2C bus. See README.md, "known limitations".
  */
 
 #include "accel.h"

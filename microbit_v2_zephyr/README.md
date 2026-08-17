@@ -4,10 +4,11 @@ Learn [Zephyr RTOS](https://docs.zephyrproject.org/latest/index.html) by buildin
 
 This application sits in a repo outside of the standard zephyr workspace. See [zephyr application development](https://docs.zephyrproject.org/latest/develop/application/index.html#application), focusing on the "Zephyr freestanding application" pattern. The zephyr workspace is at ~/zephyrproject.
 
-All six requirements have been run and checked on a real micro:bit V2. The measurements
-behind that, and the three defects the hardware turned up, are in
-[known limitations](#known-limitations) — most usefully, the accelerometer's data-ready
-trigger cannot work on this board, so it is polled.
+All six requirements have been run and checked on a real micro:bit V2 (board ID 9906,
+i.e. V2.21 with the nRF52820 interface chip). The measurements behind that, and the three
+defects the hardware turned up, are in [known limitations](#known-limitations) — most
+usefully, the accelerometer's data-ready trigger does not work as Zephyr's board files
+describe the pin, so it is polled.
 
 ## requirements
 
@@ -35,7 +36,7 @@ main thing to understand before reading the code. Verified against Zephyr 4.4.99
 
 | Feature | Hardware | Zephyr board support | What this app does |
 |---|---|---|---|
-| Accelerometer | LSM303AGR on I²C @0x19, INT1 → P0.25 | `lsm303agr_accel`, `compatible = "st,lis2dh"`, enabled | Use the `lis2dh` driver's `SENSOR_TRIG_DATA_READY` |
+| Accelerometer | LSM303AGR on I²C @0x19, INT1 → T7 → P0.25 | `lsm303agr_accel`, `compatible = "st,lis2dh"`, enabled | Poll on a `k_timer`; the trigger needs a pull-up the DTS omits |
 | Buttons | A = P0.14, B = P0.23, active low | `gpio_keys` node with `INPUT_KEY_A` / `INPUT_KEY_B` | Use the `input` subsystem |
 | LED matrix | 5×5, multiplexed | `nordic,nrf-led-matrix` + `mb_display` | `mb_display_print()` in scroll mode |
 | Buzzer | Speaker on P0.00 | `buzzer` node, `compatible = "pwm-buzzer"`, on `&pwm1` | `buzzer_tone()` |
@@ -167,15 +168,37 @@ Two things about these numbers are worth knowing before trusting them:
 
 ## known limitations
 
-- **The accelerometer is polled, not interrupt-driven.** P0.25 is `COMBINED_SENSOR_INT`, a
-  single open-drain, *active-low* line shared by the accelerometer, the magnetometer and
-  the KL27 interface chip. The `st,lis2dh` binding documents `irq-gpios` as "active-high as
-  produced by the sensor" and the driver never reconfigures the chip's INT1 polarity or
-  drive, so a `SENSOR_TRIG_DATA_READY` trigger arms an edge that never arrives — measured
-  on hardware, P0.25 sits low indefinitely while the data-ready flag stays latched and not
-  one sample is delivered. Zephyr's own board DTS declares the pin `GPIO_ACTIVE_HIGH` on
-  both sensor nodes, which is what makes the trigger look like it ought to work. A 10 ms
-  kernel timer is used instead; a 6-byte burst at 100 Hz is about 2 % of the I²C bus.
+- **The accelerometer is polled, not interrupt-driven — because Zephyr's board DTS omits a
+  pull-up.** On the V2 schematic the sensor's `INT1_XL` drives the base of `T7`, a
+  DTC143E digital NPN whose collector is `COMBINED_SENSOR_INT` on P0.25; the
+  magnetometer's DRDY drives `T5` onto the same net, as does the interface MCU. A
+  common-emitter stage inverts, so the chip's default active-high INT1 is already the
+  correct polarity here — the *board* is what makes the line active-low and
+  open-collector, and the LSM303AGR's own polarity bit should be left alone. What is
+  missing is a pull-up: nothing on the board provides one, `bbc_microbit_v2.dts` declares
+  `irq-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>` without `GPIO_PULL_UP`, and the driver's bare
+  `gpio_pin_configure_dt(..., GPIO_INPUT)` therefore leaves the pin floating. The first
+  data-ready pulls it to 0 V, the read releases `T7`, and the floating input stays there —
+  measured on hardware, P0.25 sits low indefinitely and no further edge ever arrives.
+  Polarity is provably not the blocker: `int1-gpio-config` defaults to `EDGE_BOTH`, which
+  is polarity-agnostic and would have caught an edge in either direction.
+
+  An overlay would fix it:
+
+  ```dts
+  &lsm303agr_accel {
+  	irq-gpios = <&gpio0 25 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+  	int1-gpio-config = <LIS2DH_DT_GPIO_INT_LEVEL_LOW>;
+  };
+  ```
+
+  A 10 ms kernel timer is used anyway, because the line is genuinely shared: the interface
+  MCU can assert it while the accelerometer is idle, and can hold it low across the
+  sensor's own assertions. Polling sidesteps both and costs about 2 % of the I²C bus for a
+  6-byte burst at 100 Hz. `CONFIG_LIS2MDL=n` is set for the same pin: the magnetometer
+  driver is `default y` off the board DTS with its trigger mode defaulting to
+  `GLOBAL_THREAD`, so it would otherwise arm a rising-edge interrupt on that never-rising
+  pin at init, for a sensor nothing here reads.
 - **The capture is not quite gapless.** The FFT for each block runs between `adc_read()`
   calls, so roughly 4 ms of every 65.5 ms block interval is not sampled — about 6 % duty
   loss, measured as a 1056 ms wall time for 993 ms of audio. Harmless for peak detection.

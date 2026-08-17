@@ -46,14 +46,31 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
   is an integer, so 32 µs → 31250 Hz exactly — that is why the sample rate is 31250 and
   not 32000.
 
-- **The accelerometer data-ready trigger does not work on this board — do not "fix" the
-  polling back into a trigger.** P0.25 is `COMBINED_SENSOR_INT`: one open-drain,
-  *active-low* line shared by the accelerometer, magnetometer and KL27. The `st,lis2dh`
-  driver assumes a per-sensor active-high push-pull INT1 and never reconfigures polarity or
-  drive, so `SENSOR_TRIG_DATA_READY` arms an edge that never comes. Confirmed on hardware:
-  P0.25 reads low forever and zero samples arrive, while `sensor_attr_set` and
-  `sensor_trigger_set` both return success. The board DTS declaring `GPIO_ACTIVE_HIGH` on
-  both sensor nodes is what makes it look like it should work.
+- **The accelerometer is polled, and the blocker is a missing pull-up — not the pin's
+  polarity.** P0.25 is `COMBINED_SENSOR_INT`. On the V2 schematic each sensor's interrupt
+  drives the base of its own DTC143E digital NPN (`T7` for the accelerometer's `INT1_XL`,
+  `T5` for the magnetometer's DRDY) whose collector is that net; the interface MCU shares
+  it too. The common-emitter stage inverts, so the chip's default active-high INT1 is the
+  *correct* setting here and its polarity bit must be left alone — the board supplies both
+  the inversion and the open-collector behaviour. Nothing pulls the net high, though, and
+  `bbc_microbit_v2.dts` declares `irq-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>` with no
+  `GPIO_PULL_UP`, so `lis2dh`'s bare `gpio_pin_configure_dt(..., GPIO_INPUT)` leaves the
+  pin floating: the first data-ready drags it to 0 V and it stays there forever. Confirmed
+  on hardware — P0.25 reads low indefinitely, zero samples arrive, and both
+  `sensor_attr_set` and `sensor_trigger_set` still return success. Note `int1-gpio-config`
+  defaults to `EDGE_BOTH`, which is polarity-agnostic, so polarity could not have been
+  what blocked it.
+
+  An overlay adding `(GPIO_ACTIVE_LOW | GPIO_PULL_UP)` plus
+  `int1-gpio-config = <LIS2DH_DT_GPIO_INT_LEVEL_LOW>` on `&lsm303agr_accel` would make the
+  trigger work. Keep the polling regardless — the line is shared, so the interface MCU can
+  assert it while the accelerometer is idle and hold it low across the sensor's own
+  assertions. If you do revisit this, change the overlay, never the chip's polarity bit.
+
+- **`CONFIG_LIS2MDL=n` is deliberate.** The magnetometer driver is `default y` off the
+  board DTS, and its trigger mode defaults to `GLOBAL_THREAD`, whose init unconditionally
+  arms a rising-edge interrupt on that same never-rising P0.25 — for a sensor nothing here
+  reads. Leaving it enabled costs flash, RAM, and sole ownership of the pin.
 
 - **The peripheral must not call `bt_gatt_exchange_mtu()`.** Against BlueZ the request gets
   no response; the ATT transaction times out after 30 s and drops the connection
