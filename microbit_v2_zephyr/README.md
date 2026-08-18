@@ -441,13 +441,13 @@ rerun marks both `StateTimelineView` and `StateChange` **unstable**, so this may
 change in a later release; it is worth re-testing on a version bump, at which point the
 labelled bands are the nicer view.
 
-One thing to know about the accelerometer trace: the samples arrive ten to a
-notification, and by default every sample in a batch is stamped with that
-notification's arrival time, so a batch lands as ten points at one instant. That is the
-honest picture of when the host learned each value. `--accel-batch-time spread`
-back-dates within the batch at the firmware's 100 Hz to recover a continuous waveform —
-still purely from the host clock, so no device-clock drift is folded in; it only undoes
-the batching.
+One thing to know about the accelerometer trace: samples arrive ten to a notification,
+and by default (`--accel-batch-time spread`) each batch is back-dated across the
+firmware's nominal 100 Hz to recover a continuous waveform — still purely from the host
+clock, so no device-clock drift is folded in; it only undoes the batching.
+`--accel-batch-time arrival` stamps all ten samples at the notification's arrival time
+instead: the honest picture of when the host learned each value, at the cost of stacking
+them vertically at one instant.
 
 ### checking the peak frequency with real tones
 

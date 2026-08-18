@@ -79,10 +79,19 @@ BUTTON_COLORS = {"A": (232, 160, 72), "B": (150, 120, 222)}
 
 
 def to_m_s2(milli_g: int) -> float:
+    """Convert a wire accelerometer sample, in milli-g, to m/s².
+
+    Multiplies by standard gravity and divides by 1000 -- the exact inverse of
+    the firmware's own milli-g conversion (see ``G_M_S2`` above).
+    """
     return milli_g * G_M_S2 / 1000.0
 
 
 def to_fahrenheit(centi_c: int) -> float:
+    """Convert a wire temperature reading, in centi-°C, to °F.
+
+    Divides by 100 to recover °C, then applies the standard °C-to-°F formula.
+    """
     return centi_c / 100.0 * 9.0 / 5.0 + 32.0
 
 
@@ -114,6 +123,12 @@ def build_blueprint(streams: list[str], seconds: float) -> rrb.Blueprint:
                 origin="temp",
                 name="temperature (°F)",
                 time_ranges=[_window(seconds)],
+                # Fixed rather than autoscaled: this is the nRF52833 die, not the
+                # room, and it idles around 90-110 °F (see CLAUDE.md). The range
+                # leaves headroom on both sides for a cold start and for the
+                # crystal-hold/HFCLK experiments warming it further, without
+                # letting one outlier sample flatten the normal-range wiggle.
+                axis_y=rrb.ScalarAxis(range=(70.0, 130.0)),
             )
         )
     if "button" in streams:
@@ -254,8 +269,10 @@ class Viewer:
             self._log_accel(value, arrival)
         elif isinstance(value, TempReading):
             self._log_temp(value, arrival)
-        else:
+        elif isinstance(value, ButtonEvent):
             self._log_button(value, payload, arrival)
+        else:
+            raise TypeError(f"unexpected decoded value type: {type(value).__name__}")
 
     def _handler(self, name: str, decode):
         def on_notify(

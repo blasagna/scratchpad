@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * The micro:bit V2's microphone is an ANALOG MEMS part. Zephyr's board files
  * describe it not at all, so everything about it lives here:
  *

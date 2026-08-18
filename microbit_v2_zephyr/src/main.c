@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * See README.md for the requirements this implements and for the hardware
  * notes -- in particular, why the microphone goes through the SAADC.
  */

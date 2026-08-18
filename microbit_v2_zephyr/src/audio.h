@@ -1,7 +1,3 @@
-/*
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef APP_AUDIO_H_
 #define APP_AUDIO_H_
 

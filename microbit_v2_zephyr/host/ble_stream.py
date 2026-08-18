@@ -42,6 +42,7 @@ from bleak.backends.device import BLEDevice
 
 DEFAULT_NAME = "microbit-v2"
 
+# Must match ../src/ble.c: UUID_SERVICE_VAL, UUID_ACCEL_VAL, UUID_TEMP_VAL, UUID_BUTTON_VAL
 SERVICE_UUID = "f1b70001-9c4e-4a1d-9a6b-2f0c1d4e7a30"
 ACCEL_UUID = "f1b70002-9c4e-4a1d-9a6b-2f0c1d4e7a30"
 TEMP_UUID = "f1b70003-9c4e-4a1d-9a6b-2f0c1d4e7a30"
@@ -49,9 +50,13 @@ BUTTON_UUID = "f1b70004-9c4e-4a1d-9a6b-2f0c1d4e7a30"
 
 # The accelerometer payload is a header (uint32 t_ms of the *first* sample,
 # uint8 count) followed by count * {int16 x, y, z} in milli-g.
+# ACCEL_HDR must match ../src/ble.c: ACCEL_HDR_LEN (uint32 t_ms + uint8 count)
 ACCEL_HDR = struct.Struct("<IB")
+# Must match ../src/ble.c: ACCEL_SAMPLE_LEN (int16 x, y, z)
 ACCEL_SAMPLE = struct.Struct("<hhh")
+# Must match ../src/ble.c: ble_notify_temp() (int16 centi_c)
 TEMP_VALUE = struct.Struct("<h")
+# Must match ../src/ble.c: ble_notify_button() (uint8 button, uint8 pressed, uint32 t_ms)
 BUTTON_EVENT = struct.Struct("<BBI")
 
 # Opcode + handle. Payload bytes are what the characteristic value carries; this
@@ -59,6 +64,7 @@ BUTTON_EVENT = struct.Struct("<BBI")
 # summary so the two never get conflated.
 ATT_HEADER_LEN = 3
 
+# Must match ../src/buttons.c: BUTTON_A, BUTTON_B
 BUTTON_NAMES = {0: "A", 1: "B"}
 
 

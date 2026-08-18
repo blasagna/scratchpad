@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * Audio capture and peak-frequency detection.
  *
  * The micro:bit V2's microphone is an ANALOG MEMS part on AIN3, so this goes
@@ -421,10 +419,10 @@ static int check_capture(const struct shell *sh)
 
 /* Statistics over the last 2048-sample block, in ADC counts and in millivolts.
  *
- * The channel is single-ended with ADC_GAIN_1_4 against ADC_REF_VDD_1_4, so
- * full scale is VDD across the 12-bit range and a healthy analog microphone
- * idles near mid-scale. A mean near zero means mic-power-gpios never asserted;
- * samples resting on either rail mean the signal is clipping.
+ * The channel is single-ended with ADC_GAIN_4 against ADC_REF_INTERNAL, so
+ * full scale is 150 mV across the 12-bit range and a healthy analog microphone
+ * idles around 46 % of range. A mean near zero means mic-power-gpios never
+ * asserted; samples resting on either rail mean the signal is clipping.
  */
 static int cmd_audio_raw(const struct shell *sh, size_t argc, char **argv)
 {

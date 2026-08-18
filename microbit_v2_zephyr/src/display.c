@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * Thin wrapper over Zephyr's mb_display, which sits on top of the
  * nordic,nrf-led-matrix driver. All of its calls are asynchronous: they hand
  * the work to a background queue and a new call cancels the one in flight.

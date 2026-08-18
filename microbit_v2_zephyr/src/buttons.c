@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * Both buttons report press and release over BLE. Beyond that they diverge:
  * B buzzes, A starts an audio capture.
  *

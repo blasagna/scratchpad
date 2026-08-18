@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-#
 # Freestanding Zephyr application: ZEPHYR_BASE must point at the Zephyr repo
 # inside ~/zephyrproject.
 

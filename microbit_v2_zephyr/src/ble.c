@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * One custom service with three notify characteristics. The accelerometer
  * stream is batched: the batch size is derived from the negotiated ATT MTU, so
  * each notification fills as much of a connection interval as the link allows.

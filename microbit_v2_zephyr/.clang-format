@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-#
 # Note: The list of ForEachMacros can be obtained using:
 #
 #    git grep -h '^#define [^[:space:]]*FOR_EACH[^[:space:]]*(' include/ \

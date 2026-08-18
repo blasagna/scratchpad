@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * LSM303AGR accelerometer at 100 Hz.
  *
  * This polls on a kernel timer rather than using the chip's data-ready

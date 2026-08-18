@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
  * The nRF52833's on-die temperature sensor, sampled once a second. This is the
  * CPU die, not the room -- the micro:bit V2 has no ambient sensor -- so expect
  * readings a few degrees above room temperature.
