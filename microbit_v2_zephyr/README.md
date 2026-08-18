@@ -307,11 +307,21 @@ the sensor shell first if this ever needs to shrink.
 
 ## host side
 
-Two programs, one pixi environment (`host/`, separate because neither bleak nor rerun is
-a repo-wide dependency). `ble_stream.py` measures the link; `ble_rerun.py` visualizes it.
-Both subscribe to the same three characteristics, and `ble_rerun.py` imports the UUIDs,
-the `struct` formats, and the decoders from `ble_stream.py`, so the wire format above has
-exactly one host-side definition.
+Four programs, one pixi environment (`host/`, separate because neither bleak nor rerun is
+a repo-wide dependency). They come in two pairs, and each pair shares its definitions
+through a plain import rather than a second copy:
+
+| | over BLE | over the console shell |
+|---|---|---|
+| the workhorse | `ble_stream.py` — measures the link | `tone_sweep.py` — checks the reported peak frequency |
+| its companion | `ble_rerun.py` — plots the same streams | `tones.py` — generates the tones it plays |
+
+`ble_rerun.py` imports the UUIDs, the `struct` formats, and the decoders from
+`ble_stream.py`, so the wire format above has exactly one host-side definition;
+`tone_sweep.py` imports the tone ladder and the WAV writer from `tones.py`, so the
+frequencies under test have exactly one. The BLE pair and the serial pair never run at
+the same time as each other's ports, but they are otherwise independent — a sweep does
+not need the BLE link, and `tones.py` alone needs no hardware at all.
 
 ### measuring the link
 
@@ -438,6 +448,59 @@ honest picture of when the host learned each value. `--accel-batch-time spread`
 back-dates within the batch at the firmware's 100 Hz to recover a continuous waveform —
 still purely from the host clock, so no device-clock drift is folded in; it only undoes
 the batching.
+
+### checking the peak frequency with real tones
+
+`peak_frequency()` reports one number per capture, and the only honest way to check it is
+to put a frequency the host chose in front of the microphone. `host/tones.py` writes the
+tones; `host/tone_sweep.py` plays them, triggers a capture over the console shell, and
+tabulates what came back.
+
+```sh
+cd host
+pixi run tones                       # WAVs only, no hardware needed
+pixi run sweep                       # play them and read the answers back
+pixi run sweep --freqs 1000,3000     # a subset
+pixi run sweep --bin 100             # the sample-rate check, below
+pixi run sweep --repeat 3            # three captures per tone
+pixi run sweep --no-play             # drive an external source yourself
+```
+
+```
+  tone Hz     peak Hz   error %    bin  margin dB     ms
+---------  ----------  --------  -----  ---------  -----
+  1000.00      999.63    -0.037     65       21.3   1062
+  3000.00     2999.85    -0.005    196       19.4   1061
+```
+
+The sweep talks to `/dev/ttyACM0`, not to BLE, so nothing else may be holding the port —
+close any `pyserial-miniterm` first. It triggers each capture with `input report 1 30 1`
+rather than asking for a button press, because pressing A physically taps the PCB
+centimetres from the microphone and puts the thump into the block being measured.
+
+**Read the margin column before the error column.** It is the strongest bin over the mean
+magnitude of the band the firmware searched. Under about 6 dB there is no peak to speak
+of, `peak_frequency()` is reporting whichever bin of room rumble happened to win, and the
+error figure is meaningless — a silent rig produces a full table of confident nonsense,
+every row a peak at bin 2 with a 5 dB margin. The `ms` column is the other guard: the
+SAADC silently falls back to software-timed sampling if a precondition slips, so a row
+flagged `!` was measured against the wrong clock.
+
+Two ladders are worth knowing apart. The default one spans the band in round numbers and
+answers "is the reported frequency right". `--bin N` instead plays the tone that lands
+exactly on bin N's centre at the device's 31311 Hz, which answers "is the *sample rate*
+right": such a tone lands on one bin and stays there, so a peak one bin low is a
+sample-rate error of exactly one bin's worth and nothing else. That is how both the HFXO
+hold and the `SAMPLE_RATE_HZ` off-by-one below were found.
+
+The tones themselves are 48 kHz WAVs with a 50 ms raised-cosine fade at each end — a tone
+that starts abruptly is a tone multiplied by a rectangular window, and the resulting sinc
+smears energy across exactly the bins the peak search is trying to resolve. `tones.py`
+also writes every file before the first one is played: interleaving generation with
+playback let each `paplay`'s shutdown overlap the next tone, and the 3 kHz and 8 kHz rows
+came back as nonsense on the first run of every session and were fine on the second.
+
+Generated WAVs land in `host/tones/` and are gitignored.
 
 ## known limitations
 

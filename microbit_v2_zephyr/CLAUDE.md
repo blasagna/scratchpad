@@ -100,9 +100,22 @@ Console is `uart0` at 115200, and it carries a Zephyr shell as well as the log �
   must be exported before `west build`.
 
 - **There are two toolchains here**: west/CMake for the firmware in `src/`, and a nested
-  pixi environment in `host/` for the two host programs. They share nothing, so `pixi run`
-  in this area means `cd host` first. bleak and rerun-sdk live in that environment rather
-  than the root one, which is dev-tools-only.
+  pixi environment in `host/` for the four host programs. They share nothing, so `pixi run`
+  in this area means `cd host` first. bleak, rerun-sdk, and pyserial live in that
+  environment rather than the root one, which is dev-tools-only.
+
+- **The host programs come in two pairs, and the pairs use different ports.**
+  `ble_stream.py`/`ble_rerun.py` talk over BLE; `tones.py`/`tone_sweep.py` talk over the
+  console shell on `/dev/ttyACM0`. A sweep therefore cannot run while a `pyserial-miniterm`
+  is open, and neither can the shell-driving scratch work — that is worth checking first
+  when a serial read fails with "device reports readiness to read but returned no data".
+
+- **A tone sweep's `margin dB` column decides whether its `error %` column means anything.**
+  `peak_frequency()` always reports something, so a silent rig yields a full table of
+  confident nonsense: every row a peak at bin 2 with a ~5 dB margin. Under about 6 dB the
+  peak is room rumble. Check that the host is actually driving a speaker before reading
+  anything into a bad sweep — `pactl list sinks short` should show the default sink
+  RUNNING during playback.
 
 - **`ble_stream.py` is the single host-side definition of the wire format.**
   `ble_rerun.py` imports the UUIDs, the `struct.Struct` formats, the decoders, and
@@ -261,8 +274,15 @@ Console is `uart0` at 115200, and it carries a Zephyr shell as well as the log �
   temperature in °F, and button state as a `StepAfter` staircase, all three as
   rolling-window plots, plus a `TextLogView` listing each button notification as
   received. The three plots are windowed; the event log is not.
-- `host/pixi.toml` — the environment for both (`pixi run stream`, `pixi run viz`,
-  `pixi run type`).
+- `host/tones.py` — writes the test tones as 48 kHz WAVs, faded at both ends so the
+  on/off transient does not smear the spectrum. Also the single definition of the
+  frequency ladder and of `bin_centre_hz()`, which `tone_sweep.py` imports. Needs no
+  hardware.
+- `host/tone_sweep.py` — plays each tone, triggers a capture with `input report 1 30 1`
+  over the console shell, parses `audio spectrum`, and tabulates the reported peak against
+  the tone: error, strongest bin, margin over the noise floor, and capture wall time.
+- `host/pixi.toml` — the environment for all four (`pixi run stream`, `pixi run viz`,
+  `pixi run tones`, `pixi run sweep`, `pixi run type`).
 - `.clang-format` — Zephyr's, scoping this area's style away from the repo default.
 
 `build/` is produced by west and is already covered by the repo `.gitignore`.

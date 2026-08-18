@@ -238,3 +238,7 @@ target/
 # pixi environments
 .pixi
 *.egg-info
+
+# Generated test tones (microbit_v2_zephyr/host/tones.py). Reproducible from the
+# script in seconds, and a megabyte apiece.
+microbit_v2_zephyr/host/tones/
