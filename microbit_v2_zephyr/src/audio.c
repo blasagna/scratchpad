@@ -27,6 +27,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -91,9 +92,28 @@ static const struct gpio_dt_spec mic_power =
  * and infrequent, and BLE is starting the same crystal every few tens of
  * milliseconds anyway. `audio hfxo off` turns it back off, which is how the
  * measurement in README.md was made.
+ *
+ * Take it with the reference-counted request API and NOT with
+ * clock_control_on()/clock_control_off(). The two are not interchangeable here:
+ * clock_control_nrf_common.c tags the clock with the context that started it,
+ * COMMON_CTX_API for clock_control_on() against COMMON_CTX_ONOFF for a request,
+ * and set_starting_state() fails with -EPERM when a second context asks while
+ * the first holds it. The nRF die-temperature driver takes HFCLK through the
+ * request API for every conversion (temp_nrf5_sample_fetch, which triggers the
+ * TEMP START task from the request's completion callback), so with
+ * clock_control_on() the once-a-second fetch that landed inside a capture got
+ * -EPERM, and that failed transition leaves the onoff manager latched in its
+ * error state for good: every later request returns -EIO without ever notifying,
+ * and the driver's k_sem_take(&data->device_sync_sem, K_FOREVER) never returns.
+ * One capture was enough to hang the temperature thread until the next reset --
+ * the die-temperature BLE stream simply stopped. The request API shares the
+ * clock instead of seizing it, which is what both users need.
  */
 static const struct device *const hfclk = DEVICE_DT_GET_ONE(nordic_nrf_clock_hfclk);
 static atomic_t hfxo_hold = ATOMIC_INIT(1);
+
+/* The crystal's own startup_time_us is 360, so this is only a deadlock guard. */
+#define HFXO_START_TIMEOUT_MS 10
 
 static int16_t raw[FFT_SIZE];
 static float32_t fft_in[FFT_SIZE];
@@ -239,7 +259,7 @@ static void run_capture(void)
 	 */
 	hold = atomic_get(&hfxo_hold) != 0;
 	if (hold) {
-		err = clock_control_on(hfclk, NULL);
+		err = nrf_clock_control_request_sync(hfclk, NULL, K_MSEC(HFXO_START_TIMEOUT_MS));
 		if (err) {
 			LOG_WRN("cannot hold HFXO (%d)", err);
 			hold = false;
@@ -267,7 +287,7 @@ static void run_capture(void)
 
 	(void)gpio_pin_set_dt(&mic_power, 0);
 	if (hold) {
-		(void)clock_control_off(hfclk, NULL);
+		(void)nrf_clock_control_release(hfclk, NULL);
 		hold = false;
 	}
 
@@ -294,7 +314,7 @@ static void run_capture(void)
 
 release:
 	if (hold) {
-		(void)clock_control_off(hfclk, NULL);
+		(void)nrf_clock_control_release(hfclk, NULL);
 	}
 }
 

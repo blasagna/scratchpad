@@ -522,9 +522,13 @@ the batching.
   which derives from HFCLK, and HFCLK runs from the internal RC oscillator unless
   something asks for the crystal. The BLE controller asks around each radio event
   (`z_nrf_clock_bt_ctlr_hf_request`) and drops it again, so a capture was stitched together
-  from crystal-accurate and RC-accurate stretches. `run_capture()` now wraps itself in
-  `clock_control_on(hfclk, NULL)`, which moved the peak onto the correct bin and removed
-  two thirds of the error. `audio hfxo off` restores the old behaviour for re-measuring.
+  from crystal-accurate and RC-accurate stretches. `run_capture()` now takes the crystal
+  for the length of a capture, which moved the peak onto the correct bin and removed two
+  thirds of the error. `audio hfxo off` restores the old behaviour for re-measuring.
+
+  It takes it with `nrf_clock_control_request_sync()`, the reference-counted request API,
+  and **not** with `clock_control_on()`. That was the first spelling, and it broke the
+  die-temperature stream: see "the HFXO hold has to share the clock" below.
 
   **The rest was a divider off-by-one.** `interval_to_cc()` in
   `drivers/adc/adc_nrfx_saadc.c:503` returns `(interval_us * 16) - 1`, so 32 µs programs
@@ -555,6 +559,42 @@ the batching.
   matching the measurement to 0.013 %, not read off the nRF52833 datasheet. The agreement
   is tight, but if you are ever tempted to report the `-1` upstream as a bug, read the
   `SAMPLERATE` register description first — it may be a deliberate convention.
+- **The HFXO hold has to share the clock, and the first version seized it — which killed
+  the die-temperature stream.** Symptom: `pixi run stream` and `pixi run viz` showed the
+  accelerometer running normally and the temperature at a flat 0 notifications per second,
+  from some point after boot onwards, with nothing on the console to say why. A capture was
+  all it took, and the stream never came back without a reset.
+
+  The temperature thread was not dead, it was parked: reading `_k_thread_obj_temp_tid` over
+  SWD showed `thread_state = _THREAD_PENDING` with `pended_on` equal to
+  `&temp_nrf5_data_0`, whose first member is `device_sync_sem`. That is
+  `k_sem_take(&data->device_sync_sem, K_FOREVER)` in `temp_nrf5_sample_fetch()`, waiting
+  for a DATARDY interrupt that was never going to arrive. (Its stack was half unused, so an
+  overflow — the other way a thread stops without a message — was ruled out at the same
+  time.)
+
+  The chain runs through the clock. `temp_nrf5_sample_fetch()` does not start the TEMP
+  peripheral itself; it requests HFCLK and triggers `TEMP_TASK_START` from the request's
+  completion callback. `clock_control_nrf_common.c` tags the clock with whichever context
+  started it — `COMMON_CTX_API` for `clock_control_on()`, `COMMON_CTX_ONOFF` for a request
+  — and `set_starting_state()` returns `-EPERM` when a second context asks while the first
+  holds it. So the once-a-second fetch that landed inside a capture got `-EPERM`, and a
+  failed start transition latches the onoff manager in its error state permanently: the
+  non-54H `nrf_clock_control_request()` is a bare `onoff_request()` with no
+  `onoff_has_error()` reset, so every later request returns `-EIO` **without notifying**.
+  No callback, no `TEMP_TASK_START`, no DATARDY, and a `K_FOREVER` wait on a semaphore
+  nothing will ever give. The two `__ASSERT_NO_MSG(r >= 0)` calls that would have caught it
+  are compiled out of this build.
+
+  The fix is `nrf_clock_control_request_sync()` / `nrf_clock_control_release()` in
+  `run_capture()`, which shares the clock by reference count instead of seizing it. Both
+  APIs are exported from the same `hfclk` device and look interchangeable; they are not.
+  `clock_control_get_status()` is still fine — it only reads.
+
+  Worth keeping in mind when the next peripheral needs the crystal: on this SoC the BLE
+  controller is a third user again, going through `z_nrf_clock_bt_ctlr_hf_request()`, and
+  it is unaffected by either of the above. A stream that stops while its neighbours keep
+  running is worth chasing to the thread state; nothing about this reached the log.
 - **Die temperature is not ambient temperature.** See the hardware notes above.
 - **The usable audio band ends around 10 kHz**, limited by the microphone element rather
   than by the sample rate.

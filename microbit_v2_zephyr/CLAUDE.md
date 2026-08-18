@@ -59,6 +59,18 @@ Console is `uart0` at 115200, and it carries a Zephyr shell as well as the log â
   "known limitations", for the full measurement and the one inference in it that was not
   read off a datasheet.
 
+- **Take HFCLK with `nrf_clock_control_request_sync()`, never `clock_control_on()`.** Both
+  work on the same `hfclk` device and look interchangeable. They are not:
+  `clock_control_nrf_common.c` tags the clock with the starting context and refuses a
+  second one with `-EPERM`, and a failed onoff start transition latches the manager in an
+  error state that the non-54H request path never resets. The nRF die-temperature driver
+  requests HFCLK for every conversion, so `clock_control_on()` in `run_capture()` hung the
+  temperature thread on `K_FOREVER` at the first capture and the BLE temperature stream
+  went silent until reset â€” with nothing in the log. If a stream stops while its neighbours
+  keep running, read the thread's `thread_state`/`pended_on` over SWD before guessing;
+  `pyocd commander -M attach` works without disturbing the console. Full write-up in
+  `README.md`, "known limitations".
+
 - **The mic channel is `ADC_GAIN_4` + `ADC_REF_INTERNAL`, full scale 150 mV, and that is
   deliberate.** The obvious `ADC_GAIN_1_4`/`ADC_REF_VDD_1_4` (full scale VDD) left the
   signal in the bottom 2 % of the range, where the FFT was mostly measuring the ADC's own
