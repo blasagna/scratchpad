@@ -20,7 +20,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(temp, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(temp, LOG_LEVEL_DBG);
 
 #define TEMP_PERIOD_MS  1000
 #define TEMP_STACK_SIZE 768

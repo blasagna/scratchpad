@@ -13,10 +13,75 @@ west flash -r pyocd
 west build -t menuconfig
 ```
 
-Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
+Console is `uart0` at 115200, and it carries a Zephyr shell as well as the log —
+`pyserial-miniterm /dev/ttyACM0 115200`. Zephyr in this workspace is 4.4.99; the SDK is at
 `~/zephyr-sdk-1.0.1`.
 
 ## Must-knows
+
+- **`input report 1 30 1` starts an audio capture; use it instead of pressing button A.**
+  `buttons.c` registers `INPUT_CALLBACK_DEFINE(NULL, ...)`, so it cannot tell a synthetic
+  event from a real one and the whole path runs, BLE notification included. Pressing A
+  physically taps the PCB centimetres from the microphone and puts the thump in the block
+  being measured, so this is the only acoustically clean trigger. (Code 48 is button B.)
+
+- **A module's `LOG_MODULE_REGISTER` level is a compile-time ceiling, and
+  `log_filter_set()` clamps the runtime level to it.** All six modules here register at
+  `LOG_LEVEL_DBG` for exactly this reason: at `LOG_LEVEL_INF` the shell's
+  `log enable dbg accel` answers "level set to inf" and silently does nothing. Raising the
+  ceiling alone makes the console noisy, because the serial backend's initial limit
+  defaults to "the system limit" and follows it — `CONFIG_SHELL_BACKEND_SERIAL_LOG_LEVEL_INF`
+  is what holds the *initial runtime* level at inf. Both halves are needed; neither works
+  alone.
+
+- **The `adc` shell command reconfigures the same SAADC channel the app captures on.**
+  There is one channel 3, set up once by `adc_channel_setup_dt()`, so a retune from the
+  shell changes what the next capture records — that is how the gain measurement in
+  `README.md` was made without a rebuild. Two traps: it is `adc … read <ch>` that calls
+  `adc_channel_setup()` and applies the settings, and the shell's own copy of the config
+  starts as all zeros, so every field must be set or `read` fails with
+  `ADC resolution value 0 is not valid`. `audio raw`'s counts stay true across such a
+  change but its millivolts do not — `adc_raw_to_millivolts_dt()` reads the compiled-in
+  `app.overlay` values, not the live configuration.
+
+- **`SAMPLE_RATE_HZ` is 31311, derived, and must stay derived.** It is
+  `16000000 / (SAMPLE_INTERVAL_US * 16 - 1)`, because Zephyr's `interval_to_cc()`
+  (`drivers/adc/adc_nrfx_saadc.c:503`) programs `SAMPLERATE.CC = interval_us * 16 - 1` and
+  the nRF52833 samples at 16 MHz / CC. The obvious `1000000 / SAMPLE_INTERVAL_US` = 31250
+  is wrong by 0.2 %, systematically, on every frequency reported. The rate and the interval
+  are one knob — hardcoding either lets them drift apart with no build error.
+
+- **`run_capture()` holds the HF crystal on, and that is load-bearing for accuracy.**
+  HFCLK otherwise runs from the internal RC except when the BLE controller borrows the
+  crystal per radio event, which put another ~0.5 % of error on the reported frequency.
+  `audio hfxo off` restores the old behaviour for re-measuring; default is on. Together
+  with the derived rate this took 3 kHz from −0.68 % to −0.005 %. See `README.md`,
+  "known limitations", for the full measurement and the one inference in it that was not
+  read off a datasheet.
+
+- **The mic channel is `ADC_GAIN_4` + `ADC_REF_INTERNAL`, full scale 150 mV, and that is
+  deliberate.** The obvious `ADC_GAIN_1_4`/`ADC_REF_VDD_1_4` (full scale VDD) left the
+  signal in the bottom 2 % of the range, where the FFT was mostly measuring the ADC's own
+  quantisation: 4.0 dB of peak-to-noise-floor against a 1 kHz tone versus 18.6 dB now. The
+  bias idles near 1746 counts, 43 % of range, ~29 dB below clipping. Two consequences:
+  `zephyr,vref-mv` must stay at 600 (the reference, not full scale), and a quiet capture
+  now shows real room noise rather than a flat floor — that is the channel working, not a
+  fault. See `README.md`, "known limitations".
+
+- **`zephyr,vref-mv` is the reference voltage, not full scale, and omitting it converts
+  everything to 0 mV without an error.** `adc_dt_spec` fills the field with
+  `DT_PROP_OR(node, zephyr_vref_mv, 0)`. With `ADC_REF_VDD_1_4` the value is 825, and the
+  `ADC_GAIN_1_4` inversion then puts full scale back at VDD.
+
+- **`sensor get lsm303agr-accel@19` answers `Read failed` while the app runs, and that is
+  correct.** `accel.c` polls at 100 Hz and consumes each data-ready, so the shell's fetch
+  finds the bit clear and gets `-ENODATA` — the case `sample_once()` treats as normal.
+  `sensor get temp@4000c000` has no such contention and works.
+
+- **`CONFIG_SENSOR_SHELL` costs 14 KB of flash and 6.6 KB of RAM** — it `select`s
+  `SENSOR_ASYNC_API`, which pulls in RTIO, and it is more RAM than the entire rest of the
+  shell tier. Drop it first if the build needs to shrink. `CONFIG_INPUT_SHELL` is under a
+  kilobyte.
 
 - **This is the repo's only west/CMake area** — not Bazel, pixi, or cargo — and it is a
   *freestanding* Zephyr application living outside `~/zephyrproject`, so `ZEPHYR_BASE`
@@ -81,9 +146,10 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
 - **The SAADC hardware sample timer has three preconditions** (`start_read()` in
   `drivers/adc/adc_nrfx_saadc.c:552`): exactly one active channel,
   `options->callback == NULL`, and `interval_us` ≤ 128. Violate any one and the driver
-  silently falls back to software-timed sampling, which cannot hold 31250 Hz. `interval_us`
-  is an integer, so 32 µs → 31250 Hz exactly — that is why the sample rate is 31250 and
-  not 32000.
+  silently falls back to software-timed sampling, which cannot hold this rate. `interval_us`
+  is an integer, so 32 µs is the closest step to 32 kHz — that is why the sample rate is
+  nominally 31 kHz and not 32000. The exact figure is 31311, not 31250; see the
+  `SAMPLE_RATE_HZ` note above.
 
 - **The accelerometer is polled, and the blocker is a missing pull-up — not the pin's
   polarity.** P0.25 is `COMBINED_SENSOR_INT`. On the V2 schematic each sensor's interrupt
@@ -160,8 +226,9 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
 
 - `CMakeLists.txt` — the freestanding-application boilerplate;
   `find_package(Zephyr HINTS $ENV{ZEPHYR_BASE})`.
-- `prj.conf` — Kconfig for the app. The BLE MTU settings and the CMSIS-DSP component
-  selection are the parts that are easy to get wrong.
+- `prj.conf` — Kconfig for the app. The BLE MTU settings, the CMSIS-DSP component
+  selection, and the two-part log-level arrangement above are the parts that are easy to
+  get wrong.
 - `app.overlay` — enables `&adc` (disabled in the SoC dtsi) with a single AIN3 channel,
   and declares the mic-enable GPIO under `zephyr,user`.
 - `src/main.c` — device readiness checks and thread startup.
@@ -170,7 +237,9 @@ Console is `uart0` at 115200. Zephyr in this workspace is 4.4.99; the SDK is at
 - `src/buttons.c` — `input` subsystem callback: BLE events for both buttons, buzz on B,
   audio trigger on A.
 - `src/audio.c` — SAADC block capture, Hann window, Welch-averaged 2048-point FFT,
-  parabolic peak interpolation.
+  parabolic peak interpolation. Also the `audio raw` / `audio spectrum` shell commands,
+  behind `#ifdef CONFIG_SHELL` at the end of the file: they read `raw[]` and `mag_avg[]`
+  directly, which is why they live here rather than in a file of their own.
 - `src/display.c` — `mb_display` wrapper for scrolling the frequency.
 - `src/ble.c` — the GATT service, subscription state, and MTU-derived accel batching.
 - `host/ble_stream.py` — host-side bleak reader: subscribes to all three characteristics,

@@ -36,7 +36,7 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(accel, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(accel, LOG_LEVEL_DBG);
 
 #define ACCEL_SAMPLE_RATE_HZ 100
 #define ACCEL_PERIOD_MS      (1000 / ACCEL_SAMPLE_RATE_HZ)

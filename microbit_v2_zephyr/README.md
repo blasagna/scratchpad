@@ -74,21 +74,25 @@ connected or the CCC is off, it is dropped rather than queued.
 
 ### audio pipeline
 
-Sample rate is **31250 Hz** — Zephyr's SAADC driver takes `interval_us` as an integer, so
-32 µs is the closest step to 32 kHz and it divides exactly. Nyquist is 15.6 kHz, well
-above what the MEMS element can hear.
+Sample rate is **31311 Hz**, not the 31250 that `1000000 / 32 µs` suggests. Zephyr's
+SAADC driver takes `interval_us` as an integer, so 32 µs is the closest step to 32 kHz —
+but `interval_to_cc()` then programs `SAMPLERATE.CC = interval_us * 16 - 1`, and the
+nRF52833 samples at 16 MHz / CC. `SAMPLE_RATE_HZ` is derived from that formula rather than
+assumed; see [known limitations](#known-limitations) for the measurement. Nyquist is
+15.7 kHz, well above what the MEMS element can hear.
 
 Capture is block-wise rather than one big buffer: one second of audio is 61 KB against
 128 KB of total RAM, and CMSIS-DSP's `arm_rfft_fast_f32` caps at 4096 points regardless.
 
 1. Assert the mic-enable GPIO, wait ~10 ms for the bias to settle.
-2. 15 iterations of a blocking `adc_read()`, 2048 samples each (15 × 2048 / 31250 =
-   0.98 s).
+2. 15 iterations of a blocking `adc_read()`, 2048 samples each (15 × 2048 / 31311 =
+   0.98 s), with the HF crystal held on for the duration so the rate is the crystal's
+   rather than the internal RC's.
 3. Per block: convert to `float32`, subtract the block mean, apply a Hann window, run a
    2048-point real FFT, take the magnitude, accumulate into a running average (Welch's
    method — averaging 15 spectra is what buys the noise floor).
 4. Find the peak bin above ~30 Hz, then refine it with parabolic interpolation on the
-   three log-magnitudes around it. Raw bin width is 15.26 Hz; interpolation gets well
+   three log-magnitudes around it. Raw bin width is 15.29 Hz; interpolation gets well
    inside that.
 5. Scroll the result on the LED matrix.
 
@@ -118,6 +122,188 @@ west flash -r pyocd
 
 The micro:bit V2 exposes a DAPLink interface; `--target=nrf52833` is already in the
 board's `board.cmake`. Console is on `uart0` at 115200.
+
+## console shell
+
+The board runs a Zephyr shell on the same `uart0` the log uses, so it needs no extra
+wiring: the V2's interface MCU presents that UART as a USB CDC device, and the host sees
+it as `/dev/ttyACM0`. Anything that speaks 115200 8N1 will do.
+
+```sh
+pyserial-miniterm /dev/ttyACM0 115200      # ships in west's venv; Ctrl-] to quit
+picocom -b 115200 /dev/ttyACM0             # Ctrl-A Ctrl-X to quit
+tio /dev/ttyACM0                           # defaults to 115200
+```
+
+Press Enter to draw the `uart:~$` prompt. `Tab` completes commands and lists subcommands,
+`-h` prints help for any of them, and log records interleave with what you type rather
+than corrupting it — `CONFIG_SHELL_LOG_BACKEND` routes them through the shell, which
+redraws the prompt after each one.
+
+If the port is missing, check group membership: `/dev/ttyACM0` is usually
+`root:dialout`, so either join `dialout` or rely on the udev ACL that grants the seat's
+active user access (`getfacl /dev/ttyACM0` shows a `user:<you>:rw-` entry if so).
+
+### what is available
+
+Almost all of this comes from Zephyr rather than from application code. Only `audio` is
+written here.
+
+| Command | From | Useful for |
+|---|---|---|
+| `audio raw` / `audio spectrum [rows]` | `src/audio.c` | the capture path — see below |
+| `audio hfxo [on\|off]` | `src/audio.c` | the HF crystal hold (on by default) |
+| `input report <type> <code> <value>` | `CONFIG_INPUT_SHELL` | triggering a button without touching the board |
+| `input dump on` | `CONFIG_INPUT_EVENT_DUMP` | logging every input event as it arrives |
+| `log enable <level> [module]`, `log status` | `CONFIG_LOG_CMDS` | per-module verbosity at runtime |
+| `sensor get <device>` | `CONFIG_SENSOR_SHELL` | reading a sensor outside the app's own threads |
+| `adc adc@40007000 …` | `CONFIG_ADC_SHELL` | reading and retuning the microphone channel |
+| `kernel thread stacks`, `kernel threads` | `CONFIG_KERNEL_SHELL` | stack high-water marks, thread states |
+| `device list` | `CONFIG_DEVICE_SHELL` | which devices initialised |
+
+### triggering a capture without touching the board
+
+`buttons.c` registers its callback with `INPUT_CALLBACK_DEFINE(NULL, …)`, so it listens to
+every input device and cannot distinguish a synthetic event from a real one. The whole
+path runs, BLE notification included:
+
+```
+uart:~$ input report 1 30 1          # type 1 = INPUT_EV_KEY, code 30 = INPUT_KEY_A, press
+uart:~$ input report 1 48 1          # code 48 = INPUT_KEY_B -- buzzes
+```
+
+This is not just convenience. Pressing A physically taps the PCB centimetres from the
+microphone, and the thump lands in the very block being measured; `input report` is the
+only acoustically clean way to start a capture.
+
+### reading `audio raw`
+
+The capture path is otherwise write-only — `accumulate_block()` builds a 1024-bin averaged
+spectrum and `peak_frequency()` collapses it to the one number that reaches the LED
+matrix. These two commands read the buffers that survive the capture.
+
+```
+uart:~$ audio raw
+capture #1, block 15 of 15, 1061 ms elapsed (expected ~991)
+2048 samples at 31311 Hz, full scale 4095 counts
+  min   1713   max   1865   peak-to-peak    152 (5 mV)
+  mean      1746.2 counts (63 mV)   ac rms 7.4 counts
+  at rails: 0 low, 0 high
+```
+
+- **`elapsed` against `expected`** is the sample-clock check. The SAADC falls back to
+  software-timed sampling if any of the three preconditions slips, silently, and the
+  reported frequency is then wrong by whatever the real rate turned out to be. A few per
+  cent over is the FFT time between blocks; several times over is the fallback.
+- **`mean`** says whether the microphone is powered. It should idle near 1746 counts,
+  43 % of full scale; with `RUN_MIC` deasserted AIN3 reads 0, so a mean near zero means the
+  enable GPIO never fired.
+- **`at rails`** counts samples resting on 0 or full scale — the signature of clipping.
+- **`ac rms`** is the signal itself, with the DC bias removed, which is what
+  `accumulate_block()` actually transforms.
+
+Only the last of the 15 blocks is kept, so this describes the end of the capture.
+
+### reading `audio spectrum`
+
+```
+uart:~$ audio spectrum 6
+capture #1, 15 blocks averaged, 1061 ms elapsed (expected ~991)
+2048-point fft at 31311 Hz, bin width 15.29 Hz, bins 2..1022 searched
+interpolated peak 248.89 Hz, mean magnitude 2907.1
+ rank   bin        Hz     magnitude      dBc
+    1    16    244.62        6108.2      0.0
+    2     2     30.58        5252.8     -1.3
+    3    17    259.91        5089.0     -1.6
+    4     5     76.44        5015.6     -1.7
+    5   902  13790.29        4953.7     -1.8
+    6   903  13805.58        4693.1     -2.3
+```
+
+That is what **no tone** looks like, and it is worth recognising: the top bin is 2.3 dB
+above the sixth and only 2.1× the mean magnitude. Note that rank 1 and rank 3 are adjacent
+bins around 250 Hz — that is not nothing, it is real room noise from building services,
+which the channel is now sensitive enough to hear. A capture with no deliberate sound in it
+shows the room, not the converter. `peak_frequency()` still returns a number — 30.52 Hz here — because it
+always returns the largest bin. The `dBc` column and the ratio to `mean magnitude` are what
+say whether that number means anything. A real tone puts rank 1 tens of dB clear, and its
+harmonics at rank 2 and 3 land on integer multiples of its frequency.
+
+Rows default to 8 and cap at 32. Both commands refuse to read while a capture is running,
+and say so rather than returning a torn buffer.
+
+`audio hfxo` controls whether the HF crystal is held across a capture instead of being
+borrowed and released by the BLE controller. **It is held by default**; `audio hfxo off`
+restores the old behaviour, which is how the sample-rate measurement in
+[known limitations](#known-limitations) was made on one board without reflashing between
+arms. With no argument it reports the hold and whether HFCLK happens to be running at that
+instant — "running" with the hold off is normal, since advertising takes the crystal every
+few tens of milliseconds.
+
+### runtime log levels
+
+Each module registers its own log source, so verbosity is per-subsystem:
+
+```
+uart:~$ log status                   # every module, runtime level | compiled ceiling
+uart:~$ log enable dbg buttons       # button press/release tracing
+uart:~$ log enable dbg accel         # "no new sample" from the poller
+uart:~$ log disable temp             # silence the 1 Hz die reading
+uart:~$ log enable inf               # all modules back to the default
+```
+
+The compiled ceiling is the second column and the runtime level is the first. `log enable`
+cannot exceed the ceiling: with the modules registered at `LOG_LEVEL_INF`, as they
+originally were, `log enable dbg accel` answers "level set to inf" and silently does
+nothing. They now register at `LOG_LEVEL_DBG` and
+`CONFIG_SHELL_BACKEND_SERIAL_LOG_LEVEL_INF` holds the *initial runtime* level at inf, so
+the console stays quiet at boot and any single module can be raised.
+
+### three things that will surprise you
+
+**The `adc` shell command reconfigures the channel the application uses.** There is one
+SAADC channel 3, `adc_channel_setup_dt()` configured it at init, and the shell can
+overwrite it — after which the next `input report 1 30 1` capture runs at the new setting.
+That is a genuine tuning lever: it is how the gain measurement in
+[known limitations](#known-limitations) was made without a rebuild. Three things about it
+are easy to get wrong:
+
+- **It is `read` that applies the configuration, not the setters.** `gain`, `reference`,
+  `resolution` and friends only update the shell's own copy; `adc adc@40007000 read 3` is
+  what calls `adc_channel_setup()` and reaches the hardware.
+- **That copy starts as zeros, so every field has to be set**, not just the one being
+  changed. Miss the resolution and `read` fails with
+  `ADC resolution value 0 is not valid`; miss `channel positive` and it reads the wrong
+  pin. A full sequence is `resolution 12`, `acq_time 3 us`, `channel id 3`,
+  `channel positive 3`, `gain …`, `reference …`, then `read 3`.
+- **`audio raw`'s counts stay true across such a change; its millivolts do not**, because
+  `adc_raw_to_millivolts_dt()` reads the compiled-in `app.overlay` values rather than the
+  live configuration. A reset silently restores everything.
+
+**`sensor get lsm303agr-accel@19` fails while the app is running.** It answers `Read
+failed` and logs `Failed to fetch samples`. Nothing is broken: `accel.c` polls the chip at
+100 Hz and consumes each data-ready, so the shell's own fetch finds the bit clear and gets
+`-ENODATA` — the same case `sample_once()` treats as normal. The die sensor has no such
+contention and `sensor get temp@4000c000` works.
+
+**`accel queue 128/128, dropped …` on an idle board is expected.** Nothing drains the
+queue until a BLE central subscribes, so the 10 s stats line from `main()` reports a full
+queue and a rising drop count whenever nothing is connected.
+
+### what it costs
+
+Measured on this application, against 512 KB of flash and 128 KB of RAM:
+
+| Build | Flash | RAM |
+|---|---|---|
+| no shell | 180.1 KB | 72.5 KB |
+| shell tier, without `SENSOR_SHELL` | 222.7 KB | 77.8 KB |
+| everything above | 238.2 KB | 84.3 KB |
+
+`CONFIG_SENSOR_SHELL` is the expensive line: it `select`s `SENSOR_ASYNC_API`, which pulls
+in RTIO, and accounts for 14 KB of flash and 6.6 KB of RAM on its own — more RAM than the
+whole rest of the shell. `CONFIG_INPUT_SHELL`, by contrast, costs under a kilobyte. Drop
+the sensor shell first if this ever needs to shrink.
 
 ## host side
 
@@ -291,6 +477,84 @@ the batching.
   loss, measured as a 1056 ms wall time for 993 ms of audio. Harmless for peak detection.
   Truly gapless capture would mean bypassing the Zephyr ADC API for raw `nrfx_saadc`
   double-buffering.
+- **The microphone channel used to sit at `ADC_GAIN_1_4`, where the signal occupied
+  2 % of the range and the FFT was mostly measuring the ADC. Fixed; this is the record.**
+  Full scale was VDD, the safe choice and the wrong one for this signal. Measured with
+  `audio raw` in a quiet room: powered, the channel sat at 85.8 counts of 4095 (69 mV) with
+  an AC RMS of 2.3 counts; unpowered, AIN3 read about 5. `app.overlay` now asks for
+  `ADC_GAIN_4` against `ADC_REF_INTERNAL`, full scale 150 mV, with `zephyr,vref-mv` moved
+  to 600 to match. Against a 1000 Hz tone, nothing else changed between captures:
+
+  | | `ADC_GAIN_1_4`, FS 3.3 V | `ADC_GAIN_4` + `INTERNAL`, FS 150 mV |
+  |---|---|---|
+  | AC RMS | 2.4 counts | 8.4 counts |
+  | peak bin magnitude | 2253 | 41943 |
+  | mean magnitude | 871 | 2816 |
+  | peak above the noise floor | 4.0 dB | 18.6 dB |
+  | range used, peak-to-peak | 18 of 4095 | 132 of 4095 |
+
+  **14.6 dB of margin recovered**, while still using 3 % of the range. The bias now idles
+  at about 1746 counts, 43 % of full scale, leaving roughly 29 dB of headroom before
+  clipping — `audio raw`'s "at rails" counter is the thing to watch if a loud source is
+  ever held against the board, and it reads 0/0 in normal use.
+
+  What this buys is not accuracy but reach. Peak *detection* worked at either setting for
+  a loud, close tone, and the interpolated frequency was about equally good. What the wide
+  setting cost was everything quieter: at the old gain a 3 kHz tone played across a desk
+  could not be picked out of the room at all, and at the new one it resolves to −0.011 %.
+  The flip side is that the noise floor is now a real measurement of the room rather than
+  of the converter, so a quiet capture will show whatever the room is actually doing —
+  a 244 Hz peak from building services, in the case above.
+
+- **`SAMPLE_RATE_HZ` used to be wrong about the hardware, in two independent ways. Both
+  are fixed; this is the record of why.** The measurement uses `audio spectrum` against a
+  tone at exactly a bin centre, played from a host sound card. A tone on a bin centre
+  should peak *on that bin* with symmetric neighbours, so where it actually peaks measures
+  the sample rate directly. Two runs per arm, 1525.88 Hz (bin 100 at the old nominal rate):
+
+  | | peak bin | interpolated | implied rate | error |
+  |---|---|---|---|---|
+  | as originally written | 99 | 1515.37 Hz | 31467 Hz | −0.689 % |
+  | HF crystal held on | **100** | 1522.70 Hz | 31315 Hz | −0.208 % |
+  | 16 MHz / CC with CC = 511 | — | 1522.90 Hz predicted | 31311 Hz | −0.196 % |
+
+  **The larger share was the clock behind the timer.** `SAMPLERATE.CC` counts PCLK16M,
+  which derives from HFCLK, and HFCLK runs from the internal RC oscillator unless
+  something asks for the crystal. The BLE controller asks around each radio event
+  (`z_nrf_clock_bt_ctlr_hf_request`) and drops it again, so a capture was stitched together
+  from crystal-accurate and RC-accurate stretches. `run_capture()` now wraps itself in
+  `clock_control_on(hfclk, NULL)`, which moved the peak onto the correct bin and removed
+  two thirds of the error. `audio hfxo off` restores the old behaviour for re-measuring.
+
+  **The rest was a divider off-by-one.** `interval_to_cc()` in
+  `drivers/adc/adc_nrfx_saadc.c:503` returns `(interval_us * 16) - 1`, so 32 µs programs
+  CC = 511, not 512, and the nRF52833 samples at 16 MHz / CC = 31311.15 Hz. `SAMPLE_RATE_HZ`
+  is now derived as `16000000 / (SAMPLE_INTERVAL_US * 16 - 1)` instead of the assumed
+  `1000000 / SAMPLE_INTERVAL_US`. **Keep it derived**: the rate and the interval are one
+  knob, and hardcoding either lets them drift apart silently.
+
+  Verified afterwards across the band, at a gain that clears the noise floor:
+
+  | played | 500 Hz | 1000 Hz | 3000 Hz | 5000 Hz | 8000 Hz |
+  |---|---|---|---|---|---|
+  | reported | 499.81 | 1000.17 | 2999.86 | 4999.98 | 7998.07 |
+  | error | −0.038 % | +0.017 % | −0.005 % | −0.000 % | −0.024 % |
+
+  Everything is inside ±0.04 % and the residuals scatter around zero rather than all
+  leaning one way, which is the point: what remains is interpolation noise, not bias. At
+  3 kHz the error went from −0.68 % to −0.005 %.
+
+  A note on reproducing this: the 5 kHz and 8 kHz rows were not repeatable on a later
+  attempt, where those two tones failed to register at all while 500–3000 Hz still read
+  correctly. Nothing about the firmware changed between the two — high frequencies are far
+  more directional than low ones, and the board had been handled between sessions. If the
+  upper rows will not reproduce, aim the microphone at the source before suspecting the
+  code, and check `audio spectrum 32` for the expected bin before trusting a null result.
+
+  One caveat on the mechanism: the 16 MHz / CC semantics are inferred from the prediction
+  matching the measurement to 0.013 %, not read off the nRF52833 datasheet. The agreement
+  is tight, but if you are ever tempted to report the `-1` upstream as a bug, read the
+  `SAMPLERATE` register description first — it may be a deliberate convention.
 - **Die temperature is not ambient temperature.** See the hardware notes above.
 - **The usable audio band ends around 10 kHz**, limited by the microphone element rather
   than by the sample rate.

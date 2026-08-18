@@ -17,7 +17,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
 
-LOG_MODULE_REGISTER(ble, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(ble, LOG_LEVEL_DBG);
 
 /* f1b7 0001..0004 -9c4e-4a1d-9a6b-2f0c1d4e7a30 */
 #define UUID_SERVICE_VAL BT_UUID_128_ENCODE(0xf1b70001, 0x9c4e, 0x4a1d, 0x9a6b, 0x2f0c1d4e7a30)

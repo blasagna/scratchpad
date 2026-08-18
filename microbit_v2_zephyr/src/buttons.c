@@ -19,7 +19,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(buttons, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(buttons, LOG_LEVEL_DBG);
 
 #define BUZZ_FREQ_HZ     440
 #define BUZZ_DURATION_MS 80
