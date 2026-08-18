@@ -26,6 +26,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/CLAUDE.md`](cpp_rust_bindings/CLAUDE.md) |
 | `rust_hosted_cpp/` | A C++ library with no build system of its own, built/tested/run entirely from Rust | [`rust_hosted_cpp/CLAUDE.md`](rust_hosted_cpp/CLAUDE.md) |
 | `dfg/` | A dataflow graph framework for real-time and batch processing — a language-independent design contract plus a Python port (pixi) | [`dfg/CLAUDE.md`](dfg/CLAUDE.md) |
+| `microbit_v2_zephyr/` | A Zephyr RTOS application for the BBC micro:bit V2 — sensors, buzzer, on-device FFT, and BLE notifications (west), plus host-side programs in their own pixi env — a BLE throughput reader, a rerun visualizer, and a tone sweep that checks the reported peak frequency over the console shell | [`microbit_v2_zephyr/CLAUDE.md`](microbit_v2_zephyr/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -38,11 +39,16 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | Rust → Python extension | maturin (driven by a pixi task) |
 | C++ → Rust extension | cargo (a `build.rs` compiles the C++ a second time) |
 | C++ with no build of its own | cargo (`build.rs` is the only build config, and sets the standard and warnings too) |
+| C on Zephyr RTOS | west (CMake), as a freestanding application against `~/zephyrproject` |
 
 ## Commands
 
 Formatting is repo-wide via `pixi run fmt` (ruff + clang-format + cargo fmt) and
 runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
+`fmt-c` takes its file list from `git ls-files` rather than a `**` glob, so that
+gitignored build directories are skipped. That matters because some of them hold
+symlinks that lead out of the repo — `microbit_v2_zephyr/build/` links to the
+Zephyr installation, and a glob that follows them reformats it in place.
 
 `pixi run lint-c` runs cppcheck over the 7 Bazel C/C++ areas. Memory checking for a
 given area is `bazel test <targets> --config=valgrind` (needs the system package
@@ -142,6 +148,13 @@ through the root `type-py` — the same arrangement `rust_python_bindings` uses.
 also the only area with a `pyrefly.toml`: without a config pyrefly runs its `basic`
 preset, which is lenient enough to miss `x: int = "s"`, and `dfg/python` opts into
 `default` instead. The other areas still run at `basic`.
+
+`microbit_v2_zephyr/host/` is the third area with its own environment, for the same
+reason: it needs bleak to talk to the board over BLE and rerun-sdk to plot what it hears,
+and the root environment holds only dev tools. Its `pixi run type` passes `-p default` on
+the command line rather than adding a `pyrefly.toml`. Both of its programs are plain
+scripts rather than a package, and the second one imports the first directly — the wire
+format is defined once, in `ble_stream.py`.
 
 **New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
 `members` list in the root `Cargo.toml`.

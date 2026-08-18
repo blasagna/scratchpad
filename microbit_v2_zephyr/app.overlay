@@ -1,0 +1,54 @@
+/*
+ * The micro:bit V2's microphone is an ANALOG MEMS part. Zephyr's board files
+ * describe it not at all, so everything about it lives here:
+ *
+ *   - signal out -> P0.05 = AIN3
+ *   - enable/LED -> P0.20
+ *
+ * These pin numbers come from the micro:bit hardware documentation, not from
+ * Zephyr. The SoC dtsi leaves `adc` disabled, so we enable it too.
+ */
+
+/ {
+	zephyr,user {
+		io-channels = <&adc 3>;
+		mic-power-gpios = <&gpio0 20 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@3 {
+		reg = <3>;
+		/* Full scale is 0.6 V / 4 = 150 mV, which is chosen for the
+		 * microphone rather than for safety. The obvious setting --
+		 * ADC_GAIN_1_4 against ADC_REF_VDD_1_4, full scale VDD -- put
+		 * the whole signal in the bottom 2 % of the range, where what
+		 * the FFT mostly saw was the ADC's own quantisation: a 1 kHz
+		 * tone stood 4.0 dB clear of the noise floor there against
+		 * 18.6 dB here. The microphone idles near 69 mV, so 150 mV
+		 * leaves the bias at about 46 % of range with ~29 dB of
+		 * headroom before clipping -- watch `audio raw`'s "at rails"
+		 * counter if a loud source is ever held against the board.
+		 * Measured; see README.md, "known limitations".
+		 */
+		zephyr,gain = "ADC_GAIN_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		/* The reference itself, 0.6 V -- not the full-scale input.
+		 * adc_raw_to_millivolts() multiplies by this and then inverts
+		 * the x4 gain, which lands full scale at 150 mV. Nothing in the
+		 * capture path reads it, but without it
+		 * `adc_raw_to_millivolts_dt()` silently converts everything to
+		 * 0 mV: adc_dt_spec fills vref_mv with DT_PROP_OR(..., 0), so
+		 * the omission costs a wrong answer rather than a build error.
+		 * `audio raw` and the `adc` shell command are the users.
+		 */
+		zephyr,vref-mv = <600>;
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 3)>;
+		zephyr,input-positive = <NRF_SAADC_AIN3>;	/* P0.05 */
+		zephyr,resolution = <12>;
+	};
+};

@@ -1,0 +1,42 @@
+[workspace]
+authors = ["Bob DiMaiolo <bdimaiolo@gmail.com>"]
+channels = ["conda-forge"]
+name = "microbit_v2_zephyr_host"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+# Trailing arguments pass through, so `pixi run stream --seconds 20 --print all`
+# works. Needs the host's Bluetooth adapter up and the board advertising.
+stream = "python ble_stream.py"
+# Same, for the rerun viewer: `pixi run viz --seconds 30 --window 10`.
+viz = "python ble_rerun.py"
+# The peak-frequency check. `tones` only writes WAV files and needs no hardware;
+# `sweep` plays them, drives a capture over the console shell, and tabulates what
+# the board reported. Unlike the two above, these talk to /dev/ttyACM0 rather than
+# BLE, so nothing else may be holding the port.
+tones = "python tones.py"
+sweep = "python tone_sweep.py"
+# Checked here rather than by the root `type-py` task, whose environment has no
+# bleak and would report nothing but a missing import. dfg/python and
+# rust_python_bindings set the same precedent: an area with its own environment
+# is checked with its own task. `-p default` matches the preset the root task
+# uses; without it pyrefly falls back to the lenient `basic`.
+type = "pyrefly check -p default ."
+
+[dependencies]
+python = ">=3.14.6,<3.15"
+bleak = ">=3.0.2,<4"
+# For tone_sweep.py only, which drives the console shell rather than BLE. Playback
+# is a system command (`paplay`, or --player aplay / pw-play), deliberately not a
+# Python audio dependency: the host already has a working audio stack and adding a
+# second one only creates a second thing that can be misconfigured.
+pyserial = ">=3.5,<4"
+pyrefly = ">=1.1.1,<2"
+
+# The upstream wheel, which is what rerun actually ships and what ~/code/remapy
+# uses. Not the conda-forge build. The package is `rerun-sdk` and it imports as
+# `rerun`; the PyPI package named plain `rerun` is an unrelated file watcher --
+# do not add it.
+[pypi-dependencies]
+rerun-sdk = ">=0.36.0,<0.37"

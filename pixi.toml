@@ -7,7 +7,15 @@ version = "0.1.0"
 
 [tasks]
 fmt-py = "ruff format ."
-fmt-c = "clang-format -i ./**/*.c ./**/*.h ./**/*.cpp ./**/*.hpp"
+# Ask git for the file list rather than globbing with `**`. A bare `./**/*.h` walks
+# into symlinked directories, and `microbit_v2_zephyr/build/` holds symlinked dirs
+# pointing at ~/zephyrproject (Zephyr generates them for its syscall headers), so the
+# glob reformatted 1268 headers of the Zephyr install in place and broke the build.
+# The `bazel-*` convenience symlinks lead out of the repo the same way. `-c -o
+# --exclude-standard` is tracked plus untracked-but-not-ignored, which keeps brand-new
+# files covered while every build directory is skipped.
+# (pixi's built-in xargs has no -r, hence the plain -0; the file list is never empty.)
+fmt-c = "git ls-files -c -o --exclude-standard -z '*.c' '*.h' '*.cpp' '*.hpp' | xargs -0 clang-format -i"
 fmt-rust = "cargo fmt --all"
 fmt = { depends-on = ["fmt-py", "fmt-c", "fmt-rust"] }
 lint-py = "ruff check"
