@@ -21,10 +21,56 @@ supplied cable — it's a straight 1:1 connection, matched by signal name:
 Power the target from its own USB cable, or from the probe's "T" (UART) port
 if you want single-cable operation.
 
-There's no LED demo here: on a Pico W the onboard LED is wired to the CYW43
-wireless chip rather than a plain GPIO, so lighting it needs a PIO/SPI setup
-and firmware blobs that would be a distraction from the debugging workflow
-this project is about.
+There's no *onboard*-LED demo here: on a Pico W the onboard LED is wired to
+the CYW43 wireless chip rather than a plain GPIO, so lighting it needs a
+PIO/SPI setup and firmware blobs that would be a distraction from the
+debugging workflow this project is about. An external LED on a free GPIO
+sidesteps that entirely — see below.
+
+### External LED (optional)
+
+A plain GPIO-driven LED gives you a visual heartbeat alongside the RTT log
+lines, and doubles as another thing to watch while single-stepping (does the
+LED still toggle after you resume from a breakpoint?).
+
+Wire it to any free GPIO — GP15 (physical pin 20) is a convenient one, away
+from the ADC/SWD pins already in use:
+
+| Component | Connects to |
+|---|---|
+| LED anode (long leg) | GP15 (physical pin 20), through a ~330Ω resistor |
+| LED cathode (short leg) | GND (e.g. physical pin 18) |
+
+The resistor can sit on either leg of the LED, as long as it's in series
+between the GPIO and GND. Without it, driving the pin risks pushing more
+current through the LED than either the LED or the RP2040's GPIO is rated
+for.
+
+In `src/main.rs`, drive it with `embassy_rp::gpio::{Level, Output}`:
+
+```rust
+use embassy_rp::gpio::{Level, Output};
+```
+
+```rust
+let mut led = Output::new(p.PIN_15, Level::Low);
+```
+
+Then toggle it once per loop iteration, alongside the existing sampling
+logic:
+
+```rust
+loop {
+    let raw = adc.read(&mut temp_channel).await.unwrap();
+    // ...
+    led.toggle();
+    Timer::after_millis(500).await;
+}
+```
+
+At 500ms per iteration that's a 1Hz blink — slow enough to see by eye, and a
+handy sanity check that the loop is still running normally when you're not
+watching the RTT output.
 
 ### Debug probe firmware
 
