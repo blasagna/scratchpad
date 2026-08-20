@@ -16,6 +16,7 @@ bind_interrupts!(struct Irqs {
 /// bug below fires within a few seconds instead of requiring a long wait.
 const HISTORY_LEN: usize = 8;
 
+// fixme: add external led
 // No on-board LED here: on a Pico W it's wired to the CYW43 wireless chip
 // rather than a plain GPIO, and driving that requires a PIO/SPI/firmware
 // setup that's out of scope for this debugging example.
@@ -55,7 +56,7 @@ async fn main(_spawner: Spawner) {
         //     prints, and use `probe-rs attach` + gdb to look at the
         //     `history` array and `index` value at the point of the crash.
         history[index] = millicelsius;
-        index += 1;
+        index = (index + 1) % HISTORY_LEN;  // fixed
         // -----------------------------------------------------------------
 
         Timer::after_millis(500).await;
