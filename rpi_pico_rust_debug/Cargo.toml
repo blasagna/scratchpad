@@ -1,4 +1,9 @@
 [workspace]
+# rp2040_temp is a path dependency inside this directory, which would make it
+# a member of this workspace automatically. It belongs to the repo-root
+# workspace instead, so that `cargo test` at the root builds it for the host
+# rather than for this crate's pinned thumbv6m-none-eabi target.
+exclude = ["rp2040_temp"]
 
 [package]
 name = "rpi_pico_rust_debug"
@@ -16,6 +21,8 @@ embassy-time      = { version = "0.5", features = ["defmt", "defmt-timestamp-upt
 
 cortex-m     = { version = "0.7", features = ["inline-asm"] }
 cortex-m-rt  = "0.7"
+
+rp2040_temp = { path = "rp2040_temp" }
 
 defmt      = "1"
 defmt-rtt  = "1"

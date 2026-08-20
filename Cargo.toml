@@ -13,4 +13,8 @@ members = [
     "rust_hosted_cpp/rust",
     "rust_python_bindings/core",
     "rust_python_bindings/bindings",
+    # The firmware in rpi_pico_rust_debug/ is its own workspace (it targets
+    # thumbv6m-none-eabi), but this leaf crate of it is pure host-buildable
+    # math, and lives here so `cargo test` covers it like everything else.
+    "rpi_pico_rust_debug/rp2040_temp",
 ]

@@ -1160,6 +1160,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rp2040_temp"
+version = "0.1.0"
+
+[[package]]
 name = "rpi_pico_rust_debug"
 version = "0.1.0"
 dependencies = [
@@ -1171,6 +1175,7 @@ dependencies = [
  "embassy-rp",
  "embassy-time",
  "panic-probe",
+ "rp2040_temp",
 ]
 
 [[package]]

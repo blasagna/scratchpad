@@ -1,12 +1,14 @@
 #![no_std]
 #![no_main]
 
+use core::sync::atomic::{AtomicUsize, Ordering};
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_rp::adc::{Adc, Channel, Config as AdcConfig, InterruptHandler};
 use embassy_rp::bind_interrupts;
 use embassy_rp::gpio::{Level, Output};
 use embassy_time::Timer;
+use rp2040_temp::raw_to_millicelsius;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -16,6 +18,13 @@ bind_interrupts!(struct Irqs {
 /// Size of the temperature-history ring buffer. Deliberately small so the
 /// bug below fires within a few seconds instead of requiring a long wait.
 const HISTORY_LEN: usize = 8;
+
+/// Mirror of the loop's `index`, kept in a `static` purely as a debugging aid.
+/// `index` itself is a local of an `async fn`, which embassy compiles into a
+/// generated state machine — `probe-rs` and GDB can't resolve it by name, and
+/// it has no fixed address to point a hardware watchpoint at. This does, so
+/// `watch SAMPLE_COUNT` in GDB works. See README.md.
+static SAMPLE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // No on-board LED here: on a Pico W it's wired to the CYW43 wireless chip
 // rather than a plain GPIO, and driving that requires a PIO/SPI/firmware
@@ -52,24 +61,18 @@ async fn main(_spawner: Spawner) {
         //   - Set a breakpoint on the line below and step through the
         //     last couple of iterations to watch `index` approach the
         //     limit.
-        //   - Set a watchpoint on `index` instead of a breakpoint and let
-        //     the program run — it'll stop the moment the value changes.
+        //   - Set a watchpoint on `SAMPLE_COUNT` (the static mirror of
+        //     `index` declared above) instead of a breakpoint and let the
+        //     program run — it'll stop the moment the value changes.
         //   - Let it panic once, then inspect the backtrace `probe-rs`
         //     prints, and use `probe-rs attach` + gdb to look at the
         //     `history` array and `index` value at the point of the crash.
         history[index] = millicelsius;
-        index = (index + 1) % HISTORY_LEN;  // fixed
+        index += 1;
+        SAMPLE_COUNT.store(index, Ordering::Relaxed);
         // -----------------------------------------------------------------
 
         led.toggle();
         Timer::after_millis(500).await;
     }
-}
-
-/// Converts a 12-bit reading from the RP2040's onboard temperature sensor
-/// into millidegrees Celsius, using the formula from the RP2040 datasheet
-/// (section 4.9.5).
-fn raw_to_millicelsius(raw: u16) -> i32 {
-    let voltage_mv = (raw as i32) * 3300 / 4096;
-    27_000 - (voltage_mv - 706) * 1000 / 1721
 }

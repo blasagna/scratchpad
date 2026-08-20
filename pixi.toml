@@ -16,7 +16,9 @@ fmt-py = "ruff format ."
 # files covered while every build directory is skipped.
 # (pixi's built-in xargs has no -r, hence the plain -0; the file list is never empty.)
 fmt-c = "git ls-files -c -o --exclude-standard -z '*.c' '*.h' '*.cpp' '*.hpp' | xargs -0 clang-format -i"
-fmt-rust = "cargo fmt --all"
+# The second invocation covers rpi_pico_rust_debug, which is its own standalone
+# workspace (it targets thumbv6m-none-eabi) and so is not reached by --all.
+fmt-rust = "cargo fmt --all && cargo fmt --all --manifest-path rpi_pico_rust_debug/Cargo.toml"
 fmt = { depends-on = ["fmt-py", "fmt-c", "fmt-rust"] }
 lint-py = "ruff check"
 # Each directory is passed separately so pyrefly infers a distinct import root per

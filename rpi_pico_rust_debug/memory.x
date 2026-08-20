@@ -4,11 +4,8 @@ MEMORY {
     RAM   : ORIGIN = 0x20000000, LENGTH = 264K
 }
 
-EXTERN(BOOT2_FIRMWARE)
-
-SECTIONS {
-    .boot2 ORIGIN(BOOT2) :
-    {
-        KEEP(*(.boot2));
-    } > BOOT2
-} INSERT BEFORE .text;
+/* No `.boot2` SECTIONS block and no EXTERN here: embassy-rp places the second
+   stage bootloader itself (a `#[link_section = ".boot2"]` static) and its own
+   `link-rp.x.in` — pulled in by build.rs via `-Tlink-rp.x` — already defines
+   the output section. Upstream `embassy/examples/rp/memory.x` is MEMORY-only
+   for the same reason. */

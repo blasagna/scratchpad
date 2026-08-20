@@ -161,7 +161,17 @@ format is defined once, in `ble_stream.py`.
 `members` list in the root `Cargo.toml` — unless, like `rpi_pico_rust_debug/`, the
 crate targets something other than the host (an embedded target with its own
 `.cargo/config.toml` pinning `[build] target`), in which case it declares its own
-empty `[workspace]` table and stays out of the root workspace instead.
+`[workspace]` table and stays out of the root workspace instead.
+
+That exception is about the *target*, not the directory. `rpi_pico_rust_debug/`
+keeps a host-buildable leaf crate, `rpi_pico_rust_debug/rp2040_temp/`, that **is**
+a root member, so that `cargo test` from the root covers it — inside that
+directory the pinned `thumbv6m-none-eabi` target has no `std` for libtest to link
+(`error[E0463]: can't find crate for 'test'`), so tests can't run there at all.
+The firmware workspace therefore also carries `exclude = ["rp2040_temp"]`, since
+a path dependency inside a workspace directory would otherwise be claimed as a
+member of it. Pure logic worth testing goes in the leaf; anything touching the
+chip stays in the firmware crate.
 
 ## Skills
 

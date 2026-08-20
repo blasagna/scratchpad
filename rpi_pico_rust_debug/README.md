@@ -114,6 +114,25 @@ You should see `sample 0`, `sample 1`, ... logged every 500 ms, and after
 `sample 7` the firmware will panic with an out-of-bounds array access
 (that's the deliberate bug — see below).
 
+## Tests
+
+The temperature conversion lives in its own dependency-free `no_std` crate,
+[`rp2040_temp/`](rp2040_temp/), so it can be unit-tested on the host:
+
+```bash
+cargo test -p rp2040_temp    # from the repo root
+```
+
+`cargo test` *inside this directory* does not work, and can't be made to:
+`.cargo/config.toml` pins `[build] target = thumbv6m-none-eabi`, and libtest
+needs a `std` that target doesn't have (`error[E0463]: can't find crate for
+'test'`). That's why `rp2040_temp` is a member of the repo-root workspace
+rather than this one — from the root the pin doesn't apply, so it builds and
+tests for the host like every other Rust crate in the repo.
+
+Everything else here — the ADC, the executor, the GPIO — needs the real chip,
+and is exercised by flashing it, not by `cargo test`.
+
 ## What to try
 
 **1. Watch the panic and read the backtrace**
@@ -135,10 +154,12 @@ probe-rs debug --chip RP2040 --launch target/thumbv6m-none-eabi/debug/rpi_pico_r
 You'll land in a `Debug Console>` prompt while the firmware is already
 running freely and logging `sample N` lines from RTT. From here:
 
-1. **Set the breakpoint** at the buggy line:
+1. **Set the breakpoint** at the buggy line — `history[index] = millicelsius;`.
+   Check the current line number before typing this; the walkthrough was
+   verified against `src/main.rs:70`, but any edit above the loop shifts it:
 
    ```
-   break src/main.rs:58
+   break src/main.rs:70
    ```
 
    `probe-rs` prints the address it resolved (e.g. `Breakpoint set at
@@ -148,7 +169,7 @@ running freely and logging `sample N` lines from RTT. From here:
    typing anything else.
 
 2. **Resume and re-hit it** with `c` (continue). Each `c` lets one more
-   loop iteration run until it hits `src/main.rs:58` again; watch the
+   loop iteration run until it hits `src/main.rs:70` again; watch the
    `sample N` RTT lines between hits to track how many iterations have
    passed. Keep typing `c` through a few iterations.
 
@@ -156,7 +177,7 @@ running freely and logging `sample N` lines from RTT. From here:
    prints the full frame list from the breakpoint up through the embassy
    executor and the reset vector, with file:line for each frame. Other
    useful commands while halted: `step` (single instruction step), `info
-   break` (list active breakpoints), `clear src/main.rs:58` (remove one).
+   break` (list active breakpoints), `clear src/main.rs:70` (remove one).
 
    Note: on this project (an `async fn main`, compiled by embassy into a
    generated state-machine "task"), `p <var>` and `info locals` currently
@@ -165,14 +186,25 @@ running freely and logging `sample N` lines from RTT. From here:
    limitation of how `probe-rs` walks the DWARF info for async-fn state
    machines, not something specific to this bug. The RTT `sample N` log
    lines are the reliable way to know the current value of `index` while
-   you step through breakpoint hits.
+   you step through breakpoint hits — or read the `SAMPLE_COUNT` static
+   that mirrors it (see the next section), which *does* have a name and a
+   fixed address in the debug info.
 
 4. Once you've seen enough hits, either type `c` repeatedly until index
    reaches `HISTORY_LEN` and you see the same panic and backtrace from
    step 1 printed straight to the `Debug Console`, or type `quit` to
    detach.
 
-**3. Set a watchpoint on `index`**
+**3. Set a watchpoint on `SAMPLE_COUNT`**
+
+A hardware watchpoint needs a fixed address, and a symbolic one needs a
+resolvable name — which is exactly what the loop's `index` local doesn't
+have, for the async-state-machine reason in step 2's note. So `src/main.rs`
+declares a `static SAMPLE_COUNT: AtomicUsize` that mirrors `index` after
+every increment, purely so there's something to point a watchpoint at. It
+lands in RAM with a plain `SAMPLE_COUNT` entry in the DWARF info, so GDB
+resolves it by name.
+
 The interactive `probe-rs debug` console above doesn't expose hardware
 watchpoints directly, but `probe-rs`'s GDB server does. Start it in one
 terminal:
@@ -189,13 +221,21 @@ of `probe-rs-tools`):
 ```
 gdb-multiarch target/thumbv6m-none-eabi/debug/rpi_pico_rust_debug
 (gdb) target remote localhost:1337
-(gdb) watch index
+(gdb) watch SAMPLE_COUNT
 (gdb) continue
 ```
 
-Letting the program run freely and stopping the instant `index` changes is
-a much faster way to catch the moment things go wrong than single-stepping
-or repeatedly hitting a line breakpoint.
+Letting the program run freely and stopping the instant the counter changes
+is a much faster way to catch the moment things go wrong than single-stepping
+or repeatedly hitting a line breakpoint. `p SAMPLE_COUNT` prints the current
+value, and `p &SAMPLE_COUNT` its address if you'd rather watch the location
+directly (`watch *(unsigned int *) 0x...`) — the address moves between
+builds, so read it rather than hardcoding it.
+
+Unlike step 2, this section hasn't been walked through end-to-end on
+hardware; what's been checked is that `SAMPLE_COUNT` is emitted as a
+`DW_TAG_variable` with a static `DW_OP_addr` location, which is what GDB
+needs to resolve the name.
 
 **4. VS Code integration**
 If you use VS Code, install the `probe-rs-debugger` (or `cortex-debug`)

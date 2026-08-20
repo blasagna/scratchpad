@@ -1,0 +1,11 @@
+[package]
+name = "rp2040_temp"
+version = "0.1.0"
+edition = "2024"
+
+# Deliberately dependency-free. This crate exists so the RP2040 temperature
+# conversion can be unit-tested on the host with a plain `cargo test`; pulling
+# in anything embedded-specific (embassy, cortex-m, defmt) would make it
+# unbuildable for the host target and defeat the point. See README.md.
+
+[dependencies]
