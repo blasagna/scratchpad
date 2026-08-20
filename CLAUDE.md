@@ -27,6 +27,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `rust_hosted_cpp/` | A C++ library with no build system of its own, built/tested/run entirely from Rust | [`rust_hosted_cpp/CLAUDE.md`](rust_hosted_cpp/CLAUDE.md) |
 | `dfg/` | A dataflow graph framework for real-time and batch processing — a language-independent design contract plus a Python port (pixi) | [`dfg/CLAUDE.md`](dfg/CLAUDE.md) |
 | `microbit_v2_zephyr/` | A Zephyr RTOS application for the BBC micro:bit V2 — sensors, buzzer, on-device FFT, and BLE notifications (west), plus host-side programs in their own pixi env — a BLE throughput reader, a rerun visualizer, and a tone sweep that checks the reported peak frequency over the console shell | [`microbit_v2_zephyr/CLAUDE.md`](microbit_v2_zephyr/CLAUDE.md) |
+| `rpi_pico_rust_debug/` | A minimal embassy `no_std` firmware for the Raspberry Pi Pico W (RP2040), for exercising `probe-rs` debugging — breakpoints, watchpoints, panic backtraces — via a deliberate bug | [`rpi_pico_rust_debug/CLAUDE.md`](rpi_pico_rust_debug/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -157,7 +158,10 @@ scripts rather than a package, and the second one imports the first directly —
 format is defined once, in `ble_stream.py`.
 
 **New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
-`members` list in the root `Cargo.toml`.
+`members` list in the root `Cargo.toml` — unless, like `rpi_pico_rust_debug/`, the
+crate targets something other than the host (an embedded target with its own
+`.cargo/config.toml` pinning `[build] target`), in which case it declares its own
+empty `[workspace]` table and stays out of the root workspace instead.
 
 ## Skills
 

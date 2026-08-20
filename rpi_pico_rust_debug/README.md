@@ -1,23 +1,39 @@
-# pico-probe-lab
+# rpi_pico_rust_debug
 
 A minimal RP2040 project for exploring `probe-rs` debugging using only the
-Pico's onboard LED and internal temperature sensor — no external wiring
-needed besides the SWD link to your picoprobe.
+Pico's internal temperature sensor — no external wiring needed besides the
+SWD link to the debug probe.
 
 ## Hardware
 
-Target: Raspberry Pi Pico / Pico W (RP2040).
+Target: Raspberry Pi Pico W (RP2040). Probe: the official Raspberry Pi Debug
+Probe.
 
-Wire the picoprobe Pico to the target Pico:
+Connect the Debug Probe's "D" (SWD) port to the target's SWD header with the
+supplied cable — it's a straight 1:1 connection, matched by signal name:
 
-| Picoprobe pin | Target pin |
+| Debug Probe | Target pin |
 |---|---|
-| GP2  | SWCLK |
-| GP3  | SWDIO |
-| GND  | GND   |
+| SWCLK | SWCLK |
+| GND   | GND   |
+| SWDIO | SWDIO |
 
-Power the target from its own USB cable, or from the probe's 3V3 output if
-you want single-cable operation.
+Power the target from its own USB cable, or from the probe's "T" (UART) port
+if you want single-cable operation.
+
+There's no LED demo here: on a Pico W the onboard LED is wired to the CYW43
+wireless chip rather than a plain GPIO, so lighting it needs a PIO/SPI setup
+and firmware blobs that would be a distraction from the debugging workflow
+this project is about.
+
+### Debug probe firmware
+
+`probe-rs` requires CMSIS-DAP firmware >= 2.2.0 on the Debug Probe itself. If
+`probe-rs list` / `probe-rs run` reports the firmware as outdated, put the
+probe in bootloader mode (hold BOOTSEL while plugging it in), then copy the
+latest `debugprobe.uf2` from the
+[debugprobe releases page](https://github.com/raspberrypi/debugprobe/releases)
+onto the `RPI-RP2` drive that appears.
 
 ## One-time setup
 
@@ -26,13 +42,17 @@ rustup target add thumbv6m-none-eabi
 cargo install probe-rs-tools --locked
 ```
 
-Confirm the picoprobe enumerates:
+On Linux, copy [`69-probe-rs.rules`](69-probe-rs.rules) to
+`/etc/udev/rules.d/` and reload udev (`sudo udevadm control --reload`) so the
+probe is accessible without root.
+
+Confirm the probe enumerates:
 
 ```bash
 probe-rs list
 ```
 
-You should see something like `Raspberry Pi - Picoprobe (CMSIS-DAP)`.
+You should see something like `Debug Probe (CMSIS-DAP)`.
 
 ## Build, flash, and stream logs
 
@@ -59,7 +79,7 @@ line in `src/main.rs`.
 
 ```bash
 cargo build
-probe-rs attach --chip RP2040 target/thumbv6m-none-eabi/debug/pico-probe-lab
+probe-rs attach --chip RP2040 target/thumbv6m-none-eabi/debug/rpi_pico_rust_debug
 ```
 
 Then in the interactive session, set a breakpoint at the buggy line and

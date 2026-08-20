@@ -5,7 +5,6 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_rp::adc::{Adc, Channel, Config as AdcConfig, InterruptHandler};
 use embassy_rp::bind_interrupts;
-use embassy_rp::gpio::{Level, Output};
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -17,22 +16,26 @@ bind_interrupts!(struct Irqs {
 /// bug below fires within a few seconds instead of requiring a long wait.
 const HISTORY_LEN: usize = 8;
 
-#[embassy_executor::main]
+// No on-board LED here: on a Pico W it's wired to the CYW43 wireless chip
+// rather than a plain GPIO, and driving that requires a PIO/SPI/firmware
+// setup that's out of scope for this debugging example.
+
+#[embassy_executor::main(
+    executor = "embassy_rp::executor::Executor",
+    entry = "cortex_m_rt::entry"
+)]
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    let mut led = Output::new(p.PIN_25, Level::Low);
     let mut adc = Adc::new(p.ADC, Irqs, AdcConfig::default());
     let mut temp_channel = Channel::new_temp_sensor(p.ADC_TEMP_SENSOR);
 
     let mut history = [0i32; HISTORY_LEN];
     let mut index: usize = 0;
 
-    info!("pico-probe-lab starting; RTT link is live");
+    info!("rpi_pico_rust_debug starting; RTT link is live");
 
     loop {
-        led.toggle();
-
         let raw = adc.read(&mut temp_channel).await.unwrap();
         let millicelsius = raw_to_millicelsius(raw);
         info!("sample {}: raw={} temp={} m°C", index, raw, millicelsius);
