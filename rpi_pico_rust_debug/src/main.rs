@@ -68,7 +68,8 @@ async fn main(_spawner: Spawner) {
         //     prints, and use `probe-rs attach` + gdb to look at the
         //     `history` array and `index` value at the point of the crash.
         history[index] = millicelsius;
-        index += 1;
+        // index += 1;
+        index = (index + 1) % HISTORY_LEN;
         SAMPLE_COUNT.store(index, Ordering::Relaxed);
         // -----------------------------------------------------------------
 
