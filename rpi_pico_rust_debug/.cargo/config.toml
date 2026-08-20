@@ -1,0 +1,10 @@
+[target.thumbv6m-none-eabi]
+# `cargo run` builds, flashes over the picoprobe's SWD link, and streams
+# defmt logs back over RTT — no separate flashing tool or serial port needed.
+runner = "probe-rs run --chip RP2040"
+
+[build]
+target = "thumbv6m-none-eabi"
+
+[env]
+DEFMT_LOG = "info"

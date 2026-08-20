@@ -1,0 +1,79 @@
+#![no_std]
+#![no_main]
+
+use core::sync::atomic::{AtomicUsize, Ordering};
+use defmt::info;
+use embassy_executor::Spawner;
+use embassy_rp::adc::{Adc, Channel, Config as AdcConfig, InterruptHandler};
+use embassy_rp::bind_interrupts;
+use embassy_rp::gpio::{Level, Output};
+use embassy_time::Timer;
+use rp2040_temp::raw_to_millicelsius;
+use {defmt_rtt as _, panic_probe as _};
+
+bind_interrupts!(struct Irqs {
+    ADC_IRQ_FIFO => InterruptHandler;
+});
+
+/// Size of the temperature-history ring buffer. Deliberately small so the
+/// bug below fires within a few seconds instead of requiring a long wait.
+const HISTORY_LEN: usize = 8;
+
+/// Mirror of the loop's `index`, kept in a `static` purely as a debugging aid.
+/// `index` itself is a local of an `async fn`, which embassy compiles into a
+/// generated state machine — `probe-rs` and GDB can't resolve it by name, and
+/// it has no fixed address to point a hardware watchpoint at. This does, so
+/// `watch SAMPLE_COUNT` in GDB works. See README.md.
+static SAMPLE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// No on-board LED here: on a Pico W it's wired to the CYW43 wireless chip
+// rather than a plain GPIO, and driving that requires a PIO/SPI/firmware
+// setup that's out of scope for this debugging example. An external LED on
+// GP15 stands in instead — see README.md.
+
+#[embassy_executor::main(
+    executor = "embassy_rp::executor::Executor",
+    entry = "cortex_m_rt::entry"
+)]
+async fn main(_spawner: Spawner) {
+    let p = embassy_rp::init(Default::default());
+
+    let mut adc = Adc::new(p.ADC, Irqs, AdcConfig::default());
+    let mut temp_channel = Channel::new_temp_sensor(p.ADC_TEMP_SENSOR);
+    let mut led = Output::new(p.PIN_15, Level::Low);
+
+    let mut history = [0i32; HISTORY_LEN];
+    let mut index: usize = 0;
+
+    info!("rpi_pico_rust_debug starting; RTT link is live");
+
+    loop {
+        let raw = adc.read(&mut temp_channel).await.unwrap();
+        let millicelsius = raw_to_millicelsius(raw);
+        info!("sample {}: raw={} temp={} m°C", index, raw, millicelsius);
+
+        // --- Deliberate bug --------------------------------------------
+        // `index` should wrap with `index = (index + 1) % HISTORY_LEN`,
+        // but it just keeps incrementing. After HISTORY_LEN samples this
+        // indexing panics with an out-of-bounds access.
+        //
+        // Debugging ideas:
+        //   - Set a breakpoint on the line below and step through the
+        //     last couple of iterations to watch `index` approach the
+        //     limit.
+        //   - Set a watchpoint on `SAMPLE_COUNT` (the static mirror of
+        //     `index` declared above) instead of a breakpoint and let the
+        //     program run — it'll stop the moment the value changes.
+        //   - Let it panic once, then inspect the backtrace `probe-rs`
+        //     prints, and use `probe-rs attach` + gdb to look at the
+        //     `history` array and `index` value at the point of the crash.
+        history[index] = millicelsius;
+        // index += 1;
+        index = (index + 1) % HISTORY_LEN;
+        SAMPLE_COUNT.store(index, Ordering::Relaxed);
+        // -----------------------------------------------------------------
+
+        led.toggle();
+        Timer::after_millis(500).await;
+    }
+}

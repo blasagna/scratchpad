@@ -27,6 +27,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `rust_hosted_cpp/` | A C++ library with no build system of its own, built/tested/run entirely from Rust | [`rust_hosted_cpp/CLAUDE.md`](rust_hosted_cpp/CLAUDE.md) |
 | `dfg/` | A dataflow graph framework for real-time and batch processing — a language-independent design contract plus a Python port (pixi) | [`dfg/CLAUDE.md`](dfg/CLAUDE.md) |
 | `microbit_v2_zephyr/` | A Zephyr RTOS application for the BBC micro:bit V2 — sensors, buzzer, on-device FFT, and BLE notifications (west), plus host-side programs in their own pixi env — a BLE throughput reader, a rerun visualizer, and a tone sweep that checks the reported peak frequency over the console shell | [`microbit_v2_zephyr/CLAUDE.md`](microbit_v2_zephyr/CLAUDE.md) |
+| `rpi_pico_rust_debug/` | A minimal embassy `no_std` firmware for the Raspberry Pi Pico W (RP2040), for exercising `probe-rs` debugging — breakpoints, watchpoints, panic backtraces — via a deliberate bug | [`rpi_pico_rust_debug/CLAUDE.md`](rpi_pico_rust_debug/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -157,7 +158,20 @@ scripts rather than a package, and the second one imports the first directly —
 format is defined once, in `ble_stream.py`.
 
 **New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
-`members` list in the root `Cargo.toml`.
+`members` list in the root `Cargo.toml` — unless, like `rpi_pico_rust_debug/`, the
+crate targets something other than the host (an embedded target with its own
+`.cargo/config.toml` pinning `[build] target`), in which case it declares its own
+`[workspace]` table and stays out of the root workspace instead.
+
+That exception is about the *target*, not the directory. `rpi_pico_rust_debug/`
+keeps a host-buildable leaf crate, `rpi_pico_rust_debug/rp2040_temp/`, that **is**
+a root member, so that `cargo test` from the root covers it — inside that
+directory the pinned `thumbv6m-none-eabi` target has no `std` for libtest to link
+(`error[E0463]: can't find crate for 'test'`), so tests can't run there at all.
+The firmware workspace therefore also carries `exclude = ["rp2040_temp"]`, since
+a path dependency inside a workspace directory would otherwise be claimed as a
+member of it. Pure logic worth testing goes in the leaf; anything touching the
+chip stays in the firmware crate.
 
 ## Skills
 
