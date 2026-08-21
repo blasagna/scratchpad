@@ -1,0 +1,17 @@
+/*
+ * The Pico W's onboard LED is behind the CYW43 wireless chip, not a plain
+ * GPIO, so the heartbeat uses an EXTERNAL LED wired to a free pin. GP15
+ * (physical pin 20) is convenient -- clear of the SWD link and of the
+ * UART-console pins GP0/GP1.
+ *
+ * It's declared under `zephyr,user` and picked up with GPIO_DT_SPEC_GET_OR in
+ * src/main.cpp; delete this file and the firmware just runs without the LED.
+ *
+ * Wire the LED anode to GP15 through a ~330 ohm resistor and the cathode to GND.
+ */
+
+/ {
+	zephyr,user {
+		led-gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+	};
+};

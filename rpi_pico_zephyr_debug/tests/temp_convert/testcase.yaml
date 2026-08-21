@@ -1,0 +1,6 @@
+tests:
+  temp_convert.raw_to_millicelsius:
+    platform_allow:
+      - native_sim
+    tags:
+      - temp_convert

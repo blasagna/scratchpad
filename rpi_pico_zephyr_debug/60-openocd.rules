@@ -1,0 +1,25 @@
+# udev rules so OpenOCD can reach the Raspberry Pi Debug Probe (a.k.a.
+# picoprobe, which presents as a CMSIS-DAP adapter) without root.
+#
+# Install on Linux with:
+#
+#   sudo cp 60-openocd.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#
+# Then unplug and replug the probe. This is the OpenOCD-world analog of the
+# Rust sibling's 69-probe-rs.rules; it is a trimmed excerpt of OpenOCD's own
+# contrib/60-openocd.rules (GPL-2.0), narrowed to the CMSIS-DAP adapters that
+# matter for the Pico probe. `TAG+="uaccess"` hands the device to the logged-in
+# user via systemd-logind; the MODE/GROUP pair is the fallback for systems
+# without it (add yourself to the `plugdev` group there).
+
+ACTION!="add|change", GOTO="openocd_rules_end"
+SUBSYSTEM!="usb|tty|hidraw", GOTO="openocd_rules_end"
+
+# Raspberry Pi Debug Probe / picoprobe, matched by USB VID:PID.
+ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000c", MODE="660", GROUP="plugdev", TAG+="uaccess"
+
+# Any other CMSIS-DAP adapter, matched by its USB product string.
+ATTRS{product}=="*CMSIS-DAP*", MODE="660", GROUP="plugdev", TAG+="uaccess"
+
+LABEL="openocd_rules_end"
