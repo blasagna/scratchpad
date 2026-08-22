@@ -104,8 +104,10 @@ west build -b native_sim -p auto -d build_test tests/temp_convert && ./build_tes
   GLOBAL property to append the arg exactly once. `west flash` never needed it;
   it doesn't emit the RTOS command. (Verify with `grep target-handle
   build/zephyr/runners.yaml` — expect exactly one.) Dropping
-  `CONFIG_DEBUG_THREAD_INFO` would also dodge the crash, but at the cost of the
-  thread-aware `info threads` the README walkthrough uses.
+  `CONFIG_DEBUG_THREAD_INFO` would also dodge the crash, but at a cost: it's what
+  `select`s `THREAD_NAME`/`THREAD_MONITOR` (see `prj.conf`), so removing it loses
+  both the thread-aware `info threads` in GDB and the thread names the shell's
+  `kernel threads` prints.
 
 - **This directory carries its own `.clang-format`, copied from Zephyr's** — same
   as `microbit_v2_zephyr`. Without it the repo-wide `fmt` would reflow these

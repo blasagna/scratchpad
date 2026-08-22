@@ -128,7 +128,7 @@ tests.
 ## What to try
 
 The bug is at the ring-buffer write in [`src/main.cpp`](src/main.cpp) (the
-`history[sample_index] = millicelsius;` line, around line 139 — check the
+`history[sample_index] = millicelsius;` line, around line 162 — check the
 current number before setting a breakpoint, since edits above it shift it).
 `sample_index` increments without wrapping, so after `HISTORY_LEN` (8) samples
 it's out of bounds.
@@ -144,7 +144,7 @@ hunting silent memory corruption instead — which is the lesson.)
 Just `west flash` and watch the console. After `sample 7` the assertion fires:
 
 ```
-ASSERTION FAIL [sample_index < 8] @ .../src/main.cpp:137
+ASSERTION FAIL [sample_index < 8] @ .../src/main.cpp:160
 	history index 8 out of bounds
 ```
 
@@ -165,7 +165,7 @@ west debug
 This flashes, resets, halts, and drops you at a `(gdb)` prompt. From there:
 
 ```
-(gdb) break src/main.cpp:139
+(gdb) break src/main.cpp:162
 (gdb) continue
 ```
 

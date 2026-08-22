@@ -85,10 +85,26 @@ static int cmd_temp(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	shell_print(sh, "sample_index=%zu sample_count=%u (HISTORY_LEN=%zu)", sample_index,
-		    sample_count, HISTORY_LEN);
+	/* Snapshot the loop's shared state under a scheduler lock so the dump is
+	 * internally consistent even if main() is mid-iteration -- the shell I/O
+	 * then runs outside the lock, where it's free to block.
+	 */
+	int32_t snapshot[HISTORY_LEN];
+	size_t index;
+	uint32_t count;
+
+	k_sched_lock();
+	index = sample_index;
+	count = sample_count;
 	for (size_t i = 0; i < HISTORY_LEN; i++) {
-		shell_print(sh, "  history[%zu] = %d m°C", i, history[i]);
+		snapshot[i] = history[i];
+	}
+	k_sched_unlock();
+
+	shell_print(sh, "sample_index=%zu sample_count=%u (HISTORY_LEN=%zu)", index, count,
+		    HISTORY_LEN);
+	for (size_t i = 0; i < HISTORY_LEN; i++) {
+		shell_print(sh, "  history[%zu] = %d m°C", i, snapshot[i]);
 	}
 
 	return 0;
@@ -101,11 +117,14 @@ int main(void)
 {
 	LOG_INF("rpi_pico_zephyr_debug starting");
 
+	bool led_ready = false;
+
 	if (led.port != NULL) {
-		if (!gpio_is_ready_dt(&led)) {
-			LOG_WRN("heartbeat LED not ready; continuing without it");
-		} else {
+		if (gpio_is_ready_dt(&led)) {
 			gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+			led_ready = true;
+		} else {
+			LOG_WRN("heartbeat LED not ready; continuing without it");
 		}
 	}
 
@@ -141,13 +160,13 @@ int main(void)
 		__ASSERT(sample_index < HISTORY_LEN, "history index %zu out of bounds",
 			 sample_index);
 		history[sample_index] = millicelsius;
-		// sample_index = sample_index + 1;
+		sample_index = sample_index + 1;
 		// The one-line fix (README.md, "Fixing the bug"):
-		sample_index = (sample_index + 1) % HISTORY_LEN;
+		// sample_index = (sample_index + 1) % HISTORY_LEN;
 		sample_count = sample_index;
 		/* ---------------------------------------------------------------- */
 
-		if (led.port != NULL) {
+		if (led_ready) {
 			gpio_pin_toggle_dt(&led);
 		}
 		k_msleep(SAMPLE_PERIOD_MS);
