@@ -3,7 +3,7 @@
 A dataflow graph framework usable across real-time and batch or offline processing.
 Intended to be embedded within larger applications used to record and process data, both
 in small batches and on large-scale columnar datasets. Example data will be from sampled
-sensors like an IMU, audio, and video.
+sources like audio, video, and other signals.
 
 We will implement this in several languages as a learning exercise into the tradeoffs
 between them. Eventually we will probably write it in a native core with multiple
@@ -80,19 +80,20 @@ the choices it makes.
 ### Naming and namespacing
 
 A node's **qualified ID** is the `.`-joined path of enclosing subgraph IDs followed by its
-own ID. The root graph contributes no prefix, so a top-level node is just `calib`.
+own ID. The root graph contributes no prefix, so a top-level node is just `scale`.
 
 A **topic** is `<qualified node ID>.<output port name>` — the same `.` at the subgraph
 boundary and at the port boundary, so a topic is one flat dotted path from the root graph
-down to a port. The alternative is a separator per boundary (`fusion/update.fused`), which
+down to a port. The alternative is a separator per boundary (`classify/grade.graded`), which
 lets any topic be split into node and port at its last `.` whatever the nesting depth.
 That buys a split that nothing much needs — a port name alone means nothing without the
 node it belongs to, so a consumer of the split is already holding the graph — and it costs
 every author and every parser a second spelling rule.
 
 One consequence: a topic and a qualified node ID are spelled the same way, and
-`fusion.pose` is the `pose` output of `fusion` rather than a node `pose` inside it. The
-two are told apart by context, not by spelling, because a topic always ends in a port name.
+`classify.classified` is the `classified` output of `classify` rather than a node
+`classified` inside it. The two are told apart by context, not by spelling, because a topic
+always ends in a port name.
 
 **A topic names what flows; it does not carry it.** Subscribing taps an output port for
 debugging, recording, and visualization, while the messages still move over each edge's
@@ -104,36 +105,36 @@ not.
 
 ```mermaid
 flowchart LR
-  imu_raw([imu_raw]) --> calib
-  frames([frames]) --> overlay
+  readings([readings]) --> scale
+  tags([tags]) --> relabel
 
-  subgraph fusion
-    predict -- "fusion.predict.state" --> update
+  subgraph classify
+    flag -- "classify.flag.flagged" --> grade
   end
 
-  calib -- "calib.corrected" --> predict
-  calib -- "calib.corrected" --> update
-  update -- "fusion.update.fused" --> overlay
-  overlay -- "overlay.composited" --> pose([pose])
+  scale -- "scale.scaled" --> flag
+  scale -- "scale.scaled" --> grade
+  grade -- "classify.grade.graded" --> relabel
+  relabel -- "relabel.labeled" --> result([result])
 ```
 
 In that graph:
 
-- `calib.corrected` is a topic — a top-level node, so no path prefix. It fans out to two
+- `scale.scaled` is a topic — a top-level node, so no path prefix. It fans out to two
   consumers, and that is still **one** topic: a topic names the output port, not each
   edge leaving it, so a subscriber sees each message once however many nodes consume it.
-- `fusion.predict.state` and `fusion.update.fused` are topics; the subgraph ID namespaces
-  both nodes.
-- `fusion` is itself a node, so its output port `pose` gives the topic `fusion.pose` —
-  which is an **alias** of `fusion.update.fused`, the output actually connected to it.
-  The diagram draws the subgraph's boundary but not its ports, so this one is implicit:
-  it is the `update --> overlay` edge crossing the boundary.
-- The root graph's output `pose` is an alias of `overlay.composited`.
+- `classify.flag.flagged` and `classify.grade.graded` are topics; the subgraph ID
+  namespaces both nodes.
+- `classify` is itself a node, so its output port `classified` gives the topic
+  `classify.classified` — which is an **alias** of `classify.grade.graded`, the output
+  actually connected to it. The diagram draws the subgraph's boundary but not its ports, so
+  this one is implicit: it is the `grade --> relabel` edge crossing the boundary.
+- The root graph's output `result` is an alias of `relabel.labeled`.
 
 Subscribing to an alias and subscribing to the aliased topic observe the same output port
-and the same messages. Note that `fusion.pose` and the root output `pose` are different
-names for different outputs: an alias is resolved within the graph that declares it, so
-names only have to be unique among their siblings.
+and the same messages. An alias is resolved within the graph that declares it —
+`classify.classified` within `classify`, `result` at the root — so alias names only have to
+be unique among their siblings.
 
 ## Contracts
 
@@ -157,7 +158,7 @@ A message is a **payload plus a timestamp**. The timestamp is the *sample* time 
 the data was captured — set by whoever injects it and propagated by nodes as a matter of
 convention.
 
-**The framework does not align time.** Matching a 200 Hz IMU against 30 fps video is done
+**The framework does not align time.** Matching a 200 Hz signal against 30 fps video is done
 by ordinary nodes you write — resample, join-on-time, window — not by the scheduler. The
 alternative, a scheduler that understands watermarks and lateness, buys real power for
 sensor fusion and costs a much larger core; nothing here needs it yet, and a
@@ -344,7 +345,7 @@ agreement can check it, which is not the same as checking that it is fast).
 Three things the contract leaves open, decided here and worth knowing before reading
 the code. A subgraph's parameters reach the nodes inside it through `{"$param":
 "name"}` references resolved when the blueprint is flattened, which is what makes the
-same subgraph reusable at two rates. And an input port takes exactly one writer:
+same subgraph reusable at two settings. And an input port takes exactly one writer:
 fan-in is rejected at validation, because two producers sharing a queue would order
 messages by which node the scheduler happened to fire first, so a merge node with one
 port per producer says it explicitly instead.
@@ -362,7 +363,7 @@ has a spelling like this one is its own business. Naming ports as identifiers do
 constrain what a port may be called, and the generic ones show it: the pair is
 `inp`/`output` rather than `in`/`out`, because `in` is a Python keyword and so cannot
 be a parameter name at all, while `input` is a builtin that a parameter would shadow
-inside every `run` that declared it. A port named for what it carries — `raw`, `imu`,
+inside every `run` that declared it. A port named for what it carries — `raw`, `reading`,
 `window`, `frame` — sidesteps the question and reads better, and is what a node with
 more than one input port does anyway; `inp` is the fallback for a node too generic to
 have a better name. A language whose ports are strings in a table has none of this

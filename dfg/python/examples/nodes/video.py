@@ -6,16 +6,16 @@ rule worth having: nothing about them fits in a message header, and the framewor
 never looks inside one.
 
 Video is also where the framework's refusal to align time shows up honestly. A 30 fps
-frame stream and a 200 Hz pose stream do not line up, and no scheduler here tries to
+frame stream and a 200 Hz scalar stream do not line up, and no scheduler here tries to
 make them: :class:`examples.nodes.core.Resample` is an ordinary node that holds the
-newest pose, and :class:`OverlayBox` consumes the pair it produces.
+newest scalar, and :class:`OverlayBox` consumes the pair it produces.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Annotated, ClassVar, NamedTuple, Protocol
+from typing import Annotated, ClassVar, NamedTuple
 
 import numpy as np
 
@@ -26,18 +26,6 @@ from dfg.registry import Registry
 
 FRAME_RGB = "frame_rgb"
 FRAME_GRAY = "frame_gray"
-
-
-class Pose(Protocol):
-    """What :class:`OverlayBox` needs of a pose: somewhere to put the box.
-
-    A protocol rather than an import of :class:`examples.nodes.imu.Orientation`,
-    because the drawing has no business knowing where the angle came from -- and
-    because these examples are meant to stay independent of one another.
-    """
-
-    @property
-    def roll(self) -> float: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,11 +58,11 @@ class ToGray(Node):
 
 
 class OverlayBox(Node):
-    """Draws a marker whose position comes from a pose.
+    """Draws a marker whose position comes from a scalar.
 
-    Takes ``(frame, pose)`` pairs -- the tuple :class:`examples.nodes.core.Resample`
-    produces -- and tints a fixed-size box whose vertical position tracks the pose's
-    roll. Only the box's pixels change, so a test can check exactly that.
+    Takes ``(frame, offset)`` pairs -- the tuple :class:`examples.nodes.core.Resample`
+    produces -- and tints a fixed-size box whose vertical position tracks the scalar.
+    Only the box's pixels change, so a test can check exactly that.
     """
 
     size: int = 6
@@ -87,18 +75,18 @@ class OverlayBox(Node):
     def run(
         self,
         *,
-        inp: Annotated[In[tuple[np.ndarray, Pose]], Port("frame_and_pose")] = (),
+        inp: Annotated[In[tuple[np.ndarray, float]], Port("frame_and_offset")] = (),
     ) -> Out:
         size = self.size
         colour = np.array(self.colour, dtype=np.uint8)
         gain = self.gain
         out: list[Message[np.ndarray]] = []
         for message in inp:
-            frame, pose = message.payload
+            frame, offset = message.payload
             frame = np.asarray(frame)
             height, width = frame.shape[0], frame.shape[1]
-            # Roll maps to a row, clamped so the box always lands inside the frame.
-            centre = int(height / 2 + pose.roll * gain)
+            # The scalar maps to a row, clamped so the box always lands inside the frame.
+            centre = int(height / 2 + offset * gain)
             top = max(0, min(height - size, centre - size // 2))
             left = max(0, min(width - size, width // 2 - size // 2))
             marked = frame.copy()

@@ -15,14 +15,15 @@ from dfg.serialize import dumps, loads
 from dfg.validate import check
 from examples import (
     blueprint_roundtrip,
-    imu_pipeline,
     lifecycle_demo,
+    reading_pipeline,
     render_mermaid as render_demo,
     replay_demo,
     scheduling_demo,
 )
-from examples.nodes import core, imu
-from examples.synth import synth_imu, tracker_recording
+from examples.nodes import core, reading
+from examples.nodes.reading import Level
+from examples.synth import reading_recording, synth_readings
 
 
 def run_main(module) -> str:
@@ -35,23 +36,27 @@ def run_main(module) -> str:
 
 class TestSynth(unittest.TestCase):
     def test_synth_is_deterministic(self):
-        self.assertEqual(synth_imu(8), synth_imu(8))
+        self.assertEqual(synth_readings(8), synth_readings(8))
 
     def test_timestamps_are_exact_at_200_hz(self):
-        samples = synth_imu(4, rate_hz=200.0)
+        readings = synth_readings(4, rate_hz=200.0)
         self.assertEqual(
-            [m.timestamp for m in samples], [0, 5_000_000, 10_000_000, 15_000_000]
+            [m.timestamp for m in readings], [0, 5_000_000, 10_000_000, 15_000_000]
         )
 
-    def test_gravity_dominates_the_accelerometer(self):
-        for message in synth_imu(20):
-            magnitude = (
-                message.payload.ax**2 + message.payload.ay**2 + message.payload.az**2
-            ) ** 0.5
-            self.assertAlmostEqual(magnitude, imu.GRAVITY_M_S2, delta=0.5)
+    def test_values_span_the_level_bands(self):
+        # After the pipeline's 2x scale, values must reach every band: below the
+        # active threshold (1.0), into MEDIUM, and past HIGH (2.0).
+        scaled = [2.0 * m.payload.value for m in synth_readings(24)]
+        self.assertTrue(any(v < 1.0 for v in scaled))
+        self.assertTrue(any(1.0 <= v < 2.0 for v in scaled))
+        self.assertTrue(any(v >= 2.0 for v in scaled))
 
     def test_a_different_seed_gives_different_samples(self):
-        self.assertNotEqual(synth_imu(8, seed=1), synth_imu(8, seed=2))
+        self.assertNotEqual(
+            synth_readings(8, seed=1, noise=0.01),
+            synth_readings(8, seed=2, noise=0.01),
+        )
 
 
 class TestCoreNodes(unittest.TestCase):
@@ -124,105 +129,118 @@ class TestCoreNodes(unittest.TestCase):
             graph.run_until_idle()
             self.assertEqual(graph.poll("output"), ())
             for i in range(3):
-                graph.inject("fast", Message(f"imu{i}", i))
+                graph.inject("fast", Message(f"fast{i}", i))
                 graph.run_until_idle()
             graph.inject("slow", Message("frame1", 10))
             graph.run_until_idle()
             self.assertEqual(
-                [m.payload for m in graph.poll("output")], [("frame1", "imu2")]
+                [m.payload for m in graph.poll("output")], [("frame1", "fast2")]
             )
 
 
-class TestImuPipeline(unittest.TestCase):
+class TestReadingPipeline(unittest.TestCase):
     def test_the_blueprint_validates(self):
         self.assertEqual(
-            check(imu_pipeline.build_blueprint(), imu_pipeline.build_registry()), ()
+            check(
+                reading_pipeline.build_blueprint(), reading_pipeline.build_registry()
+            ),
+            (),
         )
 
     def test_the_readme_topics_and_aliases_appear(self):
         graph = Graph.instantiate(
-            imu_pipeline.build_blueprint(), imu_pipeline.build_registry()
+            reading_pipeline.build_blueprint(), reading_pipeline.build_registry()
         )
         self.assertEqual(
             graph.topics,
             (
-                "calib.corrected",
-                "fusion.predict.state",
-                "fusion.update.fused",
-                "overlay.composited",
+                "classify.flag.flagged",
+                "classify.grade.graded",
+                "relabel.labeled",
+                "scale.scaled",
             ),
         )
-        self.assertEqual(graph.aliases, ("fusion.pose", "pose"))
-        self.assertEqual(graph.flat.aliases["fusion.pose"], ("fusion.update", "fused"))
+        self.assertEqual(graph.aliases, ("classify.classified", "result"))
+        self.assertEqual(
+            graph.flat.aliases["classify.classified"], ("classify.grade", "graded")
+        )
 
     def test_the_graph_parameter_reaches_the_nested_node(self):
         graph = Graph.instantiate(
-            imu_pipeline.build_blueprint(), imu_pipeline.build_registry()
+            reading_pipeline.build_blueprint(), reading_pipeline.build_registry()
         )
-        self.assertEqual(graph.flat.nodes["fusion.predict"].params["rate_hz"], 200.0)
-        self.assertEqual(graph.flat.nodes["calib"].params["rate_hz"], 200.0)
+        self.assertEqual(graph.flat.nodes["classify.flag"].params["threshold"], 1.0)
 
-    def test_calibration_removes_the_synthetic_bias(self):
+    def test_scale_doubles_the_value(self):
         outputs = []
         with Graph.instantiate(
-            imu_pipeline.build_blueprint(), imu_pipeline.build_registry()
+            reading_pipeline.build_blueprint(), reading_pipeline.build_registry()
         ) as graph:
-            graph.subscribe("calib.corrected", lambda name, m: outputs.append(m))
-            for message in synth_imu(40, noise=0.0):
-                graph.inject("imu_raw", message)
+            graph.subscribe("scale.scaled", lambda name, m: outputs.append(m))
+            for message in synth_readings(40, noise=0.0):
+                graph.inject("readings", message)
                 graph.run_until_idle()
-        # The synthetic bias is (0.05, -0.03, 0.10) and calib subtracts exactly it,
-        # so with the noise off the x axis should come out at zero.
-        self.assertAlmostEqual(outputs[0].payload.ax, 0.0, places=9)
+        # scale is gain=2, offset=0, so the value is exactly doubled.
+        self.assertAlmostEqual(outputs[1].payload.value, 0.2, places=9)
 
-    def test_the_fused_roll_tracks_the_synthetic_tilt(self):
+    def test_readings_get_flagged_graded_and_labelled(self):
         outputs = replay(
-            imu_pipeline.build_blueprint(),
-            imu_pipeline.build_registry(),
-            tracker_recording(40),
+            reading_pipeline.build_blueprint(),
+            reading_pipeline.build_registry(),
+            reading_recording(40),
         )
-        self.assertEqual(len(outputs["pose"]), 40)
-        self.assertIn("roll=", outputs["pose"][-1].payload)
+        self.assertEqual(len(outputs["result"]), 40)
+        last = outputs["result"][-1].payload
+        # relabel folds the tag and the level name into the label.
+        self.assertIn(":", last.label)
+        self.assertIn(last.level.name, last.label)
+        self.assertIsInstance(last.level, Level)
 
     def test_the_alias_and_the_topic_see_identical_messages(self):
         via_alias, via_topic = [], []
         with Graph.instantiate(
-            imu_pipeline.build_blueprint(), imu_pipeline.build_registry()
+            reading_pipeline.build_blueprint(), reading_pipeline.build_registry()
         ) as graph:
-            graph.subscribe("fusion.pose", lambda name, m: via_alias.append(m))
-            graph.subscribe("fusion.update.fused", lambda name, m: via_topic.append(m))
-            for name, message in tracker_recording(8):
+            graph.subscribe("classify.classified", lambda name, m: via_alias.append(m))
+            graph.subscribe(
+                "classify.grade.graded", lambda name, m: via_topic.append(m)
+            )
+            for name, message in reading_recording(8):
                 graph.inject(name, message)
                 graph.run_until_idle()
         self.assertEqual(len(via_alias), 8)
         self.assertEqual(via_alias, via_topic)
 
     def test_rerunning_gives_identical_output(self):
-        recording = tracker_recording(16)
+        recording = reading_recording(16)
         first = replay(
-            imu_pipeline.build_blueprint(), imu_pipeline.build_registry(), recording
+            reading_pipeline.build_blueprint(),
+            reading_pipeline.build_registry(),
+            recording,
         )
         second = replay(
-            imu_pipeline.build_blueprint(), imu_pipeline.build_registry(), recording
+            reading_pipeline.build_blueprint(),
+            reading_pipeline.build_registry(),
+            recording,
         )
         self.assertEqual(
-            [(m.payload, m.timestamp) for m in first["pose"]],
-            [(m.payload, m.timestamp) for m in second["pose"]],
+            [(m.payload, m.timestamp) for m in first["result"]],
+            [(m.payload, m.timestamp) for m in second["result"]],
         )
 
-    def test_the_subgraph_is_reusable_at_another_rate(self):
+    def test_the_subgraph_is_reusable_at_another_threshold(self):
         # Which is the whole point of the $param reference.
-        spec = imu_pipeline.build_blueprint()
+        spec = reading_pipeline.build_blueprint()
         retuned = GraphSpec(
             name=spec.name,
             nodes=spec.nodes,
             edges=spec.edges,
             inputs=spec.inputs,
             outputs=spec.outputs,
-            params={"imu_rate_hz": 100.0},
+            params={"active_threshold": 1.5},
         )
-        graph = Graph.instantiate(retuned, imu_pipeline.build_registry())
-        self.assertEqual(graph.flat.nodes["fusion.predict"].params["rate_hz"], 100.0)
+        graph = Graph.instantiate(retuned, reading_pipeline.build_registry())
+        self.assertEqual(graph.flat.nodes["classify.flag"].params["threshold"], 1.5)
 
 
 class TestLifecycleDemo(unittest.TestCase):
@@ -288,7 +306,7 @@ class TestSchedulingDemo(unittest.TestCase):
 
 class TestRoundtripDemo(unittest.TestCase):
     def test_the_blueprint_round_trips_exactly(self):
-        spec = imu_pipeline.build_blueprint()
+        spec = reading_pipeline.build_blueprint()
         text = dumps(spec)
         self.assertEqual(loads(text), spec)
         self.assertEqual(dumps(loads(text)), text)
@@ -301,10 +319,10 @@ class TestRoundtripDemo(unittest.TestCase):
 
 class TestMermaidDemo(unittest.TestCase):
     def test_the_diagram_names_the_subgraph_and_its_topics(self):
-        diagram = render_mermaid(imu_pipeline.build_blueprint())
-        self.assertIn("subgraph fusion[fusion]", diagram)
-        self.assertIn('"fusion.predict.state"', diagram)
-        self.assertIn("([imu_raw])", diagram)
+        diagram = render_mermaid(reading_pipeline.build_blueprint())
+        self.assertIn("subgraph classify[classify]", diagram)
+        self.assertIn('"classify.flag.flagged"', diagram)
+        self.assertIn("([readings])", diagram)
 
     def test_main_runs(self):
         self.assertIn("```mermaid", run_main(render_demo))
@@ -312,16 +330,16 @@ class TestMermaidDemo(unittest.TestCase):
 
 class TestReplayDemo(unittest.TestCase):
     def test_every_variant_hashes_the_same(self):
-        spec = imu_pipeline.build_blueprint()
-        recording = tracker_recording(12)
+        spec = reading_pipeline.build_blueprint()
+        recording = reading_recording(12)
         baseline = replay_demo.digest(
-            replay(spec, imu_pipeline.build_registry(), recording)
+            replay(spec, reading_pipeline.build_registry(), recording)
         )
         for seed in range(4):
             variant = replay_demo.shuffled(spec, seed=seed)
             self.assertEqual(
                 replay_demo.digest(
-                    replay(variant, imu_pipeline.build_registry(), recording)
+                    replay(variant, reading_pipeline.build_registry(), recording)
                 ),
                 baseline,
             )

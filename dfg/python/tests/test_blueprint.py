@@ -23,13 +23,11 @@ from dfg.readiness import AllInputs, AnyInput
 
 class TestEndpointParsing(unittest.TestCase):
     def test_splits_at_the_last_dot(self):
-        self.assertEqual(
-            split_endpoint("calib.corrected"), PortRef("calib", "corrected")
-        )
+        self.assertEqual(split_endpoint("scale.scaled"), PortRef("scale", "scaled"))
 
     def test_rejects_an_endpoint_with_no_dot(self):
         with self.assertRaises(ValueError) as caught:
-            split_endpoint("calib")
+            split_endpoint("scale")
         self.assertIn("node.port", str(caught.exception))
 
 
@@ -79,16 +77,16 @@ class TestSpecs(unittest.TestCase):
 
     def test_lookup_helpers(self):
         spec = helpers.readme_example_spec()
-        self.assertIsInstance(spec.node("calib"), NodeSpec)
-        self.assertIsInstance(spec.node("fusion"), SubgraphSpec)
+        self.assertIsInstance(spec.node("scale"), NodeSpec)
+        self.assertIsInstance(spec.node("classify"), SubgraphSpec)
         self.assertIsNone(spec.node("nope"))
         self.assertEqual(
-            helpers.present(spec.input("imu_raw")).targets,
-            (PortRef("calib", "raw"),),
+            helpers.present(spec.input("readings")).targets,
+            (PortRef("scale", "raw"),),
         )
         self.assertEqual(
-            helpers.present(spec.output("pose")).source,
-            PortRef("overlay", "composited"),
+            helpers.present(spec.output("result")).source,
+            PortRef("relabel", "labeled"),
         )
         self.assertIsNone(spec.output("nope"))
 
@@ -152,7 +150,8 @@ class TestGraphBuilder(unittest.TestCase):
         builder = GraphBuilder("g")
         self.assertEqual(builder.add("double", "t.double"), "double")
         self.assertEqual(
-            builder.add_subgraph("fusion", helpers.fusion_subgraph_spec()), "fusion"
+            builder.add_subgraph("classify", helpers.classify_subgraph_spec()),
+            "classify",
         )
 
     def test_an_input_may_fan_out_to_several_targets(self):
@@ -176,18 +175,23 @@ class TestGraphBuilder(unittest.TestCase):
     def test_readme_example_has_the_shape_the_document_draws(self):
         spec = helpers.readme_example_spec()
         self.assertEqual(
-            [node.node_id for node in spec.nodes], ["calib", "fusion", "overlay"]
+            [node.node_id for node in spec.nodes], ["scale", "classify", "relabel"]
         )
-        self.assertEqual([b.name for b in spec.inputs], ["imu_raw", "frames"])
-        self.assertEqual([b.name for b in spec.outputs], ["pose"])
+        self.assertEqual([b.name for b in spec.inputs], ["readings", "tags"])
+        self.assertEqual([b.name for b in spec.outputs], ["result"])
         # One parent edge into the subgraph's input, which fans out inside it --
-        # that is how the document's two calib.corrected arrows are spelled.
+        # that is how the document's two scale.scaled arrows are spelled.
         self.assertEqual(
             [(str(e.src), str(e.dst)) for e in spec.edges],
-            [("calib.corrected", "fusion.imu"), ("fusion.pose", "overlay.pose")],
+            [
+                ("scale.scaled", "classify.reading"),
+                ("classify.classified", "relabel.reading"),
+            ],
         )
-        fusion = helpers.subgraph_spec(spec, "fusion")
-        self.assertEqual(len(helpers.present(fusion.graph.input("imu")).targets), 2)
+        classify = helpers.subgraph_spec(spec, "classify")
+        self.assertEqual(
+            len(helpers.present(classify.graph.input("reading")).targets), 2
+        )
 
 
 class TestDocstringExamples(unittest.TestCase):

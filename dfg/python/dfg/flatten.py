@@ -125,7 +125,7 @@ class FlatGraph:
         outputs: Root output name to the single ``(qid, port)`` it aliases.
         topics: Every output port's topic, ``"<qid>.<port>"``, to its endpoint.
         aliases: Every graph-output name at every scope to the endpoint it aliases
-            -- ``"fusion.pose"`` and the root's ``"pose"``. An alias is not a
+            -- ``"classify.classified"`` and the root's ``"result"``. An alias is not a
             separate topic; subscribing to it observes the aliased port.
     """
 

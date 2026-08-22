@@ -12,8 +12,8 @@ This script checks the part that is checkable. The same blueprint runs at
 ``rows=1`` -- a batch per sample, the streaming extreme -- and at ``rows=64``, a real
 columnar chunk, and the aggregates come out the same::
 
-    imu_raw -> batch(rows) -> filter -> project -> aggregate -> summary
-                                              \\-> to_table -> table
+    signal_raw -> batch(rows) -> filter -> project -> aggregate -> summary
+                                                 \\-> to_table -> table
 
 If the numbers agreed only at one chunk size, the bet would already have failed.
 """
@@ -26,10 +26,9 @@ from dfg.blueprint import GraphBuilder, GraphSpec, ParamRef
 from dfg.graph import Graph
 from dfg.registry import Registry
 from examples.nodes import arrow, core
-from examples.synth import synth_imu
+from examples.synth import synth_signal
 
 SAMPLE_COUNT = 192
-GRAVITY_FLOOR = 9.0
 
 
 def build_registry() -> Registry:
@@ -46,7 +45,7 @@ def build_blueprint() -> GraphSpec:
     builder.add(
         "filter",
         arrow.Filter,
-        params={"column": "az", "op": "greater", "value": 0.0},
+        params={"column": "z", "op": "greater", "value": 0.0},
     )
     builder.add(
         "project", arrow.Project, params={"keep": ["t_ns"], "magnitude_name": "mag"}
@@ -59,7 +58,7 @@ def build_blueprint() -> GraphSpec:
     builder.connect("project.output", "aggregate.inp")
     builder.connect("project.output", "table.inp")
 
-    builder.add_input("imu_raw", "batch.inp", type_tag="ImuSample")
+    builder.add_input("signal_raw", "batch.inp", type_tag="Sample")
     builder.add_output("summary", "aggregate.output")
     builder.add_output("table", "table.output")
     return builder.build()
@@ -80,10 +79,10 @@ def with_rows(spec: GraphSpec, rows: int) -> GraphSpec:
 def run(rows: int) -> dict:
     """Run the chain at a given chunk size and total up the aggregates."""
     spec = with_rows(build_blueprint(), rows)
-    samples = synth_imu(SAMPLE_COUNT)
+    samples = synth_signal(SAMPLE_COUNT)
     with Graph.instantiate(spec, build_registry()) as graph:
         for message in samples:
-            graph.inject("imu_raw", message)
+            graph.inject("signal_raw", message)
             graph.run_until_idle()
         summaries = graph.poll("summary")
         tables = graph.poll("table")
@@ -105,7 +104,7 @@ def run(rows: int) -> dict:
 
 
 def main() -> None:
-    print(f"{SAMPLE_COUNT} IMU samples, as dataclasses on the way in")
+    print(f"{SAMPLE_COUNT} signal samples, as dataclasses on the way in")
     print()
 
     table_shown = False

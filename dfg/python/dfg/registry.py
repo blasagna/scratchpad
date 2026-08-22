@@ -9,7 +9,7 @@ have" from the class, without calling ``__init__``.
 **There is no global default registry.** An explicit instance keeps tests
 isolated, and it makes the layering above a fact about the API instead of a
 remark. Type names are serialized, so they are API: keep them short and stable
-(``"imu.calibrate"``, ``"audio.frame"``) -- that guidance is for
+(``"reading.scale"``, ``"audio.frame"``) -- that guidance is for
 :meth:`Registry.register`'s explicit ``(type_name, node_cls)`` form.
 ``register(node_cls)`` trades a curated name for zero declaration overhead: it
 derives the name from the class's own import path, ``f"{node_cls.__module__}.

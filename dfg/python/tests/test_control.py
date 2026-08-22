@@ -146,9 +146,9 @@ class TestCounters(unittest.TestCase):
             helpers.readme_example_spec(), helpers.build_registry()
         ) as graph:
             keys = graph.control.edge_keys()
-            self.assertIn("calib.corrected -> fusion.predict.imu", keys)
-            self.assertIn("calib.corrected -> fusion.update.imu", keys)
-            self.assertFalse(any(key.endswith("fusion.imu") for key in keys))
+            self.assertIn("scale.scaled -> classify.flag.reading", keys)
+            self.assertIn("scale.scaled -> classify.grade.reading", keys)
+            self.assertFalse(any(key.endswith("classify.reading") for key in keys))
 
 
 class TestLiveParameters(unittest.TestCase):

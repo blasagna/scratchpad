@@ -32,11 +32,11 @@ class Port:
     A typed node declares its ports as parameter names, so the *name* comes from
     the signature. Everything else about the port comes from here::
 
-        def run(self, *, imu: Annotated[In[Sample], Port("ImuSample")] = ()) -> Out
+        def run(self, *, raw: Annotated[In[Reading], Port("Reading")] = ()) -> Out
 
     This exists because the Python annotation and the type tag are answering two
-    different questions. ``In[Sample]`` types the **payload**, for a type checker
-    reading this port. ``Port("ImuSample")`` types the **wire**, for validation
+    different questions. ``In[Reading]`` types the **payload**, for a type checker
+    reading this port. ``Port("Reading")`` types the **wire**, for validation
     comparing the two ends of an edge -- and a tag has to survive JSON and mean
     the same thing to a port in another language, which a Python type does not.
 
@@ -81,10 +81,10 @@ def qualify(scope: tuple[str, ...], node_id: str) -> str:
 
     The root graph contributes no prefix, so a top-level node is just its own ID.
 
-    >>> qualify((), "calib")
-    'calib'
-    >>> qualify(("fusion",), "predict")
-    'fusion.predict'
+    >>> qualify((), "scale")
+    'scale'
+    >>> qualify(("classify",), "flag")
+    'classify.flag'
     """
     return ".".join((*scope, node_id))
 
@@ -97,8 +97,8 @@ def topic_of(qualified_id: str, port_name: str) -> str:
     qualified node ID are therefore spelled alike and told apart by context: a
     topic always ends in a port name.
 
-    >>> topic_of("fusion.update", "fused")
-    'fusion.update.fused'
+    >>> topic_of("classify.grade", "graded")
+    'classify.grade.graded'
     """
     return f"{qualified_id}.{port_name}"
 

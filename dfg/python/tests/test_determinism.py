@@ -179,18 +179,18 @@ class TestNestedGraphs(unittest.TestCase):
     def test_a_nested_blueprint_replays_identically(self):
         spec = helpers.readme_example_spec()
         pairs = [
-            ("imu_raw", Message(f"imu{i}", ts_from_sample_index(i, 200.0)))
+            ("readings", Message(f"reading{i}", ts_from_sample_index(i, 200.0)))
             for i in range(6)
         ]
-        frames = [
-            ("frames", Message(f"frame{i}", ts_from_sample_index(i, 200.0)))
+        tags = [
+            ("tags", Message(f"tag{i}", ts_from_sample_index(i, 200.0)))
             for i in range(6)
         ]
-        interleaved = [pair for both in zip(pairs, frames) for pair in both]
+        interleaved = [pair for both in zip(pairs, tags) for pair in both]
         first = replay(spec, helpers.build_registry(), interleaved)
         second = replay(spec, helpers.build_registry(), interleaved)
         self.assertEqual(digest_outputs(first), digest_outputs(second))
-        self.assertEqual(len(first["pose"]), 6)
+        self.assertEqual(len(first["result"]), 6)
 
 
 class TestReplayHelper(unittest.TestCase):

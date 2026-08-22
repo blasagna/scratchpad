@@ -17,8 +17,12 @@ from __future__ import annotations
 from dfg.blueprint import GraphBuilder
 from dfg.mermaid import render_mermaid
 from dfg.validate import check
-from examples.imu_pipeline import build_blueprint, build_registry, fusion_blueprint
-from examples.nodes import imu
+from examples.reading_pipeline import (
+    build_blueprint,
+    build_registry,
+    classify_blueprint,
+)
+from examples.nodes import reading
 
 
 def fenced(diagram: str) -> str:
@@ -29,15 +33,15 @@ def fenced(diagram: str) -> str:
 def main() -> None:
     spec = build_blueprint()
 
-    print("The tracker blueprint")
+    print("The processor blueprint")
     print("=" * 74)
     print(fenced(render_mermaid(spec)))
     print()
-    print("Note that `fusion` is drawn as a box with `predict` and `update` inside,")
-    print("and the edge labels are topics: `fusion.predict.state` shows that the")
+    print("Note that `classify` is drawn as a box with `flag` and `grade` inside,")
+    print("and the edge labels are topics: `classify.flag.flagged` shows that the")
     print("subgraph ID namespaced the node. The edge out of the subgraph is labelled")
-    print("with its alias, `fusion.pose`, because that is what the blueprint")
-    print("declares -- it resolves to `fusion.update.fused` only once flattened.")
+    print("with its alias, `classify.classified`, because that is what the blueprint")
+    print("declares -- it resolves to `classify.grade.graded` only once flattened.")
     print()
 
     print("Top to bottom, without topic labels")
@@ -45,18 +49,18 @@ def main() -> None:
     print(fenced(render_mermaid(spec, direction="TB", show_topics=False)))
     print()
 
-    print("The fusion subgraph on its own")
+    print("The classify subgraph on its own")
     print("=" * 74)
     print("A graph has inputs, outputs, and parameters, so it draws like any other.")
-    print(fenced(render_mermaid(fusion_blueprint())))
+    print(fenced(render_mermaid(classify_blueprint())))
     print()
 
     print("A blueprint that does not validate still renders")
     print("=" * 74)
     broken = GraphBuilder("broken")
-    broken.add("real", imu.Calibrate)
+    broken.add("real", reading.Scale)
     broken.add("imaginary", "not.registered")
-    broken.connect("real.corrected", "ghost.raw")
+    broken.connect("real.scaled", "ghost.reading")
     broken.add_input("source", "real.raw")
     problems = check(broken.build(), build_registry())
     print(f"Validation finds {len(problems)} problem(s):")

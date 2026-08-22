@@ -156,13 +156,13 @@ class TestPortDerivation(unittest.TestCase):
     def test_out_fields_become_output_ports_in_field_order(self):
         class Split(Node):
             class Out(NamedTuple):
-                gravity: Emit[float]
-                linear: Emit[float]
+                high: Emit[float]
+                low: Emit[float]
 
             def run(self, *, inp: In[float] = ()) -> Out:
-                return self.Out(gravity=(), linear=())
+                return self.Out(high=(), low=())
 
-        self.assertEqual([port.name for port in Split.OUTPUTS], ["gravity", "linear"])
+        self.assertEqual([port.name for port in Split.OUTPUTS], ["high", "low"])
 
     def test_input_ports_keep_signature_order(self):
         class Pair(Node):
@@ -179,10 +179,10 @@ class TestPortDerivation(unittest.TestCase):
             class Out(NamedTuple):
                 output: Annotated[Emit[Any], Port("RecordBatch", "one batch")]
 
-            def run(self, *, inp: Annotated[In[Any], Port("ImuSample")] = ()) -> Out:
+            def run(self, *, inp: Annotated[In[Any], Port("Reading")] = ()) -> Out:
                 return self.Out(output=())
 
-        self.assertEqual(Tagged.INPUTS, (PortSpec("inp", "ImuSample"),))
+        self.assertEqual(Tagged.INPUTS, (PortSpec("inp", "Reading"),))
         self.assertEqual(
             Tagged.OUTPUTS, (PortSpec("output", "RecordBatch", "one batch"),)
         )

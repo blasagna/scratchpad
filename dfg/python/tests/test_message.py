@@ -70,7 +70,7 @@ class TestTimestampHelpers(unittest.TestCase):
         self.assertEqual(ts_to_seconds(1_500_000_000), 1.5)
 
     def test_sample_index_is_exact_at_200_hz(self):
-        # 200 Hz is 5 ms, a whole number of nanoseconds, so a synthesized IMU
+        # 200 Hz is 5 ms, a whole number of nanoseconds, so a synthesized signal
         # stream has exact timestamps and a replay test can assert equality.
         self.assertEqual(ts_from_sample_index(0, 200.0), 0)
         self.assertEqual(ts_from_sample_index(1, 200.0), 5_000_000)
