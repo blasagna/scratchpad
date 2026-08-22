@@ -224,6 +224,68 @@ With the target halted in GDB:
 (gdb) print &sample_count   # its address, if you'd rather watch the location
 ```
 
+**7. Post-mortem: capture and replay a core dump**
+
+Every exercise above needs the target halted under a live probe. A *core dump*
+captures the crash state so you can replay it in GDB later, off-line, with no
+probe attached — the way you'd debug a fault reported from the field from a log
+someone sent you. `CONFIG_DEBUG_COREDUMP` with the logging backend (set in
+[`prj.conf`](prj.conf)) makes the fatal handler stream a dump over the console
+the moment the `__ASSERT` fires.
+
+*Step 1 — capture the console to a file.* At the fault the dump prints once, as a
+block of `#CD:` lines bracketed by `#CD:BEGIN#` and `#CD:END#`. Any logging
+terminal works; a minimal capture with no extra tools:
+
+```bash
+stty -F /dev/ttyACM0 115200 raw -echo
+cat /dev/ttyACM0 | tee coredump-capture.log
+```
+
+With that running, reset the target (re-run `west flash`, or replug it) and let
+it run to the crash. The interleaved `sample N` log lines are fine — the parser
+in the next step reads only the `#CD:` lines. Once you see `#CD:END#`, stop the
+capture with `Ctrl-C`.
+
+*Step 2 — extract the binary dump from the captured log:*
+
+```bash
+$ZEPHYR_BASE/scripts/coredump/coredump_serial_log_parser.py coredump-capture.log coredump.bin
+```
+
+*Step 3 — serve the dump as a GDB target and inspect it.* The gdbserver takes the
+**ELF first, then the `.bin`**, and listens on `localhost:1234`:
+
+```bash
+$ZEPHYR_BASE/scripts/coredump/coredump_gdbserver.py build/zephyr/zephyr.elf coredump.bin
+```
+
+In another terminal, connect the Zephyr SDK's Arm GDB (the same one `west debug`
+uses — full path in the [VS Code section](#debugging-in-vs-code-cortex-debug) if
+it isn't on your `PATH`) and read the frozen crash state:
+
+```bash
+arm-zephyr-eabi-gdb build/zephyr/zephyr.elf
+```
+
+```
+(gdb) target remote localhost:1234
+(gdb) bt                     # the call stack at the fault
+(gdb) print sample_index     # 8 -- one past the end, the value that tripped the assert
+(gdb) print sample_count
+(gdb) print history          # the ring buffer as it stood at the crash
+```
+
+There's no live target here — it's the dump answering — so you can `print`
+globals and unwind the stack, but not `continue` or step.
+
+**Dump scope.** This build sets `CONFIG_DEBUG_COREDUMP_MEMORY_DUMP_LINKER_RAM`,
+which dumps all RAM, so globals like `history` and `sample_index` survive into
+the replay. The lighter default, `CONFIG_DEBUG_COREDUMP_MEMORY_DUMP_MIN`, dumps
+only the registers and the faulting stack — enough for `bt` and stack locals,
+but not the ring buffer. The trade is the size of the dump and how long it takes
+to stream over the 115200-baud console.
+
 ## Debugging in VS Code (Cortex-Debug)
 
 For a graphical workflow — gutter breakpoints, the Variables/Watch panes, data

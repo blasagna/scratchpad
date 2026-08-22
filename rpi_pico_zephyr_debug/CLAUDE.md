@@ -89,7 +89,11 @@ west build -b native_sim -p auto -d build_test tests/temp_convert && ./build_tes
   and reordered past recognition. `CONFIG_EXTRA_EXCEPTION_INFO` is what enables
   `arch_stack_walk()` on Cortex-M (it gates `ARCH_HAS_STACKWALK`), without which
   `CONFIG_EXCEPTION_STACK_TRACE` prints no backtrace. `CONFIG_DEBUG_THREAD_INFO`
-  is what makes OpenOCD/GDB thread-aware.
+  is what makes OpenOCD/GDB thread-aware. `CONFIG_DEBUG_COREDUMP` (logging
+  backend) streams a post-mortem dump over the console on a fatal error;
+  `MEMORY_DUMP_LINKER_RAM` (not the default `MEMORY_DUMP_MIN`) is deliberate --
+  it dumps all RAM so `history`/`sample_index` are inspectable in the off-line
+  GDB replay, which is the point of README.md exercise 7.
 
 - **`CMakeLists.txt`'s `app_set_runner_args` macro is what makes `west debug`
   and `west attach` work — don't remove it, and keep it above
