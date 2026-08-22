@@ -1,0 +1,8 @@
+/build/
+/build_test/
+/twister-out/
+
+# Local core-dump capture artifacts (README exercise 7)
+/coredump-capture.log
+/coredump-clean.log
+/coredump.bin

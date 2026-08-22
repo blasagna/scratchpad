@@ -28,6 +28,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `dfg/` | A dataflow graph framework for real-time and batch processing — a language-independent design contract plus a Python port (pixi) | [`dfg/CLAUDE.md`](dfg/CLAUDE.md) |
 | `microbit_v2_zephyr/` | A Zephyr RTOS application for the BBC micro:bit V2 — sensors, buzzer, on-device FFT, and BLE notifications (west), plus host-side programs in their own pixi env — a BLE throughput reader, a rerun visualizer, and a tone sweep that checks the reported peak frequency over the console shell | [`microbit_v2_zephyr/CLAUDE.md`](microbit_v2_zephyr/CLAUDE.md) |
 | `rpi_pico_rust_debug/` | A minimal embassy `no_std` firmware for the Raspberry Pi Pico W (RP2040), for exercising `probe-rs` debugging — breakpoints, watchpoints, panic backtraces — via a deliberate bug | [`rpi_pico_rust_debug/CLAUDE.md`](rpi_pico_rust_debug/CLAUDE.md) |
+| `rpi_pico_zephyr_debug/` | The C++/Zephyr counterpart of `rpi_pico_rust_debug` for the same Pico W: the same deliberate ring-buffer bug, for exercising OpenOCD + Raspberry Pi Debug Probe debugging (breakpoints, watchpoints, fatal-error backtraces) via `west`, plus a `native_sim` ztest suite for the pure conversion | [`rpi_pico_zephyr_debug/CLAUDE.md`](rpi_pico_zephyr_debug/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -40,7 +41,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | Rust → Python extension | maturin (driven by a pixi task) |
 | C++ → Rust extension | cargo (a `build.rs` compiles the C++ a second time) |
 | C++ with no build of its own | cargo (`build.rs` is the only build config, and sets the standard and warnings too) |
-| C on Zephyr RTOS | west (CMake), as a freestanding application against `~/zephyrproject` |
+| C / C++ on Zephyr RTOS | west (CMake), as a freestanding application against `~/zephyrproject` |
 
 ## Commands
 
@@ -48,7 +49,8 @@ Formatting is repo-wide via `pixi run fmt` (ruff + clang-format + cargo fmt) and
 runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
 `fmt-c` takes its file list from `git ls-files` rather than a `**` glob, so that
 gitignored build directories are skipped. That matters because some of them hold
-symlinks that lead out of the repo — `microbit_v2_zephyr/build/` links to the
+symlinks that lead out of the repo — the west areas' `build/` directories
+(`microbit_v2_zephyr/build/` and `rpi_pico_zephyr_debug/build/`) link to the
 Zephyr installation, and a glob that follows them reformats it in place.
 
 `pixi run lint-c` runs cppcheck over the 7 Bazel C/C++ areas. Memory checking for a

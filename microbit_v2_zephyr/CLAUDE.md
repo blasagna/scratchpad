@@ -70,9 +70,9 @@ the narrative.
   `SENSOR_ASYNC_API`) — drop it first if the build needs to shrink. `CONFIG_INPUT_SHELL`
   costs under a kilobyte.
 
-- **This is the repo's only west/CMake area** — not Bazel, pixi, or cargo — and a
-  *freestanding* Zephyr application outside `~/zephyrproject`, so `ZEPHYR_BASE` must be
-  exported before `west build`.
+- **This is one of the repo's two west/CMake areas** (with `rpi_pico_zephyr_debug`) —
+  not Bazel, pixi, or cargo — and a *freestanding* Zephyr application outside
+  `~/zephyrproject`, so `ZEPHYR_BASE` must be exported before `west build`.
 
 - **There are two toolchains here**: west/CMake for `src/`, and a nested pixi environment
   in `host/` for the four host programs. `pixi run` in this area means `cd host` first —
