@@ -247,11 +247,27 @@ it run to the crash. The interleaved `sample N` log lines are fine — the parse
 in the next step reads only the `#CD:` lines. Once you see `#CD:END#`, stop the
 capture with `Ctrl-C`.
 
-*Step 2 — extract the binary dump from the captured log:*
+*Step 2 — strip terminal escapes, then extract the binary dump.* The console is a
+Zephyr **shell**, so it wraps each log line in VT100 color codes and repaints its
+prompt — a trailing `\x1b[0m` ends up glued to every `#CD:` hex line and makes the
+parser choke. Strip the escapes first, then parse the cleaned log:
 
 ```bash
-$ZEPHYR_BASE/scripts/coredump/coredump_serial_log_parser.py coredump-capture.log coredump.bin
+sed 's/\x1b\[[0-9;]*[A-Za-z]//g' coredump-capture.log | tr -d '\r' > coredump-clean.log
+$ZEPHYR_BASE/scripts/coredump/coredump_serial_log_parser.py coredump-clean.log coredump.bin
 ```
+
+Two ways to avoid the separate strip step:
+
+- *Strip during capture* — pipe the escapes out as they arrive, so the log file
+  is already clean:
+  `cat /dev/ttyACM0 | sed -u 's/\x1b\[[0-9;]*[A-Za-z]//g' | tee coredump-capture.log`
+- *Strip at the source* — uncomment `CONFIG_LOG_BACKEND_SHOW_COLOR=n` in
+  [`prj.conf`](prj.conf) and rebuild. That drops the log colors on the device, so
+  the trailing reset escape is gone and a plain `cat | tee` capture parses
+  untouched — no `sed` at all. (The other escapes you'd still see, the shell
+  prompt and its repaint, sit *before* `#CD:` on each line, which the parser
+  ignores.) The only cost is no color in the live console.
 
 *Step 3 — serve the dump as a GDB target and inspect it.* The gdbserver takes the
 **ELF first, then the `.bin`**, and listens on `localhost:1234`:
