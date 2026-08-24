@@ -95,7 +95,7 @@ type Inputs = Mapping[str, tuple[Message[Any], ...]]
 """What ``run`` receives: only the ports that had messages this firing.
 
 A port absent from the mapping had nothing available, so a node with ``any``
-readiness writes ``inputs.get("imu", ())``. Values are tuples because a readiness
+readiness writes ``inputs.get("reading", ())``. Values are tuples because a readiness
 rule may hand a node several messages at once -- which is what makes a "fire when
 512 samples are buffered" rule usable for audio.
 """

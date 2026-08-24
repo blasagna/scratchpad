@@ -14,8 +14,7 @@ if HAVE_NUMPY:
     from dfg.validate import check
     from examples import video_pipeline
     from examples.nodes import video
-    from examples.nodes.imu import Orientation
-    from examples.synth import synth_imu
+    from examples.synth import synth_signal
     from examples.synth_media import frame_index_of, synth_frames
 
 
@@ -70,8 +69,7 @@ class TestVideoNodes(unittest.TestCase):
     def test_overlay_changes_only_the_box_pixels(self):
         node = video.OverlayBox(size=6, colour=(0, 255, 0))
         frame = synth_frames(1, width=64, height=48)[0]
-        pose = Orientation(roll=0.0, pitch=0.0, accel_magnitude=9.8)
-        (out,) = node.run(inp=(frame.with_payload((frame.payload, pose)),)).output
+        (out,) = node.run(inp=(frame.with_payload((frame.payload, 0.0)),)).output
 
         changed = np.any(out.payload != frame.payload, axis=2)
         rows = np.flatnonzero(changed.any(axis=1))
@@ -81,13 +79,12 @@ class TestVideoNodes(unittest.TestCase):
         self.assertLessEqual(len(cols), 6)
         self.assertLessEqual(int(np.count_nonzero(changed)), 36)
 
-    def test_overlay_position_tracks_the_roll(self):
+    def test_overlay_position_tracks_the_offset(self):
         node = video.OverlayBox(size=4, colour=(0, 255, 0), gain=40.0)
         frame = synth_frames(1, width=64, height=48)[0]
 
-        def box_row(roll):
-            pose = Orientation(roll=roll, pitch=0.0, accel_magnitude=9.8)
-            (out,) = node.run(inp=(frame.with_payload((frame.payload, pose)),)).output
+        def box_row(offset):
+            (out,) = node.run(inp=(frame.with_payload((frame.payload, offset)),)).output
             green = np.all(out.payload == (0, 255, 0), axis=2)
             return int(np.flatnonzero(green.any(axis=1))[0])
 
@@ -97,9 +94,8 @@ class TestVideoNodes(unittest.TestCase):
     def test_overlay_clamps_the_box_inside_the_frame(self):
         node = video.OverlayBox(size=6, gain=10_000.0)
         frame = synth_frames(1, width=64, height=48)[0]
-        for roll in (-100.0, 100.0):
-            pose = Orientation(roll=roll, pitch=0.0, accel_magnitude=9.8)
-            (out,) = node.run(inp=(frame.with_payload((frame.payload, pose)),)).output
+        for offset in (-100.0, 100.0):
+            (out,) = node.run(inp=(frame.with_payload((frame.payload, offset)),)).output
             self.assertEqual(out.payload.shape, frame.payload.shape)
 
     def test_frame_stats_summarizes_a_grey_frame(self):
@@ -136,9 +132,9 @@ class TestVideoPipeline(unittest.TestCase):
             fps=video_pipeline.FPS,
         )
         duration = video_pipeline.FRAME_COUNT / video_pipeline.FPS
-        self.samples = synth_imu(
-            round(duration * video_pipeline.IMU_RATE_HZ),
-            rate_hz=video_pipeline.IMU_RATE_HZ,
+        self.samples = synth_signal(
+            round(duration * video_pipeline.SAMPLE_RATE_HZ),
+            rate_hz=video_pipeline.SAMPLE_RATE_HZ,
         )
         self.recording = video_pipeline.interleave(self.frames, self.samples)
 
@@ -163,21 +159,21 @@ class TestVideoPipeline(unittest.TestCase):
         self.assertEqual(fired, video_pipeline.FRAME_COUNT)
         self.assertEqual(kept, video_pipeline.FRAME_COUNT // video_pipeline.DECIMATE)
 
-    def test_the_hold_pairs_each_frame_with_the_newest_pose(self):
-        poses = []
+    def test_the_hold_pairs_each_frame_with_the_newest_track(self):
+        tracks = []
         with Graph.instantiate(
             video_pipeline.build_blueprint(), video_pipeline.build_registry()
         ) as graph:
-            graph.subscribe("fusion.pose", lambda name, m: poses.append(m))
+            graph.subscribe("integrate.track", lambda name, m: tracks.append(m))
             for name, message in self.recording:
                 graph.inject(name, message)
                 graph.run_until_idle()
             composited = graph.poll("composited")
 
-        # Far more poses than frames, which is the whole point of the hold.
-        self.assertEqual(len(poses), len(self.samples))
-        self.assertGreater(len(poses), 5 * len(composited))
-        # The first decimated frame arrives before any pose exists, and a hold with
+        # Far more tracks than frames, which is the whole point of the hold.
+        self.assertEqual(len(tracks), len(self.samples))
+        self.assertGreater(len(tracks), 5 * len(composited))
+        # The first decimated frame arrives before any track exists, and a hold with
         # nothing held emits nothing.
         self.assertEqual(
             len(composited),

@@ -32,8 +32,8 @@ def render_mermaid(
         show_topics: Label each edge with its producing port's canonical name, so
             the labels double as a check that the namespacing came out how the
             author expected. Where the producer is a subgraph's boundary port the
-            label is that graph output's *alias* (``fusion.pose``) rather than the
-            topic it resolves to (``fusion.update.fused``) -- this draws the
+            label is that graph output's *alias* (``classify.classified``) rather than
+            the topic it resolves to (``classify.grade.graded``) -- this draws the
             blueprint as declared, and nothing has been flattened yet.
 
     Returns:

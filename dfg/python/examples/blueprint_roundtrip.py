@@ -19,15 +19,15 @@ from dfg.errors import ValidationError
 from dfg.graph import Graph, replay
 from dfg.registry import Registry
 from dfg.serialize import dumps, loads
-from examples.imu_pipeline import build_blueprint, build_registry
-from examples.synth import tracker_recording
+from examples.reading_pipeline import build_blueprint, build_registry
+from examples.synth import reading_recording
 
 SAMPLE_COUNT = 12
 
 
 def digest(outputs) -> list[str]:
     """A comparable summary of a replay's output."""
-    return [f"{m.timestamp}:{m.payload}" for m in outputs["pose"]]
+    return [f"{m.timestamp}:{m.payload}" for m in outputs["result"]]
 
 
 def excerpt(text: str, *, head: int = 26, tail: int = 8) -> str:
@@ -43,7 +43,7 @@ def main() -> None:
     original = build_blueprint()
     text = dumps(original)
 
-    print("The tracker blueprint as JSON")
+    print("The processor blueprint as JSON")
     print("=" * 74)
     print(excerpt(text))
     print()
@@ -73,16 +73,16 @@ def main() -> None:
 
     print("Both blueprints produce the same output from the same recording")
     print("=" * 74)
-    recording = tracker_recording(SAMPLE_COUNT)
+    recording = reading_recording(SAMPLE_COUNT)
     from_original = replay(original, build_registry(), recording)
     from_reloaded = replay(reloaded, build_registry(), recording)
     print(
-        f"  messages out:  {len(from_original['pose'])} and {len(from_reloaded['pose'])}"
+        f"  messages out:  {len(from_original['result'])} and {len(from_reloaded['result'])}"
     )
     print(f"  identical:     {digest(from_original) == digest(from_reloaded)}")
     print()
     print("  first output, from the reloaded blueprint:")
-    print(f"    {from_reloaded['pose'][0].payload}")
+    print(f"    {from_reloaded['result'][0].payload}")
 
 
 if __name__ == "__main__":

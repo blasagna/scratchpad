@@ -17,7 +17,7 @@ alias cardinality a runtime check and putting a magic string in every author's
 edge list.
 
 **Node IDs may not contain a dot.** That is what lets a qualified ID and a topic be
-one flat dotted path, and lets ``"calib.corrected"`` split into node and port.
+one flat dotted path, and lets ``"scale.scaled"`` split into node and port.
 """
 
 from __future__ import annotations
@@ -101,8 +101,8 @@ class ParamRef:
 
     Serializes as ``{"$param": "name"}`` and is resolved at flatten time against
     the subgraph's own parameters merged with the overrides on the subgraph node.
-    This is what makes a subgraph reusable -- the same ``fusion`` blueprint at
-    200 Hz in one parent and 100 Hz in another.
+    This is what makes a subgraph reusable -- the same ``classify`` blueprint at
+    one threshold in one parent and another threshold elsewhere.
     """
 
     name: str
@@ -288,8 +288,8 @@ def split_endpoint(endpoint: str) -> PortRef:
     Raises:
         ValueError: If ``endpoint`` has no dot.
 
-    >>> split_endpoint("calib.corrected")
-    PortRef(node='calib', port='corrected')
+    >>> split_endpoint("scale.scaled")
+    PortRef(node='scale', port='scaled')
     """
     node, dot, port = endpoint.rpartition(".")
     if not dot:

@@ -68,7 +68,7 @@ IDs plus the node's own; a topic is `<qualified ID>.<output port>`, so one flat 
 path. A topic and a qualified node ID are spelled alike and told apart by context — a
 topic always ends in a port name. `__`-prefixed port names are the framework's
 (`__error__`). A graph output name is an **alias**, not a separate topic: subscribing
-to `fusion.pose` and to `fusion.update.fused` observes the same port.
+to `classify.classified` and to `classify.grade.graded` observes the same port.
 
 ## Commands
 
@@ -77,7 +77,7 @@ cd dfg/python
 pixi run test      # the whole suite (stdlib unittest, ~470 tests)
 pixi run demos     # every demo script end to end
 pixi run type      # pyrefly over dfg, examples, tests
-pixi run imu       # the README's example graph: namespacing, aliases, $param
+pixi run reading   # the README's example graph: namespacing, aliases, $param
 pixi run schedule  # readiness x ordering, both axes
 pixi run replay    # a recording replayed nine ways, one digest
 ```
@@ -117,7 +117,7 @@ python/dfg/         the core, stdlib only
   runtime layer:    graph scheduler transport control
   shared:           node registry ordering message
 python/examples/    demo scripts; the only place numpy/pyarrow may be imported
-  nodes/            core (stdlib) imu (dataclasses) audio video (numpy) arrow (pyarrow)
+  nodes/            core (stdlib) reading (dataclass) signal (Sample) audio video (numpy) arrow (pyarrow)
 python/tests/       stdlib unittest, one module per core module plus the examples
 ```
 
@@ -148,11 +148,11 @@ class Decimate(Node):
 created, so validation still answers from the class and never constructs a node. Two
 rules worth knowing: a class-level annotation is a **parameter** unless it is
 `ClassVar` (that is what makes `video.ToGray.WEIGHTS` a constant), and a port's
-`type_tag` goes in `Annotated[In[T], Port("ImuSample")]` — the annotation types the
+`type_tag` goes in `Annotated[In[T], Port("Reading")]` — the annotation types the
 payload, the tag types the wire, and they are not interchangeable.
 
 **A port name is a Python identifier, so it cannot be `in` (a keyword) or `input` (a
-builtin a parameter would shadow).** Name a port for what it carries — `raw`, `imu`,
+builtin a parameter would shadow).** Name a port for what it carries — `raw`, `reading`,
 `window`, `frame`, `batch` — and the question does not come up; that is already what
 every node with two input ports does (`a`/`b`, `slow`/`fast`). `inp` is the fallback
 for the genuinely generic nodes in `examples/nodes/core.py`, and it pairs with
@@ -185,8 +185,8 @@ gate.
 
 | Required | Script | Test |
 |---|---|---|
-| Node lifecycle, including the `setup`-raises path | `lifecycle_demo.py` | `test_lifecycle.py`, `test_examples_imu.py` |
-| A nested subgraph with the namespacing | `imu_pipeline.py` | `test_flatten.py`, `test_examples_imu.py` |
+| Node lifecycle, including the `setup`-raises path | `lifecycle_demo.py` | `test_lifecycle.py`, `test_examples_reading.py` |
+| A nested subgraph with the namespacing | `reading_pipeline.py` | `test_flatten.py`, `test_examples_reading.py` |
 | Blueprint round-trip through serialization and a registry | `blueprint_roundtrip.py` | `test_serialize.py` |
 | Mermaid rendering from a blueprint | `render_mermaid.py` | `test_mermaid.py` (golden string) |
 | At least two points in readiness × ordering | `scheduling_demo.py` (four) | `test_scheduler.py` |

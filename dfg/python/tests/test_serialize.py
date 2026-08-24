@@ -105,23 +105,23 @@ class TestSerializedShape(unittest.TestCase):
         data = to_dict(helpers.readme_example_spec())
         self.assertEqual(data["schema_version"], SCHEMA_VERSION)
         graph = data["graph"]
-        self.assertEqual(graph["name"], "tracker")
-        self.assertEqual(graph["params"], {"imu_rate_hz": 200.0})
+        self.assertEqual(graph["name"], "processor")
+        self.assertEqual(graph["params"], {"active_threshold": 1.0})
         self.assertEqual(
             graph["inputs"][0],
             {
-                "name": "imu_raw",
-                "type_tag": "ImuSample",
-                "targets": [{"node": "calib", "port": "raw"}],
+                "name": "readings",
+                "type_tag": "Reading",
+                "targets": [{"node": "scale", "port": "raw"}],
             },
         )
         self.assertEqual(
             graph["outputs"],
             [
                 {
-                    "name": "pose",
+                    "name": "result",
                     "type_tag": None,
-                    "source": {"node": "overlay", "port": "composited"},
+                    "source": {"node": "relabel", "port": "labeled"},
                 }
             ],
         )
@@ -129,8 +129,8 @@ class TestSerializedShape(unittest.TestCase):
             graph["nodes"][0],
             {
                 "kind": "node",
-                "id": "calib",
-                "type": "helpers.Calib",
+                "id": "scale",
+                "type": "helpers.Scale",
                 "params": {},
                 "readiness": {"kind": "all"},
                 "on_error": "stop",
@@ -138,12 +138,12 @@ class TestSerializedShape(unittest.TestCase):
             },
         )
         self.assertEqual(graph["nodes"][1]["kind"], "subgraph")
-        self.assertEqual(graph["nodes"][1]["graph"]["name"], "fusion")
+        self.assertEqual(graph["nodes"][1]["graph"]["name"], "classify")
         self.assertEqual(
             graph["edges"][0],
             {
-                "src": {"node": "calib", "port": "corrected"},
-                "dst": {"node": "fusion", "port": "imu"},
+                "src": {"node": "scale", "port": "scaled"},
+                "dst": {"node": "classify", "port": "reading"},
                 "capacity": None,
                 "on_overflow": "error",
                 "transport": "memory",
@@ -152,12 +152,12 @@ class TestSerializedShape(unittest.TestCase):
 
     def test_a_subgraph_input_fan_out_is_one_declaration_with_two_targets(self):
         data = to_dict(helpers.readme_example_spec())
-        fusion = data["graph"]["nodes"][1]["graph"]
+        classify = data["graph"]["nodes"][1]["graph"]
         self.assertEqual(
-            fusion["inputs"][0]["targets"],
+            classify["inputs"][0]["targets"],
             [
-                {"node": "predict", "port": "imu"},
-                {"node": "update", "port": "imu"},
+                {"node": "flag", "port": "reading"},
+                {"node": "grade", "port": "reading"},
             ],
         )
 
@@ -171,7 +171,7 @@ class TestRegistryIndependence(unittest.TestCase):
         # instantiate. That is the whole reason the registry is a concept.
         text = dumps(helpers.readme_example_spec())
         spec = loads(text)  # no registry in sight
-        self.assertEqual(helpers.node_spec(spec).type_name, "helpers.Calib")
+        self.assertEqual(helpers.node_spec(spec).type_name, "helpers.Scale")
 
         # Instantiating validates first, so every unresolvable type is reported at
         # once rather than one per attempt.
@@ -181,7 +181,7 @@ class TestRegistryIndependence(unittest.TestCase):
 
     def test_creating_an_unregistered_type_directly_is_its_own_error(self):
         with self.assertRaises(UnknownNodeTypeError):
-            Registry().create("t.calib", {})
+            Registry().create("t.scale", {})
 
     def test_an_unknown_type_survives_a_round_trip_intact(self):
         spec = GraphSpec(
@@ -257,7 +257,7 @@ class TestRejections(unittest.TestCase):
 
     def test_a_malformed_port_ref_is_rejected(self):
         data = to_dict(helpers.readme_example_spec())
-        data["graph"]["edges"][0]["src"] = "calib.corrected"
+        data["graph"]["edges"][0]["src"] = "scale.scaled"
         with self.assertRaises(SerializationError) as caught:
             from_dict(data)
         self.assertIn("'node' and 'port'", str(caught.exception))

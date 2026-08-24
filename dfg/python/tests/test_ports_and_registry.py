@@ -19,7 +19,7 @@ from dfg.registry import Registry
 
 class TestNames(unittest.TestCase):
     def test_accepts_identifier_like_names(self):
-        for name in ("a", "imu_raw", "port2", "A1_b"):
+        for name in ("a", "readings", "port2", "A1_b"):
             with self.subTest(name=name):
                 self.assertTrue(is_valid_name(name))
 
@@ -33,10 +33,10 @@ class TestNames(unittest.TestCase):
         self.assertFalse(is_reserved_name("error"))
 
     def test_qualify_and_topic(self):
-        self.assertEqual(qualify((), "calib"), "calib")
-        self.assertEqual(qualify(("fusion",), "predict"), "fusion.predict")
+        self.assertEqual(qualify((), "scale"), "scale")
+        self.assertEqual(qualify(("classify",), "flag"), "classify.flag")
         self.assertEqual(qualify(("a", "b"), "c"), "a.b.c")
-        self.assertEqual(topic_of("fusion.update", "fused"), "fusion.update.fused")
+        self.assertEqual(topic_of("classify.grade", "graded"), "classify.grade.graded")
 
 
 class TestNodeParams(unittest.TestCase):
@@ -272,7 +272,7 @@ class TestRegistry(unittest.TestCase):
 
     def test_fixture_registry_is_complete(self):
         registry = helpers.build_registry()
-        self.assertIn("helpers.Calib", registry)
+        self.assertIn("helpers.Scale", registry)
         self.assertEqual(len(registry), len(registry.names()))
 
 

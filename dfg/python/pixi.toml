@@ -12,7 +12,7 @@ version = "0.1.0"
 # without an __init__.py there.
 test = "python -m unittest discover -s tests -v"
 lifecycle = "python -m examples.lifecycle_demo"
-imu = "python -m examples.imu_pipeline"
+reading = "python -m examples.reading_pipeline"
 roundtrip = "python -m examples.blueprint_roundtrip"
 mermaid = "python -m examples.render_mermaid"
 schedule = "python -m examples.scheduling_demo"
@@ -22,7 +22,7 @@ video = "python -m examples.video_pipeline"
 arrow = "python -m examples.arrow_batch"
 demos = { depends-on = [
   "lifecycle",
-  "imu",
+  "reading",
   "roundtrip",
   "mermaid",
   "schedule",

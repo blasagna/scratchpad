@@ -131,7 +131,7 @@ class Merge(Node):
 class Resample(Node):
     """Holds the newest value from ``fast`` and pairs it with each ``slow`` message.
 
-    The contract says the framework does not align time: matching a 200 Hz IMU
+    The contract says the framework does not align time: matching a 200 Hz signal
     against 30 fps video is done by an ordinary node you write. This is that node --
     zero-order hold, the simplest useful version. It emits nothing until a fast
     sample has arrived, which is another reason zero-or-more is the contract.

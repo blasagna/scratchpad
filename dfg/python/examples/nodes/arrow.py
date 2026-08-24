@@ -6,8 +6,8 @@ runtime and not two. The bet is real: a columnar engine over Arrow tables wants 
 schedule by operator fusion and vectorized passes, which is not what a
 message-passing scheduler does.
 
-What these nodes show is the part that does hold up. The same 200 Hz IMU stream that
-:mod:`examples.nodes.imu` processes one dataclass at a time is accumulated into
+What these nodes show is the part that does hold up. The same signal stream that
+:mod:`examples.nodes.signal` carries one dataclass at a time is accumulated into
 record batches here and filtered, projected, and aggregated column-wise -- with the
 same ``run`` signature, the same readiness rules, and the same scheduler. A batch is
 just a payload that happens to hold many rows.
@@ -36,21 +36,18 @@ pc: Any = pyarrow.compute
 RECORD_BATCH = "record_batch"
 TABLE = "table"
 
-IMU_SCHEMA = pa.schema(
+SAMPLE_SCHEMA = pa.schema(
     [
         pa.field("t_ns", pa.int64()),
-        pa.field("ax", pa.float64()),
-        pa.field("ay", pa.float64()),
-        pa.field("az", pa.float64()),
-        pa.field("gx", pa.float64()),
-        pa.field("gy", pa.float64()),
-        pa.field("gz", pa.float64()),
+        pa.field("x", pa.float64()),
+        pa.field("y", pa.float64()),
+        pa.field("z", pa.float64()),
     ]
 )
 
 
 class BatchFromSamples(Node):
-    """Accumulates :class:`~examples.nodes.imu.ImuSample` messages into a batch.
+    """Accumulates :class:`~examples.nodes.signal.Sample` messages into a batch.
 
     The row-to-column boundary, and the one place the two worlds meet. Emits a batch
     every ``rows`` messages and nothing in between, so it is another zero-or-more
@@ -71,9 +68,9 @@ class BatchFromSamples(Node):
             raise ParamError(f"rows must be at least 1, got {self.rows}")
 
     def setup(self) -> None:
-        self._rows: list[tuple[int, float, float, float, float, float, float]] = []
+        self._rows: list[tuple[int, float, float, float]] = []
 
-    def run(self, *, inp: Annotated[In[Any], Port("ImuSample")] = ()) -> Out:
+    def run(self, *, inp: Annotated[In[Any], Port("Sample")] = ()) -> Out:
         wanted = self.rows
         batches: list[Message[pa.RecordBatch]] = []
         for message in inp:
@@ -81,12 +78,9 @@ class BatchFromSamples(Node):
             self._rows.append(
                 (
                     message.timestamp,
-                    sample.ax,
-                    sample.ay,
-                    sample.az,
-                    sample.gx,
-                    sample.gy,
-                    sample.gz,
+                    sample.x,
+                    sample.y,
+                    sample.z,
                 )
             )
             if len(self._rows) == wanted:
@@ -102,7 +96,7 @@ class BatchFromSamples(Node):
     def _emit(self) -> Message[pa.RecordBatch]:
         columns = list(zip(*self._rows))
         batch = pa.RecordBatch.from_arrays(
-            [pa.array(column) for column in columns], schema=IMU_SCHEMA
+            [pa.array(column) for column in columns], schema=SAMPLE_SCHEMA
         )
         timestamp = self._rows[0][0]
         self._rows = []
@@ -150,10 +144,10 @@ class Filter(Node):
 
 
 class Project(Node):
-    """Selects columns and adds a computed accelerometer magnitude."""
+    """Selects columns and adds a computed vector magnitude."""
 
     keep: Sequence[str] = ("t_ns",)
-    magnitude_name: str = "accel_magnitude"
+    magnitude_name: str = "magnitude"
 
     class Out(NamedTuple):
         output: Annotated[Emit[pa.RecordBatch], Port(RECORD_BATCH)]
@@ -167,10 +161,8 @@ class Project(Node):
         for message in inp:
             batch = message.payload
             squares = pc.add(
-                pc.add(
-                    pc.power(batch.column("ax"), 2), pc.power(batch.column("ay"), 2)
-                ),
-                pc.power(batch.column("az"), 2),
+                pc.add(pc.power(batch.column("x"), 2), pc.power(batch.column("y"), 2)),
+                pc.power(batch.column("z"), 2),
             )
             magnitude = pc.sqrt(squares)
             arrays = [batch.column(column) for column in keep] + [magnitude]
@@ -190,7 +182,7 @@ class Aggregate(Node):
     ``rows=1`` versus ``rows=64`` comparison needs.
     """
 
-    column: str = "accel_magnitude"
+    column: str = "magnitude"
 
     class Out(NamedTuple):
         output: Annotated[Emit[dict[str, Any]], Port("aggregate")]

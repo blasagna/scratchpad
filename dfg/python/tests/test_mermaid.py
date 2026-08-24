@@ -9,21 +9,21 @@ from dfg.readiness import AnyInput
 
 README_EXAMPLE = """\
 flowchart LR
-  imu_raw__in([imu_raw])
-  imu_raw__in --> calib
-  frames__in([frames])
-  frames__in --> overlay
-  pose__out([pose])
-  overlay -- "overlay.composited" --> pose__out
-  calib[calib]
-  subgraph fusion[fusion]
-    fusion__predict[predict]
-    fusion__update[update]
-    fusion__predict -- "fusion.predict.state" --> fusion__update
+  readings__in([readings])
+  readings__in --> scale
+  tags__in([tags])
+  tags__in --> relabel
+  result__out([result])
+  relabel -- "relabel.labeled" --> result__out
+  scale[scale]
+  subgraph classify[classify]
+    classify__flag[flag]
+    classify__grade[grade]
+    classify__flag -- "classify.flag.flagged" --> classify__grade
   end
-  overlay[overlay]
-  calib -- "calib.corrected" --> fusion
-  fusion -- "fusion.pose" --> overlay"""
+  relabel[relabel]
+  scale -- "scale.scaled" --> classify
+  classify -- "classify.classified" --> relabel"""
 
 
 class TestReadmeExample(unittest.TestCase):
@@ -36,19 +36,19 @@ class TestReadmeExample(unittest.TestCase):
 
     def test_draws_the_subgraph_as_a_block(self):
         rendered = render_mermaid(helpers.readme_example_spec())
-        self.assertIn("subgraph fusion[fusion]", rendered)
+        self.assertIn("subgraph classify[classify]", rendered)
         self.assertIn("\n  end", rendered)
 
     def test_draws_boundaries_as_stadium_nodes(self):
         rendered = render_mermaid(helpers.readme_example_spec())
-        self.assertIn("([imu_raw])", rendered)
-        self.assertIn("([pose])", rendered)
+        self.assertIn("([readings])", rendered)
+        self.assertIn("([result])", rendered)
 
     def test_labels_the_inner_edge_with_its_namespaced_topic(self):
         # Which is the whole reason to render topics: the label shows that the
         # subgraph ID namespaced the node.
         self.assertIn(
-            '"fusion.predict.state"', render_mermaid(helpers.readme_example_spec())
+            '"classify.flag.flagged"', render_mermaid(helpers.readme_example_spec())
         )
 
 
@@ -67,7 +67,7 @@ class TestOptions(unittest.TestCase):
     def test_topics_can_be_turned_off(self):
         rendered = render_mermaid(helpers.readme_example_spec(), show_topics=False)
         self.assertNotIn('"', rendered)
-        self.assertIn("calib --> fusion", rendered)
+        self.assertIn("scale --> classify", rendered)
 
 
 class TestPolicyMarkers(unittest.TestCase):

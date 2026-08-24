@@ -1,4 +1,4 @@
-"""Synthetic IMU data. Standard library only, and deterministic.
+"""Synthetic data for the examples. Standard library only, and deterministic.
 
 A fixed seed and integer-nanosecond timestamps mean the same call gives the same
 messages every time, which is what a replay demo needs in order to prove anything.
@@ -10,53 +10,50 @@ import math
 import random
 
 from dfg.message import Message, ts_from_sample_index
-from examples.nodes.imu import GRAVITY_M_S2, ImuSample
+from examples.nodes.reading import Level, Reading
+from examples.nodes.signal import Sample
 
 DEFAULT_RATE_HZ = 200.0
 DEFAULT_SEED = 20260808
 
+_LABELS = ("alpha", "beta", "gamma", "delta")
 
-def synth_imu(
+
+def synth_signal(
     count: int,
     *,
     rate_hz: float = DEFAULT_RATE_HZ,
     seed: int = DEFAULT_SEED,
-    noise: float = 0.02,
-    bias: tuple[float, float, float] = (0.05, -0.03, 0.10),
-    tilt_rate_rad_s: float = 0.20,
-) -> list[Message[ImuSample]]:
-    """Generate ``count`` IMU samples of a slow, noisy roll about the x axis.
+    noise: float = 0.01,
+    drift: float = 0.2,
+) -> list[Message[Sample]]:
+    """Generate ``count`` samples of a slow, noisy three-channel signal.
 
-    The signal is deliberately simple and recognisable: gravity rotating in the
-    y/z plane at ``tilt_rate_rad_s``, a constant per-axis bias for
-    :class:`~examples.nodes.imu.Calibrate` to remove, and a little noise.
+    The signal is deliberately simple and recognisable: a near-constant ``x`` so a
+    running integral of it climbs steadily, and ``y``/``z`` tracing a circle so ``z``
+    crosses zero and the vector magnitude stays interesting for the columnar example.
 
     Args:
         count: How many samples.
-        rate_hz: Sample rate, used for the timestamps and the tilt integration.
+        rate_hz: Sample rate, used for the timestamps.
         seed: Fixes the noise.
-        noise: Uniform noise half-width, in the sensors' own units.
-        bias: A constant accelerometer offset, in m/s^2.
-        tilt_rate_rad_s: How fast the sensor rolls.
+        noise: Uniform noise half-width, in the signal's own units.
+        drift: The constant level of the ``x`` channel.
 
     Returns:
-        Messages whose payloads are :class:`~examples.nodes.imu.ImuSample`, with
-        sample times ``i / rate_hz`` in nanoseconds.
+        Messages whose payloads are :class:`~examples.nodes.signal.Sample`, with sample
+        times ``i / rate_hz`` in nanoseconds.
     """
     rng = random.Random(seed)
-    bx, by, bz = bias
-    messages: list[Message[ImuSample]] = []
+    messages: list[Message[Sample]] = []
     for i in range(count):
-        angle = tilt_rate_rad_s * i / rate_hz
+        angle = 0.3 * i
         messages.append(
             Message(
-                ImuSample(
-                    ax=bx + rng.uniform(-noise, noise),
-                    ay=by + GRAVITY_M_S2 * math.sin(angle) + rng.uniform(-noise, noise),
-                    az=bz + GRAVITY_M_S2 * math.cos(angle) + rng.uniform(-noise, noise),
-                    gx=tilt_rate_rad_s + rng.uniform(-noise, noise),
-                    gy=rng.uniform(-noise, noise),
-                    gz=rng.uniform(-noise, noise),
+                Sample(
+                    x=drift + rng.uniform(-noise, noise),
+                    y=math.sin(angle) + rng.uniform(-noise, noise),
+                    z=math.cos(angle) + rng.uniform(-noise, noise),
                 ),
                 ts_from_sample_index(i, rate_hz),
             )
@@ -64,43 +61,54 @@ def synth_imu(
     return messages
 
 
-def synth_frame_labels(count: int, *, rate_hz: float = 30.0) -> list[Message[str]]:
-    """Generate ``count`` placeholder video frames as labelled strings.
-
-    30 fps against a 200 Hz IMU is the rate mismatch the contract points at, and
-    resolving it is an ordinary node's job -- see
-    :class:`examples.nodes.core.Resample`.
-    """
-    return [
-        Message(f"frame{i:04d}", ts_from_sample_index(i, rate_hz)) for i in range(count)
-    ]
-
-
-def imu_recording(
-    count: int = 20,
+def synth_readings(
+    count: int,
     *,
-    input_name: str = "imu_raw",
     rate_hz: float = DEFAULT_RATE_HZ,
     seed: int = DEFAULT_SEED,
-) -> list[tuple[str, Message[ImuSample]]]:
-    """An injection recording: ``(input name, message)`` pairs, ready for replay."""
-    return [
-        (input_name, message)
-        for message in synth_imu(count, rate_hz=rate_hz, seed=seed)
-    ]
+    noise: float = 0.0,
+) -> list[Message[Reading]]:
+    """Generate ``count`` readings whose ``value`` ramps across the interesting range.
+
+    ``value`` steps through ``0.0 .. 1.1`` and repeats, so that after the pipeline's
+    2x scale it spans all three :class:`~examples.nodes.reading.Level` bands and crosses
+    the active threshold. ``active`` and ``level`` start neutral -- the graph is what
+    sets them -- and the label cycles through a small vocabulary.
+
+    Args:
+        count: How many readings.
+        rate_hz: Sample rate, used for the timestamps.
+        seed: Fixes the optional noise.
+        noise: Uniform noise half-width on ``value``. Zero by default, for an exact ramp.
+    """
+    rng = random.Random(seed)
+    messages: list[Message[Reading]] = []
+    for i in range(count):
+        base = (i % 12) * 0.1
+        messages.append(
+            Message(
+                Reading(
+                    value=base + rng.uniform(-noise, noise),
+                    active=False,
+                    label=_LABELS[i % len(_LABELS)],
+                    level=Level.LOW,
+                ),
+                ts_from_sample_index(i, rate_hz),
+            )
+        )
+    return messages
 
 
-def tracker_recording(
+def reading_recording(
     count: int = 20, *, rate_hz: float = DEFAULT_RATE_HZ, seed: int = DEFAULT_SEED
 ) -> list[tuple[str, Message]]:
-    """A recording for the two-input tracker graph in ``imu_pipeline``.
+    """A recording for the two-input processor graph in ``reading_pipeline``.
 
-    One frame per IMU sample, interleaved, so ``overlay``'s ``all`` readiness is
-    satisfied on every sample. A real 30 fps camera would not oblige -- that is what
-    ``video_pipeline``'s resample node is for.
+    One tag per reading, interleaved, so ``relabel``'s ``all`` readiness is satisfied on
+    every sample.
     """
     recording: list[tuple[str, Message]] = []
-    for i, message in enumerate(synth_imu(count, rate_hz=rate_hz, seed=seed)):
-        recording.append(("imu_raw", message))
-        recording.append(("frames", Message(f"frame{i:04d}", message.timestamp)))
+    for i, message in enumerate(synth_readings(count, rate_hz=rate_hz, seed=seed)):
+        recording.append(("readings", message))
+        recording.append(("tags", Message(f"tag{i:04d}", message.timestamp)))
     return recording

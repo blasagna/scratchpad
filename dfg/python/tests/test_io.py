@@ -161,10 +161,12 @@ class TestTaps(unittest.TestCase):
         with Graph.instantiate(
             helpers.readme_example_spec(), helpers.build_registry()
         ) as graph:
-            graph.subscribe("fusion.pose", lambda name, m: via_alias.append(m))
-            graph.subscribe("fusion.update.fused", lambda name, m: via_topic.append(m))
-            graph.inject("imu_raw", Message("imu", 1000))
-            graph.inject("frames", Message("frame", 1000))
+            graph.subscribe("classify.classified", lambda name, m: via_alias.append(m))
+            graph.subscribe(
+                "classify.grade.graded", lambda name, m: via_topic.append(m)
+            )
+            graph.inject("readings", Message("reading", 1000))
+            graph.inject("tags", Message("tag", 1000))
             graph.run_until_idle()
         self.assertEqual(len(via_alias), 1)
         self.assertEqual(via_alias, via_topic)
@@ -174,11 +176,11 @@ class TestTaps(unittest.TestCase):
         with Graph.instantiate(
             helpers.readme_example_spec(), helpers.build_registry()
         ) as graph:
-            graph.subscribe("pose", lambda name, m: seen.append(m))
-            graph.inject("imu_raw", Message("imu", 1000))
-            graph.inject("frames", Message("frame", 1000))
+            graph.subscribe("result", lambda name, m: seen.append(m))
+            graph.inject("readings", Message("reading", 1000))
+            graph.inject("tags", Message("tag", 1000))
             graph.run_until_idle()
-            polled = graph.poll("pose")
+            polled = graph.poll("result")
         self.assertEqual(list(polled), seen)
 
     def test_the_subscribed_name_is_what_the_callback_is_told(self):
@@ -186,12 +188,14 @@ class TestTaps(unittest.TestCase):
         with Graph.instantiate(
             helpers.readme_example_spec(), helpers.build_registry()
         ) as graph:
-            graph.subscribe("fusion.pose", lambda name, m: names.append(name))
-            graph.subscribe("fusion.update.fused", lambda name, m: names.append(name))
-            graph.inject("imu_raw", Message("imu", 1000))
-            graph.inject("frames", Message("frame", 1000))
+            graph.subscribe("classify.classified", lambda name, m: names.append(name))
+            graph.subscribe("classify.grade.graded", lambda name, m: names.append(name))
+            graph.inject("readings", Message("reading", 1000))
+            graph.inject("tags", Message("tag", 1000))
             graph.run_until_idle()
-        self.assertEqual(sorted(names), ["fusion.pose", "fusion.update.fused"])
+        self.assertEqual(
+            sorted(names), ["classify.classified", "classify.grade.graded"]
+        )
 
     def test_cancel_stops_delivery_and_is_idempotent(self):
         seen: list[int] = []
@@ -228,8 +232,8 @@ class TestTaps(unittest.TestCase):
         ) as graph:
             with self.assertRaises(KeyError) as caught:
                 graph.subscribe("nope.nothing", lambda name, m: None)
-            self.assertIn("calib.corrected", str(caught.exception))
-            self.assertIn("fusion.pose", str(caught.exception))
+            self.assertIn("scale.scaled", str(caught.exception))
+            self.assertIn("classify.classified", str(caught.exception))
 
     def test_a_tap_does_not_move_data(self):
         # Messages travel over each edge's own transport whether anyone is

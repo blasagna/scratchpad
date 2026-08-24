@@ -26,8 +26,8 @@ import random
 
 from dfg.blueprint import GraphSpec
 from dfg.graph import replay
-from examples.imu_pipeline import build_blueprint, build_registry
-from examples.synth import tracker_recording
+from examples.reading_pipeline import build_blueprint, build_registry
+from examples.synth import reading_recording
 
 SAMPLE_COUNT = 24
 
@@ -77,7 +77,7 @@ def shuffled(spec: GraphSpec, *, seed: int) -> GraphSpec:
 
 def main() -> None:
     spec = build_blueprint()
-    recording = tracker_recording(SAMPLE_COUNT)
+    recording = reading_recording(SAMPLE_COUNT)
 
     print(
         f"Recording: {len(recording)} injections into "
@@ -138,9 +138,9 @@ def main() -> None:
         raise AssertionError(f"replay is not deterministic: {unique}")
     print()
 
-    print(f"Messages out: {len(first['pose'])} on 'pose'")
-    print(f"  first: {first['pose'][0].timestamp} ns  {first['pose'][0].payload}")
-    print(f"  last:  {first['pose'][-1].timestamp} ns  {first['pose'][-1].payload}")
+    print(f"Messages out: {len(first['result'])} on 'result'")
+    print(f"  first: {first['result'][0].timestamp} ns  {first['result'][0].payload}")
+    print(f"  last:  {first['result'][-1].timestamp} ns  {first['result'][-1].payload}")
     print()
     print("The shuffled blueprints are the load-bearing case. A topological order is")
     print("not unique and neither is the set of ready nodes at a level, so without")

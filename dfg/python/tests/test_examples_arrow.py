@@ -20,15 +20,15 @@ if HAVE_PYARROW:
     from dfg.validate import check
     from examples import arrow_batch
     from examples.nodes import arrow
-    from examples.synth import synth_imu
+    from examples.synth import synth_signal
 
 
 def sample_message(index=0, **overrides):
-    from examples.nodes.imu import ImuSample
+    from examples.nodes.signal import Sample
 
-    fields = {"ax": 0.0, "ay": 0.0, "az": 9.8, "gx": 0.0, "gy": 0.0, "gz": 0.0}
+    fields = {"x": 0.0, "y": 0.0, "z": 1.0}
     fields.update(overrides)
-    return Message(ImuSample(**fields), index * 1_000_000)
+    return Message(Sample(**fields), index * 1_000_000)
 
 
 @unittest.skipUnless(HAVE_PYARROW, PYARROW_REASON)
@@ -55,7 +55,7 @@ class TestBatchFromSamples(unittest.TestCase):
         batch = message.payload
         self.assertIsInstance(batch, pa.RecordBatch)
         self.assertEqual(batch.num_rows, 3)
-        self.assertEqual(batch.schema, arrow.IMU_SCHEMA)
+        self.assertEqual(batch.schema, arrow.SAMPLE_SCHEMA)
         self.assertEqual(batch.column("t_ns").to_pylist(), [0, 1_000_000, 2_000_000])
 
     def test_the_batch_carries_its_first_rows_sample_time(self):
@@ -86,38 +86,35 @@ class TestBatchFromSamples(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_PYARROW, PYARROW_REASON)
 class TestColumnarNodes(unittest.TestCase):
-    def batch(self, az_values):
+    def batch(self, z_values):
         columns = {
-            "t_ns": list(range(len(az_values))),
-            "ax": [0.0] * len(az_values),
-            "ay": [0.0] * len(az_values),
-            "az": list(az_values),
-            "gx": [0.0] * len(az_values),
-            "gy": [0.0] * len(az_values),
-            "gz": [0.0] * len(az_values),
+            "t_ns": list(range(len(z_values))),
+            "x": [0.0] * len(z_values),
+            "y": [0.0] * len(z_values),
+            "z": list(z_values),
         }
         return Message(
             pa.RecordBatch.from_arrays(
-                [pa.array(columns[field.name]) for field in arrow.IMU_SCHEMA],
-                schema=arrow.IMU_SCHEMA,
+                [pa.array(columns[field.name]) for field in arrow.SAMPLE_SCHEMA],
+                schema=arrow.SAMPLE_SCHEMA,
             ),
             0,
         )
 
     def test_filter_keeps_the_passing_rows(self):
-        node = arrow.Filter(column="az", op="greater", value=0.0)
+        node = arrow.Filter(column="z", op="greater", value=0.0)
         (out,) = node.run(inp=(self.batch([1.0, -1.0, 2.0, -3.0]),)).output
         self.assertEqual(out.payload.num_rows, 2)
-        self.assertEqual(out.payload.column("az").to_pylist(), [1.0, 2.0])
+        self.assertEqual(out.payload.column("z").to_pylist(), [1.0, 2.0])
 
     def test_filter_emits_nothing_when_no_row_survives(self):
         # Which saves every downstream node an emptiness check.
-        node = arrow.Filter(column="az", op="greater", value=100.0)
+        node = arrow.Filter(column="z", op="greater", value=100.0)
         self.assertEqual(node.run(inp=(self.batch([1.0, 2.0]),)).output, ())
 
     def test_filter_rejects_an_unknown_op(self):
         with self.assertRaises(ParamError):
-            arrow.Filter(column="az", op="approximately")
+            arrow.Filter(column="z", op="approximately")
 
     def test_project_computes_the_magnitude(self):
         node = arrow.Project(keep=["t_ns"], magnitude_name="mag")
@@ -189,18 +186,17 @@ class TestArrowPipeline(unittest.TestCase):
             streaming["aggregate_firings"], columnar["aggregate_firings"]
         )
 
-    def test_the_filter_passes_this_data_and_the_row_count_says_so(self):
-        # Synthetic az is gravity plus noise, so it is always positive and `az > 0`
-        # keeps every row. Stated here so the row-count agreement above is not
-        # mistaken for evidence that the filter does nothing -- its discriminating
-        # behaviour is covered in TestColumnarNodes.
-        self.assertEqual(arrow_batch.run(64)["total_rows"], arrow_batch.SAMPLE_COUNT)
-        self.assertTrue(
-            all(
-                message.payload.az > 0
-                for message in synth_imu(arrow_batch.SAMPLE_COUNT)
-            )
+    def test_the_filter_drops_the_negative_rows_and_the_count_says_so(self):
+        # Synthetic z traces a cosine, so it swings negative and `z > 0` keeps only
+        # the rows above zero. The kept count is row-wise, so it is the same at every
+        # chunk size -- which is what the agreement tests above are really checking.
+        expected = sum(
+            1
+            for message in synth_signal(arrow_batch.SAMPLE_COUNT)
+            if message.payload.z > 0
         )
+        self.assertEqual(arrow_batch.run(64)["total_rows"], expected)
+        self.assertLess(expected, arrow_batch.SAMPLE_COUNT)
 
     def test_main_runs(self):
         buffer = io.StringIO()

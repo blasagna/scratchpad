@@ -2,7 +2,8 @@
 
 ``readme_example_spec`` is the graph drawn in ``dfg/README.md``, built once here
 and reused by the flatten, mermaid, serialize, and determinism tests, so the
-document and the code cannot drift apart without a test noticing.
+document and the code cannot drift apart without a test noticing. Only the port
+names carry meaning; the node computations are generic passthroughs.
 """
 
 from __future__ import annotations
@@ -366,10 +367,10 @@ def make_node_type(
     return Generated
 
 
-Calib = make_node_type(["raw"], ["corrected"], name="Calib")
-Predict = make_node_type(["imu"], ["state"], name="Predict")
-Update = make_node_type(["imu", "state"], ["fused"], name="Update")
-Overlay = make_node_type(["frame", "pose"], ["composited"], name="Overlay")
+Scale = make_node_type(["raw"], ["scaled"], name="Scale")
+Flag = make_node_type(["reading"], ["flagged"], name="Flag")
+Grade = make_node_type(["reading", "flagged"], ["graded"], name="Grade")
+Relabel = make_node_type(["reading", "tag"], ["labeled"], name="Relabel")
 
 
 def build_registry() -> Registry:
@@ -390,47 +391,47 @@ def build_registry() -> Registry:
     registry.register(TraceNode)
     registry.register(ParamWatcher)
     # The README example's node types. Only the port names matter.
-    registry.register(Calib)
-    registry.register(Predict)
-    registry.register(Update)
-    registry.register(Overlay)
+    registry.register(Scale)
+    registry.register(Flag)
+    registry.register(Grade)
+    registry.register(Relabel)
     return registry
 
 
 # --- The README's example graph ----------------------------------------------
 
 
-def fusion_subgraph_spec() -> GraphSpec:
-    """The ``fusion`` subgraph from ``README.md``.
+def classify_subgraph_spec() -> GraphSpec:
+    """The ``classify`` subgraph from ``README.md``.
 
-    Its input ``imu`` fans out to both inner nodes, which is how the document's
-    two ``calib.corrected`` arrows are spelled with one parent edge. Its output
-    ``pose`` aliases ``update.fused``.
+    Its input ``reading`` fans out to both inner nodes, which is how the document's
+    two ``scale.scaled`` arrows are spelled with one parent edge. Its output
+    ``classified`` aliases ``grade.graded``.
     """
-    builder = GraphBuilder("fusion")
-    builder.add("predict", Predict)
-    builder.add("update", Update)
-    builder.connect("predict.state", "update.state")
-    builder.add_input("imu", "predict.imu", "update.imu")
-    builder.add_output("pose", "update.fused")
+    builder = GraphBuilder("classify")
+    builder.add("flag", Flag)
+    builder.add("grade", Grade)
+    builder.connect("flag.flagged", "grade.flagged")
+    builder.add_input("reading", "flag.reading", "grade.reading")
+    builder.add_output("classified", "grade.graded")
     return builder.build()
 
 
 def readme_example_spec() -> GraphSpec:
     """The whole graph drawn in ``README.md`` -> Naming and namespacing.
 
-    Topics: ``calib.corrected``, ``fusion.predict.state``, ``fusion.update.fused``,
-    ``overlay.composited``; aliases ``fusion.pose`` and the root output ``pose``.
+    Topics: ``scale.scaled``, ``classify.flag.flagged``, ``classify.grade.graded``,
+    ``relabel.labeled``; aliases ``classify.classified`` and the root output ``result``.
     """
-    builder = GraphBuilder("tracker", params={"imu_rate_hz": 200.0})
-    builder.add("calib", Calib)
-    builder.add_subgraph("fusion", fusion_subgraph_spec())
-    builder.add("overlay", Overlay)
-    builder.connect("calib.corrected", "fusion.imu")
-    builder.connect("fusion.pose", "overlay.pose")
-    builder.add_input("imu_raw", "calib.raw", type_tag="ImuSample")
-    builder.add_input("frames", "overlay.frame")
-    builder.add_output("pose", "overlay.composited")
+    builder = GraphBuilder("processor", params={"active_threshold": 1.0})
+    builder.add("scale", Scale)
+    builder.add_subgraph("classify", classify_subgraph_spec())
+    builder.add("relabel", Relabel)
+    builder.connect("scale.scaled", "classify.reading")
+    builder.connect("classify.classified", "relabel.reading")
+    builder.add_input("readings", "scale.raw", type_tag="Reading")
+    builder.add_input("tags", "relabel.tag")
+    builder.add_output("result", "relabel.labeled")
     return builder.build()
 
 

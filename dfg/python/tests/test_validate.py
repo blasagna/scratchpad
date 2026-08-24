@@ -174,9 +174,9 @@ class TestTypeAndParamProblems(unittest.TestCase):
 
     def test_a_subgraph_override_of_an_undeclared_param(self):
         root = GraphBuilder("root")
-        root.add_subgraph("sub", helpers.fusion_subgraph_spec(), params={"nope": 1})
-        root.add_input("source", "sub.imu")
-        root.add_output("output", "sub.pose")
+        root.add_subgraph("sub", helpers.classify_subgraph_spec(), params={"nope": 1})
+        root.add_input("source", "sub.reading")
+        root.add_output("output", "sub.classified")
         self.assertIn("unknown_param", codes(root.build()))
 
 
@@ -198,10 +198,10 @@ class TestWiringProblems(unittest.TestCase):
 
     def test_an_edge_naming_a_missing_subgraph_boundary(self):
         root = GraphBuilder("root")
-        root.add_subgraph("fusion", helpers.fusion_subgraph_spec())
+        root.add_subgraph("classify", helpers.classify_subgraph_spec())
         root.add("sink", helpers.Passthrough)
-        root.connect("fusion.nope", "sink.inp")
-        root.add_input("source", "fusion.imu")
+        root.connect("classify.nope", "sink.inp")
+        root.add_input("source", "classify.reading")
         self.assertIn("dangling_edge", codes(root.build()))
 
     def test_an_output_aliasing_a_missing_port(self):
@@ -246,23 +246,23 @@ class TestWiringProblems(unittest.TestCase):
         self.assertIn("fan_in", codes(builder.build()))
 
     def test_a_boundary_target_and_an_inner_edge_into_one_port(self):
-        # A parent edge into fusion.imu resolves to this subgraph's own boundary
+        # A parent edge into classify.reading resolves to this subgraph's own boundary
         # target, so the writer that arrives "from outside" is counted in the same
         # scope as the inner edge competing with it. That is why the per-scope
         # check is complete.
-        inner = GraphBuilder("fusion")
-        inner.add("predict", helpers.Predict)
-        inner.add("update", helpers.Update)
-        inner.add("extra", helpers.Calib)
-        inner.connect("predict.state", "update.state")
-        inner.connect("extra.corrected", "predict.imu")
-        inner.add_input("imu", "predict.imu")
+        inner = GraphBuilder("classify")
+        inner.add("flag", helpers.Flag)
+        inner.add("grade", helpers.Grade)
+        inner.add("extra", helpers.Scale)
+        inner.connect("flag.flagged", "grade.flagged")
+        inner.connect("extra.scaled", "flag.reading")
+        inner.add_input("reading", "flag.reading")
         inner.add_input("raw", "extra.raw")
-        inner.add_input("also", "update.imu")
-        inner.add_output("pose", "update.fused")
+        inner.add_input("also", "grade.reading")
+        inner.add_output("classified", "grade.graded")
         problems = check(inner.build(), helpers.build_registry())
         self.assertEqual([p.code for p in problems], ["fan_in"])
-        self.assertIn("predict.imu", problems[0].detail)
+        self.assertIn("flag.reading", problems[0].detail)
 
     def test_fan_out_from_one_output_is_fine(self):
         # Fan-out is explicitly allowed and is still one topic.
