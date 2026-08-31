@@ -29,6 +29,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `microbit_v2_zephyr/` | A Zephyr RTOS application for the BBC micro:bit V2 — sensors, buzzer, on-device FFT, and BLE notifications (west), plus host-side programs in their own pixi env — a BLE throughput reader, a rerun visualizer, and a tone sweep that checks the reported peak frequency over the console shell | [`microbit_v2_zephyr/CLAUDE.md`](microbit_v2_zephyr/CLAUDE.md) |
 | `rpi_pico_rust_debug/` | A minimal embassy `no_std` firmware for the Raspberry Pi Pico W (RP2040), for exercising `probe-rs` debugging — breakpoints, watchpoints, panic backtraces — via a deliberate bug | [`rpi_pico_rust_debug/CLAUDE.md`](rpi_pico_rust_debug/CLAUDE.md) |
 | `rpi_pico_zephyr_debug/` | The C++/Zephyr counterpart of `rpi_pico_rust_debug` for the same Pico W: the same deliberate ring-buffer bug, for exercising OpenOCD + Raspberry Pi Debug Probe debugging (breakpoints, watchpoints, fatal-error backtraces) via `west`, plus a `native_sim` ztest suite for the pure conversion | [`rpi_pico_zephyr_debug/CLAUDE.md`](rpi_pico_zephyr_debug/CLAUDE.md) |
+| `memory_optimization/` | C++ demos of the cache/memory optimization techniques in Section 6 of Drepper's "What Every Programmer Should Know About Memory" — one small project per technique (Bazel + Google Benchmark; NUMA excluded) | [`memory_optimization/CLAUDE.md`](memory_optimization/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -87,6 +88,13 @@ adding another: `.bazelrc` sets `--features=external_include_paths` so the
 repo's `-Werror` does not apply to external headers, and `//matrix_ops/bench` is
 the only non-hermetic target here — it links a system OpenBLAS. See
 [`matrix_ops/CLAUDE.md`](matrix_ops/CLAUDE.md).
+
+`google_benchmark` is the one other benchmarking dependency, used by every
+`bench_*` binary under `//memory_optimization/...` (the Section-6 demos) and by
+nothing else. It is a bare `bazel_dep` (in the Bazel Central Registry, no overlay
+needed); its bench binaries link `@google_benchmark//:benchmark_main`, or
+`@google_benchmark//:benchmark` when the demo supplies its own `main()`. See
+[`memory_optimization/CLAUDE.md`](memory_optimization/CLAUDE.md).
 
 The Rust side has the same shape: the ports themselves depend only on `clap`,
 and the linear-algebra crates (`faer`, `nalgebra`) and `criterion` are confined
