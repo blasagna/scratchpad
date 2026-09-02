@@ -53,13 +53,23 @@ to `//memory_optimization:__subpackages__` only.
 
 ## Gotchas
 
-- **`pahole`, `perf`, and `valgrind` are not installed here** (valgrind is a
-  pixi-managed tool for the Bazel areas; see the root [`README.md`](../README.md)).
-  The `data_layout` README documents running `pahole` on the built binary to see
-  struct/cache-line layout, and several READMEs point at
-  `valgrind --tool=cachegrind` (the paper's §7 tool) for cache-miss counts — but
-  no demo *requires* any of them. Everything runs and passes on the runtime
-  benchmark alone.
+- **`pahole` is installed (system `dwarves`, v1.25); `perf` is not.** valgrind is
+  a pixi-managed tool for the Bazel areas; see the root
+  [`README.md`](../README.md). The `data_layout` README documents running
+  `pahole` on the built binary to see struct/cache-line layout, and several
+  READMEs point at `valgrind --tool=cachegrind` (the paper's §7 tool) for
+  cache-miss counts — but no demo *requires* any of them. Everything runs and
+  passes on the runtime benchmark alone.
+- **pahole needs `-c dbg`, the CamelCase type name, and a config-explicit path.**
+  The default `fastbuild` emits line tables only, so pahole finds no types; and
+  `-C` matches the C++ identifier, so it is `-C Order`, not the paper's
+  `-C order`. Point it at `bazel-out/k8-dbg/bin/...`, **not** `bazel-bin/...` —
+  that convenience symlink follows whatever configuration was built last, so an
+  intervening `-c opt` bench run or `bazel test` silently redirects it and pahole
+  then prints nothing at all (exit 1, no output — it does not say why).
+  `bazel cquery -c dbg --output=files <target>` prints the right path. v1.25 also
+  writes `tag not supported` / `couldn't find ... type` warnings to stderr for any
+  C++ template debug info it meets — harmless, and stdout is unaffected.
 - **Timing needs `-c opt`.** Bench binaries built at the default `fastbuild` are
   `-O0` and the loops the compiler would otherwise vectorize or hoist dominate the
   measurement. Every bench file's header comment repeats this.

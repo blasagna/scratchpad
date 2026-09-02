@@ -21,8 +21,8 @@ L2-resident working sets and 20–30% for very large ones.
 
 **pahole.** The `pahole` tool reads a binary's debug info and prints struct
 layout with the holes and cache-line boundaries marked, so you can *see* where
-padding lands and which fields share a line — and, with `--reorganize`, suggests a
-tighter order.
+padding lands and which fields share a line — and, with `--reorganize`, proposes a
+field order that packs the holes away.
 
 ## This demo
 
@@ -49,15 +49,80 @@ unaligned accesses well, so the effect is at the low end.
 
 ## Using pahole
 
-`pahole` is not installed here (`sudo apt install dwarves` to get it). Build with
-debug info and run it on the resulting binary — any target that pulls in the
-struct's debug info works:
+`pahole` is installed here (Debian/Ubuntu package `dwarves`; this box has v1.25).
+It reads DWARF, so the binary has to carry real debug info: build `-c dbg`, since
+the default `fastbuild` emits line tables only and pahole will not find the type
+at all.
 
 ```sh
 bazel build -c dbg //memory_optimization/data_layout:bench_data_layout
-pahole -C order            bazel-bin/memory_optimization/data_layout/bench_data_layout
-pahole --reorganize -C order bazel-bin/memory_optimization/data_layout/bench_data_layout
+pahole -C Order bazel-out/k8-dbg/bin/memory_optimization/data_layout/bench_data_layout
 ```
+
+**Use that `bazel-out/k8-dbg/...` path, not `bazel-bin/...`.** The `bazel-bin`
+convenience symlink tracks whichever configuration Bazel built *last*, so the
+`bazel run -c opt` above re-points it at `k8-opt` and any `bazel test` re-points
+it at `k8-fastbuild` — after either, pahole reads a binary with no full debug
+info, finds nothing, and prints nothing at all (exit 1, no message saying why). The
+`bazel-out/k8-dbg/` path names the debug configuration outright and keeps
+working whatever you built last. `bazel cquery -c dbg --output=files <target>`
+prints it if you would rather not hardcode it.
+
+**The type is `Order`, not the paper's `order`.** `-C` matches the C++ identifier
+as written, and this repo spells structs in CamelCase; only the *layout* follows
+the paper. `pahole -C order` prints `type 'order' not found`. The enclosing
+`memory_optimization::data_layout` namespace does not need to be spelled out —
+pahole matches on the bare name.
+
+```
+struct Order {
+	double                     price;                /*     0     8 */
+	bool                       paid;                 /*     8     1 */
+
+	/* XXX 7 bytes hole, try to pack */
+
+	const char  *              buyer[5];             /*    16    40 */
+	long int                   buyer_id;             /*    56     8 */
+
+	/* size: 64, cachelines: 1, members: 4 */
+	/* sum members: 57, holes: 1, sum holes: 7 */
+};
+```
+
+That is the paper's point made visible: 64 bytes — exactly one cache line — to
+carry the 9 bytes of `price` + `paid` that the billing job actually reads. The
+same command on the split struct shows the hot half at 16 bytes, ~4 per line:
+
+```sh
+pahole -C HotOrder bazel-out/k8-dbg/bin/memory_optimization/data_layout/bench_data_layout
+```
+
+**`--reorganize` finds nothing to save here, and that is the expected result:**
+
+```sh
+pahole --reorganize -C Order bazel-out/k8-dbg/bin/memory_optimization/data_layout/bench_data_layout
+```
+
+It reprints the struct unchanged with no `/* Saved N bytes! */` line. Moving
+`paid` past the pointer array only relocates the padding — 8 + 40 + 8 + 1 rounds
+back up to 64 either way, because `double` forces 8-byte alignment on the whole
+struct. Reordering cannot help; that is precisely why the paper reaches for
+*splitting* the struct instead, and why the benchmark above measures a split
+rather than a reorder.
+
+**Expect some stderr noise.** pahole v1.25 cannot model C++ templates and
+complains once per offending DWARF DIE:
+
+```
+die__process_class: tag not supported 0x2f (template_type_parameter)!
+tag__recode_dwarf_type: couldn't find 0xfa9f type for 0x54db (imported_declaration)!
+```
+
+These come from the libstdc++ and Google Benchmark debug info linked into the
+binary, they go to stderr, and the struct output on stdout is unaffected —
+append `2>/dev/null` if it is in the way. A wrong `-C` name is the case that
+really floods, since pahole then scans every compilation unit instead of
+stopping at the first match.
 
 `test_data_layout.cpp` pins `sizeof(Order) == 64` (one cache line) and
 `sizeof(HotOrder) == 16` (~4 per line), so the pahole output stays as the paper
