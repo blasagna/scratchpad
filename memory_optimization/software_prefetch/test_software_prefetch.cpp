@@ -30,5 +30,11 @@ TEST(SoftwarePrefetch, VisitsEveryNodeOncePerCycle) {
 // Each node is padded to a full cache line so a hop is a guaranteed miss.
 TEST(SoftwarePrefetch, NodeIsCacheLineSized) { EXPECT_EQ(sizeof(Node), 64u); }
 
+// A zero-count list does not index an empty permutation (constructor guard).
+TEST(SoftwarePrefetch, ZeroCountIsSafe) {
+  ChaseList list(0, 8);
+  EXPECT_EQ(list.count(), 0u);
+}
+
 } // namespace
 } // namespace memory_optimization::software_prefetch

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include <numeric>
 #include <random>
 #include <vector>
@@ -29,11 +30,24 @@ PageWalker::Node *PageWalker::page_node(std::size_t index) const {
 
 PageWalker::PageWalker(std::size_t num_pages, bool huge_pages, unsigned seed)
     : num_pages_(num_pages), huge_pages_(huge_pages) {
+  // An empty walk has no head; leave region_ null (munmap in the destructor is
+  // guarded). walk() is only meaningful for num_pages > 0, which callers pass.
+  if (num_pages_ == 0) {
+    return;
+  }
+
   // Round the region to a 2 MiB multiple either way so the huge-page case has
   // whole 2 MiB spans to promote, and the two cases allocate identically.
-  region_bytes_ = round_up(std::max<std::size_t>(num_pages_, 1) * kPage, kHuge);
+  region_bytes_ = round_up(num_pages_ * kPage, kHuge);
   region_ = ::mmap(nullptr, region_bytes_, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, /*fd=*/-1, /*offset=*/0);
+  if (region_ == MAP_FAILED) {
+    // The region can be hundreds of MiB (the bench sweeps up to 512 MiB); under
+    // memory pressure or a tight ulimit mmap fails, and using MAP_FAILED below
+    // would segfault. Fail cleanly instead.
+    region_ = nullptr;
+    throw std::bad_alloc();
+  }
 
   if (huge_pages_) {
     // paper: use larger pages so each TLB entry covers more. MADV_HUGEPAGE asks

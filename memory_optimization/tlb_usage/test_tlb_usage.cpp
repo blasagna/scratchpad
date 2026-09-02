@@ -28,5 +28,12 @@ TEST(PageWalker, SinglePage) {
   EXPECT_EQ(w.walk(10), w.walk(10));
 }
 
+// Zero pages maps nothing and does not index an empty permutation (constructor
+// guard); construction and destruction must be clean.
+TEST(PageWalker, ZeroPagesIsSafe) {
+  PageWalker w(0, false);
+  EXPECT_EQ(w.num_pages(), 0u);
+}
+
 } // namespace
 } // namespace memory_optimization::tlb_usage

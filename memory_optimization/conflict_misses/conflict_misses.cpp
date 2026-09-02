@@ -10,21 +10,22 @@
 
 namespace memory_optimization::conflict_misses {
 
-namespace {
-// Align the buffer to a large power of two so a node at offset index*stride has
-// exactly the set-index bits that stride implies -- the whole point of the
-// demo.
-constexpr std::size_t kBufferAlign = 4096;
-} // namespace
-
 Node *ChaseList::node_at(std::size_t index) {
   return reinterpret_cast<Node *>(buffer_.get() + index * stride_);
 }
 
 ChaseList::ChaseList(std::size_t count, std::size_t stride, unsigned seed)
     : count_(count), stride_(std::max(stride, sizeof(Node))) {
+  // An empty list has no head to chase; leave everything null. chase() and
+  // cycle_length() are only meaningful for count > 0, which every caller
+  // passes.
+  if (count_ == 0) {
+    return;
+  }
+
   const std::size_t bytes = count_ * stride_;
-  // Over-aligned new (C++17): replaces the paper's posix_memalign.
+  // Over-aligned new (C++17): replaces the paper's posix_memalign. Paired with
+  // AlignedBufferDelete so the deallocation matches (see the header).
   buffer_.reset(new (std::align_val_t{kBufferAlign}) std::byte[bytes]());
 
   // A random permutation of [0, count) whose successive entries form one cycle

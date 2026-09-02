@@ -13,6 +13,12 @@ namespace memory_optimization::software_prefetch {
 
 ChaseList::ChaseList(std::size_t count, std::size_t distance, unsigned seed)
     : count_(count), nodes_(count) {
+  // An empty list has no head; leave head_ null. chase_* are only meaningful
+  // for count > 0, which every caller passes.
+  if (count_ == 0) {
+    return;
+  }
+
   // Random single cycle over all nodes (see conflict_misses for the same idea):
   // a shuffled permutation whose consecutive entries link head-to-tail.
   std::vector<std::size_t> order(count_);

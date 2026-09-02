@@ -48,7 +48,7 @@ private:
 
   std::size_t num_pages_;
   bool huge_pages_;
-  std::size_t region_bytes_;
+  std::size_t region_bytes_ = 0;
   void *region_ = nullptr;
   Node *head_ = nullptr;
 };

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <vector>
 
 // Section 6.2.1, "Optimizing Level 1 Data Cache Access" -- cache associativity
@@ -29,6 +30,22 @@ namespace memory_optimization::conflict_misses {
 // parallelism to hide a miss).
 struct Node {
   Node *next = nullptr;
+};
+
+// Alignment of the node buffer. Large enough that a node at offset index*stride
+// has exactly the set-index bits `stride` implies -- the whole point of the
+// demo.
+inline constexpr std::size_t kBufferAlign = 4096;
+
+// The buffer is allocated with the aligned array allocation function, so it
+// must be freed with the matching aligned `operator delete[]` -- a plain
+// delete[] would call the non-aligned deallocation function (undefined
+// behavior). This deleter pairs with the `new (std::align_val_t{kBufferAlign})`
+// in the .cpp.
+struct AlignedBufferDelete {
+  void operator()(std::byte *p) const noexcept {
+    ::operator delete[](p, std::align_val_t{kBufferAlign});
+  }
 };
 
 // A cyclic linked list whose nodes are placed at a chosen stride inside one
@@ -57,7 +74,7 @@ private:
   std::size_t stride_;
   Node *head_ = nullptr;
   // Over-aligned storage so node offsets (index*stride) alone decide the set.
-  std::unique_ptr<std::byte[]> buffer_;
+  std::unique_ptr<std::byte[], AlignedBufferDelete> buffer_;
 };
 
 } // namespace memory_optimization::conflict_misses

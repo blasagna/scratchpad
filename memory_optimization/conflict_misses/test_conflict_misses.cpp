@@ -32,5 +32,13 @@ TEST(ChaseList, ClampsTinyStride) {
   EXPECT_EQ(list.cycle_length(), 8u);
 }
 
+// A zero-count list allocates nothing and does not index an empty permutation
+// (the constructor guards it). Construction and destruction must be clean --
+// exercised under --config=asan for the aligned alloc/dealloc pairing too.
+TEST(ChaseList, ZeroCountIsSafe) {
+  ChaseList list(0, 256);
+  EXPECT_EQ(list.count(), 0u);
+}
+
 } // namespace
 } // namespace memory_optimization::conflict_misses
