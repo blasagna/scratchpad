@@ -3,9 +3,8 @@
 A minimal C++/Zephyr firmware for the Raspberry Pi Pico W (RP2040), built to
 exercise a debugger — breakpoints, watchpoints, and a fatal-error backtrace —
 over SWD with a Raspberry Pi Debug Probe and OpenOCD, rather than to do anything
-useful on its own. It's the C++/Zephyr counterpart of
-[`../rpi_pico_rust_debug`](../rpi_pico_rust_debug) (Rust/embassy + probe-rs).
-Wiring and the full debugging walkthrough are in [`README.md`](README.md).
+useful on its own. Wiring and the full debugging walkthrough are in
+[`README.md`](README.md).
 
 This is a *freestanding* Zephyr application built against the tree in
 `~/zephyrproject`, so `ZEPHYR_BASE` must be exported before `west build`:
@@ -35,10 +34,7 @@ west build -b native_sim -p auto -d build_test tests/temp_convert && ./build_tes
   (8) samples. That's the whole point — see [`README.md`](README.md)'s "What to
   try" before "fixing" it. **Do not "fix" it.** If it's ever fixed on purpose,
   `README.md`'s bug description and "Fixing the bug" section, the comment block
-  around the line, and this bullet all have to change together. (Note the Rust
-  sibling's working tree currently ships this *inverted* — wrapping line active,
-  bug commented — which silently defeats its own walkthrough; don't copy that
-  state here.)
+  around the line, and this bullet all have to change together.
 
 - **`__ASSERT` is what makes the bug observable, and is not optional.** C++ does
   not bounds-check the array write — the out-of-bounds store is silent UB. The
@@ -50,18 +46,16 @@ west build -b native_sim -p auto -d build_test tests/temp_convert && ./build_tes
 
 - **`sample_count` is not dead code.** It's a file-scope `volatile` mirror of
   `sample_index`, kept as a clean, named, fixed-address target for the GDB
-  watchpoint exercise. Unlike the Rust sibling (where the async-fn local is
-  unresolvable and the mirror is the *only* way), `sample_index` here is a plain
-  static GDB can watch directly — the mirror keeps the exercise identical across
-  the two ports. `volatile` stops `-Og` folding the store away.
+  watchpoint exercise. `sample_index` itself is a plain file-scope static GDB
+  could watch directly; the mirror exists so the exercise has a symbol whose only
+  job is being watched. `volatile` stops `-Og` folding the store away.
 
 - **`src/temp_convert.{hpp,cpp}` must stay free of Zephyr headers.** That's the
   whole reason it's split out: the identical TU is compiled both for the ARM
   firmware and for the `native_sim` host test under `tests/temp_convert/` (which
   `#include`s it via a relative path in its `CMakeLists.txt`). Pulling in a
   Zephyr header would break the host build and the tests. Put anything that
-  needs Zephyr in `src/main.cpp` instead. This is the C++ analog of the Rust
-  sibling's dependency-free `rp2040_temp` crate.
+  needs Zephyr in `src/main.cpp` instead.
 
 - **The host test uses C headers (`<math.h>`, `<stdint.h>`), not `<cmath>`.**
   Zephyr builds C++ against its *minimal* libc++ with `-nostdinc++`, which ships
@@ -70,12 +64,11 @@ west build -b native_sim -p auto -d build_test tests/temp_convert && ./build_tes
   functions and a hand-rolled `abs_i32` for that reason.
 
 - **The reading is synthetic on purpose.** `next_raw()` fabricates the 12-bit
-  value in software; the Rust sibling samples the real onboard temperature
-  sensor. This port skips the ADC deliberately — the exercise is the debugger
-  and the bug, and a deterministic source keeps the walkthrough reproducible.
-  The RP2040 ADC route is also less trivial than Rust's: the stock Zephyr
-  `adc_rpi_pico` driver never sets the `TS_EN` bit, so channel 4 would need a
-  manual power-on. If you ever want a real reading, that's the catch.
+  value in software rather than sampling the onboard temperature sensor. The ADC
+  is skipped deliberately — the exercise is the debugger and the bug, and a
+  deterministic source keeps the walkthrough reproducible. It is also not free:
+  the stock Zephyr `adc_rpi_pico` driver never sets the `TS_EN` bit, so channel 4
+  would need a manual power-on. If you ever want a real reading, that's the catch.
 
 - **The onboard LED is intentionally unused.** On a Pico W it's behind the CYW43
   wireless chip, not a GPIO. The heartbeat is an *external* LED on GP15, declared
@@ -113,16 +106,16 @@ west build -b native_sim -p auto -d build_test tests/temp_convert && ./build_tes
   both the thread-aware `info threads` in GDB and the thread names the shell's
   `kernel threads` prints.
 
-- **This directory carries its own `.clang-format`, copied from Zephyr's** — same
-  as `microbit_v2_zephyr`. Without it the repo-wide `fmt` would reflow these
-  files away from Zephyr's tabs-and-100-columns style. Do not delete it.
+- **This directory carries its own `.clang-format`, copied from Zephyr's.**
+  Without it the repo-wide `fmt` would reflow these files away from Zephyr's
+  tabs-and-100-columns style. Do not delete it.
 
 - **`build/` (and `build_test/`) hold symlinks into `~/zephyrproject`** — a fmt
   glob that follows them, rather than using `git ls-files` as the root `fmt-c`
   task does, would edit the Zephyr installation in place. Both are gitignored.
 
-- **This is one of two west/CMake areas** (with `microbit_v2_zephyr`), not Bazel,
-  pixi, or cargo — so `ZEPHYR_BASE` must be exported before `west build`.
+- **This area builds with west/CMake**, not Bazel, pixi, or cargo — so
+  `ZEPHYR_BASE` must be exported before `west build`.
 
 ## Layout
 
@@ -136,7 +129,7 @@ west build -b native_sim -p auto -d build_test tests/temp_convert && ./build_tes
 - `src/temp_convert.{hpp,cpp}` — the Zephyr-header-free conversion, shared with
   the host test.
 - `tests/temp_convert/` — a `native_sim` ztest suite over `raw_to_millicelsius`,
-  the six tests ported from the Rust sibling's `rp2040_temp`.
+  six tests checked against an independent floating-point reference.
 - `60-openocd.rules` — udev rules so OpenOCD reaches the CMSIS-DAP probe without
   root (Linux); install to `/etc/udev/rules.d/`.
 - `.clang-format` — Zephyr's, scoping this area's style away from the repo default.

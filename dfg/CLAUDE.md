@@ -84,8 +84,7 @@ pixi run replay    # a recording replayed nine ways, one digest
 
 `type` is an area-level task rather than part of the root `pixi run type-py`, because
 the root environment has no numpy or pyarrow and would report nothing but
-missing-import errors for `examples/`. `rust_python_bindings` sets the same
-precedent.
+missing-import errors for `examples/`.
 
 **This is the only area with a `pyrefly.toml`**, and having one is the point: with no
 config pyrefly falls back to its `basic` preset, which is lenient enough to miss
