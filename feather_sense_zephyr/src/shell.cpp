@@ -33,10 +33,19 @@ int cmd_stats(const shell *sh, size_t, char **)
 	const usb::Counters u = usb::counters();
 
 	shell_print(sh, "batches   emitted %u", s.emitted);
-	shell_print(sh, "dropped   ble %u  usb %u  oversize %u", s.dropped_ble, s.dropped_usb,
+	/* Two different places a batch can be dropped, and they are not
+	 * interchangeable. A transmit queue only fills if its thread stops
+	 * draining, which in practice does not happen -- usb::send() never
+	 * blocks, so the USB queue drains as fast as it fills and its counter
+	 * stays 0 even under heavy backpressure. The drop that actually happens
+	 * when a host stops reading is the frame one below, where the CDC ring
+	 * is full. Measured: a 6 s reader stall gave 0 here and 104 there.
+	 */
+	shell_print(sh, "queue full  ble %u  usb %u   oversize %u", s.dropped_ble, s.dropped_usb,
 		    s.dropped_oversize);
-	shell_print(sh, "usb       sent %u  dropped %u  rx %u  rx errors %u", u.frames_sent,
-		    u.frames_dropped, u.rx_frames, u.rx_errors);
+	shell_print(sh, "usb frames  sent %u  dropped (ring full) %u", u.frames_sent,
+		    u.frames_dropped);
+	shell_print(sh, "usb rx      frames %u  errors %u", u.rx_frames, u.rx_errors);
 	shell_print(sh, "imu batch %u samples per notification", streams::imu_batch_samples());
 
 	for (uint8_t id = codec::kStreamMin; id <= codec::kStreamMax; id++) {

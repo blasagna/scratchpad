@@ -124,9 +124,17 @@ established on a real board.
 
 - **The magnetometer's wire unit is deci-µT** *(measured)*. Centi-µT — which the
   design originally specified — puts the LIS3MDL's own ±400 µT full scale at
-  ±40000, past an `int16`, so the *wire* clips before the sensor does. The first
-  board sat in a ~570 µT field and railed all three axes at once. Deci-µT costs
-  nothing real: the 0.1 µT step is below the part's ~0.32 µT RMS noise.
+  ±40000, past an `int16`, so the *wire* clips before the sensor does. Deci-µT
+  costs nothing real: the 0.1 µT step is below the part's ~0.32 µT RMS noise,
+  and Earth's field still gets ~480 counts.
+
+- **A saturated magnetometer is not a broken one.** The first readings railed all
+  three axes with sub-LSB noise, which looks exactly like a fault. It was a real
+  27-gauss field from something next to the board. The way to tell the two apart
+  is one register write: widen `CTRL_REG2`'s full scale through the `i2c` shell
+  and see whether the reading moves off the rail. It did. Moved away from the
+  magnet the board reads 48.3 µT, which is Earth's. Do not diagnose this sensor
+  from magnitudes alone.
 
 - **Gyro precedes accel in the IMU sample, and the two share one timestamp.**
   That is the order the chip's FIFO and its `OUTX_L_G`-onward block produce them.
@@ -176,6 +184,16 @@ established on a real board.
   timestamps, 0 errors, 0 sequence gaps, 0 device-side drops, ATT MTU 247, and
   three consecutive connect/disconnect cycles. About 2.7 KB/s at ~30
   notifications/s, well inside the ~4.4 KB/s the CircuitPython port reached.
+  Both transports also run simultaneously at full rate with no drops on either.
+
+- **There are two drop counters and only one of them ever moves** *(measured)*.
+  `usb::send()` never blocks, so the transmit queue drains as fast as it fills
+  and `queue full usb` stays 0 even under heavy backpressure; the drop that
+  actually happens when a host stops reading is the CDC ring filling, counted as
+  `usb frames dropped`. A 6 s reader stall gave 0 and 104 respectively, and the
+  host saw 100 sequence gaps with **0 decode errors** — frames drop whole, never
+  truncated, which is what the all-or-nothing ring write guarantees. Do not
+  "simplify" that write into a partial one.
 
 - **bleak cannot report the negotiated ATT MTU on BlueZ.** `mtu_size` warns and
   returns its default of 23 forever, and there is no `_acquire_mtu()` in bleak 3.
@@ -186,9 +204,9 @@ established on a real board.
 - **Do not restate an unverified hardware fact as known.** README keeps three
   lists — settled by running it, live limitations, still unverified — and that
   separation is the document's main value. Still on the unverified side: the
-  NeoPixel's pin (`P0.16`), whether INT1/DRDY/INT are routed to GPIOs at all,
-  the battery over a real discharge, and the magnetometer's *values*, which sit
-  at the sensor's own rail for reasons not established.
+  NeoPixel's pin (`P0.16`), whether INT1/DRDY/INT are routed to GPIOs at all, the
+  battery over a real discharge, and anything about behaviour over a long run —
+  the 16-bit `seq` wrap has never been reached.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries

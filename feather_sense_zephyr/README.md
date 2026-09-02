@@ -35,12 +35,12 @@ a 1 Hz environmental stream all running at once:
 | Magnetometer rate | **20.0 samples/s** |
 | Decode errors and sequence gaps | **0** in every run, all five streams at once |
 | FIFO overruns | **0**, after the IMU thread learned to flush the boot backlog |
-| Flash | 236 088 B, 29 % of the 792 KB application partition |
-| RAM | 79 048 B, 30 % of 256 KB |
 | IMU WHO_AM_I | **0x69 — this board carries the LSM6DS33**, not the LSM6DS3TR-C |
 | Accelerometer magnitude at rest | 9.99 m/s² |
-| SHT30 | 25.6 °C, 56.1 %RH, and a fetch that blocks **854 µs** — not the ~152 ms this document feared |
+| SHT30 | 26.5 °C, 54.2 %RH, and a fetch that blocks **397 µs** in steady state — not the ~152 ms this document feared |
 | Battery | 4056 mV, 85 %, USB flag set, from the pack on the board |
+| Magnetometer | **48.3 µT** total field — Earth's, once the board was moved away from a magnet |
+| Flash / RAM | 236 200 B (29 %) / 79 048 B (30 %) |
 
 The same, over BLE, with all four notify characteristics subscribed:
 
@@ -80,6 +80,11 @@ known, all of them recorded in place below rather than only here:
 8. Advertising cannot be restarted from the `disconnected` callback, so the
    board advertised exactly once per boot — see [restarting
    advertising](#restarting-advertising).
+
+And one thing the board corrected about the *bench* rather than about the
+firmware: the magnetometer's first readings were saturated on all three axes,
+which looked like a fault and was not — see [the
+magnetometer](#the-magnetometer).
 
 ## requirements
 
@@ -401,11 +406,51 @@ choice defaults to `CONFIG_SHT3XD_PERIODIC_MODE` at one measurement per second, 
 a conversion, and `fs env` reports it in microseconds because milliseconds could not
 resolve it.
 
+The measured cost is **397 µs**, repeatably, once the application has settled; the first
+fetch after boot has been seen at 2.7 ms. Either way it is three orders of magnitude below
+the figure this design was built to defend against, and the env thread's low priority is
+now insurance rather than necessity.
+
 Periodic mode brings its own trap, which the single-shot assumption hid. The chip NACKs
 `FETCH_DATA` when no new measurement is ready, so a 1 Hz reader against a 1-measurement-
 per-second chip loses the race whenever it drifts ahead, and the driver reports
 `Failed to fetch samples`. `CONFIG_SHT3XD_MPS_2=y` gives the chip twice the reader's rate
 so there is always one waiting. `fs env` counts the failures, and it should read 0.
+
+### the magnetometer
+
+**The first readings were saturated on all three axes at once, and that was the bench, not
+the board.** It is worth recording how it was settled, because "the sensor is broken" was
+the obvious reading and it was wrong.
+
+The symptoms all pointed the wrong way. With `CONFIG_LIS3MDL_FS=4` the raw range tops out
+at ±32767 LSB ≈ ±479 µT per axis, and every axis sat within 70 counts of that — with a
+standard deviation *below one LSB*, where the part's own spec noise is ~0.32 µT. Low noise
+at full scale is what a pinned ADC looks like, and a single external field vector does not
+usually saturate three orthogonal axes equally.
+
+The decisive test was one register write. Widening the full scale to ±16 gauss through the
+`i2c` shell and re-reading `OUT_X_L` onward:
+
+| axis | at ±4 gauss | at ±16 gauss |
+|---|---|---|
+| X | −32686 (railed) | −31393 = **−18.4 gauss** |
+| Y | +32681 (railed) | +32698 (still railed, so > 19.1 gauss) |
+| Z | −32708 (railed) | −13265 = **−7.75 gauss**, off the rail |
+
+Z came off the rail and returned a real value. A faulty or pinned sensor does not track a
+range change; this one did. So the field was genuine, over 27 gauss in total — magnet
+territory, and the board was sitting next to one.
+
+Moving the board settled it completely: **48.3 µT total**, with per-axis noise of 0.4–0.7
+µT against a 0.32 µT spec. That is Earth's field, and it is the number a magnetometer on a
+desk should report.
+
+Two things worth keeping from this. The deci-µT wire unit gives Earth's field about 480
+counts, so there is resolution to spare and no risk of the wire clipping before the sensor
+— which was the reason for the change. And a sensor that saturates is not necessarily a
+sensor that is broken: the cheapest way to tell the two apart is to move the range and see
+whether the reading moves with it.
 
 ### how values are encoded
 
@@ -464,11 +509,13 @@ Requirement 1.6 asks for "light level", which is what this is.
 **The magnetometer's wire unit is deci-µT, not centi-µT.** This is the one that mattered.
 The LIS3MDL's smallest full scale is ±4 gauss = ±400 µT, and centi-µT puts that at ±40000
 — past an `int16` — so the *wire* clipped before the sensor did. That is not a theoretical
-concern: the first board this ran on sat in a field of roughly 570 µT and railed all three
-axes at once, reporting `(-32768, 32767, -32768)`. Deci-µT reaches ±3276.7 µT, eight times
-the chip's range, and costs nothing real — the 0.1 µT step is below the part's own ~0.32 µT
-RMS noise. The saturating clamp in `src/magn.cpp` is kept, now unreachable through this
-sensor, which is the state a clamp should be in.
+concern: the first board this ran on sat next to a magnet and railed all three axes at
+once, reporting `(-32768, 32767, -32768)` — the *wire* clipping on top of a sensor that was
+already saturated (see [the magnetometer](#the-magnetometer)). Deci-µT reaches ±3276.7 µT,
+eight times the chip's range, and costs nothing real: the 0.1 µT step is below the part's
+own ~0.32 µT RMS noise, and Earth's ~48 µT still gets about 480 counts. The saturating
+clamp in `src/magn.cpp` is kept, now unreachable through this sensor, which is the state a
+clamp should be in.
 
 **The cost of this design, stated plainly:** a host can no longer decode a capture it did
 not ask the scales for. Both CLIs therefore fetch the scale table at connect and print it,
@@ -1061,6 +1108,11 @@ with a shell.
   environmental read](#the-environmental-read). The driver defaults to periodic mode, so
   there is no conversion to block on; what the assumption hid was a fetch-vs-produce race,
   fixed with `CONFIG_SHT3XD_MPS_2=y`.
+- **The magnetometer reads Earth's field, and the sensor was never at fault.** 48.3 µT
+  total once the board was moved away from a magnet. See [the
+  magnetometer](#the-magnetometer) for how a saturated reading was told apart from a broken
+  part, which took one register write.
+
 - **Stack sizes are measured, not guessed.** `CONFIG_INIT_STACKS=y` and
   `CONFIG_THREAD_NAME=y` are set so `kernel thread stacks` reports high-water marks, and it
   does: imu 744/2048 (36 %), magn 496/1536 (32 %), env 400/1536 (26 %), battery 392/1024
@@ -1069,6 +1121,26 @@ with a shell.
   `streams::emit()`. That last one is why `CONFIG_INPUT_THREAD_STACK_SIZE` is left at its
   default: `emit()` puts a 242-byte batch on the caller's stack, which looked worth a bump
   until the number was read.
+
+- **A drop is visible to the host as a gap in `seq`, which is what that field is for.**
+  Never mind that both counters read 0 in normal running — the claim is only worth
+  anything if it fires when it should, and it does. Stalling the serial reader for 6 s
+  without draining the port: the device counted **104 dropped USB frames**, the host
+  counted **69 IMU and 31 magnetometer sequence gaps** (which adds up, allowing for the
+  env and battery batches in the same window), its `gap max` jumped to 3.4 s, and its
+  **decode errors stayed at 0** — frames were dropped whole, never truncated, which is what
+  the all-or-nothing ring-buffer write in `usb::send()` is there to guarantee. The stream
+  resumed clean.
+
+  The drops landed in the *frame* counter, not the transmit-queue one. `usb::send()` never
+  blocks, so the queue drains as fast as it fills and `queue full usb` stays 0 even under
+  heavy backpressure; the real drop is the CDC ring filling. `fs stats` labels the two
+  distinctly for that reason — they sit next to each other and would otherwise read as
+  contradicting one another.
+
+- **Both transports stream at once.** USB and BLE simultaneously, each at the full rate,
+  with 0 drops on either side and 0 sequence gaps. The two transmit queues are independent
+  and neither starves the other.
 
 - **BLE carries the full stream, and reconnects.** All four notify characteristics, the
   RPC pair, MTU negotiation to 247, and three consecutive connect/disconnect cycles: 208.4
@@ -1096,22 +1168,6 @@ with a shell.
   configured and the divider ratio comes from devicetree, but every reading so far was
   taken with no cell attached. Percent, the band hysteresis and the `flags` USB bit are
   covered by host tests and by construction, not by a discharge curve.
-- **The magnetometer reads at or near its own full scale, and why is not established.**
-  After the move to deci-µT the wire reaches ±3276.7 µT and no longer clips, but the
-  LIS3MDL itself is close to its rail: with `CONFIG_LIS3MDL_FS=4` the raw range tops out at
-  ±32767 LSB ≈ ±479 µT per axis, and the samples come back at −477.5, +477.6, −477.9 µT —
-  within half a percent of that on all three axes at once. A single external field vector
-  does not usually saturate every axis equally, so **this is not necessarily a strong local
-  field**; a hard-iron offset, the low-power operating mode the driver selects by default
-  (`CTRL_REG1` reads `0x94`, so `OM = 00`), or a fault would all look similar. The chip's
-  identity and configuration are correct — `WHO_AM_I` reads `0x3d`, and the ODR and
-  full-scale registers hold what `prj.conf` asked for — so if it is a fault it is not in the
-  setup path. **Checks, in order:** move the board and see whether the numbers move; compare
-  against the CircuitPython port, which read the same part on the same board; then try
-  `CONFIG_LIS3MDL_FS=8`, which doubles the range at a proportional cost in resolution. The
-  wire format does not need to change again either way. Until this is settled, treat the
-  magnetometer stream as unvalidated: the transport and the decode are proven, the *values*
-  are not.
 - **The battery's "≥1 % change" rule throttles nothing in practice.** Requirement 1.7 is
   implemented literally and the percent is an integer, so any change is at least one point
   — but the ADC reading dithers by about 10 mV, which *is* one point on the 3.2–4.2 V
