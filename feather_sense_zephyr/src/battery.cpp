@@ -128,12 +128,17 @@ void entry(void *, void *, void *)
 
 		/* The band moves in both directions and nothing latches it --
 		 * band_for() applies hysteresis against whatever is painted.
+		 *
+		 * show() is called every cycle rather than only on a change:
+		 * it already returns early when the band it is handed is the
+		 * one on the pixel, so the "repaint only on a band change" rule
+		 * is enforced in the one place that can actually know. It also
+		 * means an `fs led` override restores itself on the next tick
+		 * instead of persisting until the charge happens to cross a
+		 * threshold.
 		 */
-		const Band next = band_for(reading.percent, band);
-		if (next != band) {
-			band = next;
-			led::show(band);
-		}
+		band = band_for(reading.percent, band);
+		led::show(band);
 
 		/* Requirement 1.7: transmitted only on a change of at least
 		 * 1 %. percent is an integer, so any change is at least that.

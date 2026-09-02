@@ -18,6 +18,17 @@ int start();
  */
 void show(battery::Band band);
 
+/*
+ * Drive the pixel directly, for `fs led`. Overrides the band until the next
+ * band change repaints it.
+ *
+ * This exists because a NeoPixel has no readback: the only way to tell a
+ * timing fault from a colour-channel-order fault from a wrong pin is to send a
+ * known colour and look. Sending pure red, green and blue in turn distinguishes
+ * all three at once.
+ */
+int set(uint8_t r, uint8_t g, uint8_t b);
+
 } /* namespace led */
 
 #endif /* FEATHER_SENSE_LED_HPP_ */

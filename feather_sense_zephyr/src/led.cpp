@@ -64,6 +64,23 @@ void show(battery::Band band)
 	painted = band;
 }
 
+int set(uint8_t r, uint8_t g, uint8_t b)
+{
+	led_rgb pixel = {.r = r, .g = g, .b = b};
+
+	const int ret = led_strip_update_rgb(strip, &pixel, 1);
+	if (ret != 0) {
+		return ret;
+	}
+
+	/* Forget what was painted, so the next band change repaints rather than
+	 * deciding it is already showing the right thing.
+	 */
+	painted = battery::Band::kUnknown;
+
+	return 0;
+}
+
 int start()
 {
 	if (!device_is_ready(strip)) {

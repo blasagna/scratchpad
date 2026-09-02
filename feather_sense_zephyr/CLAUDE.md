@@ -78,6 +78,24 @@ established on a real board.
   refuses to guess. Do not "simplify" by putting samples on the console — that
   is the defect that cost the CircuitPython port a trustworthy error counter.
 
+- **The NeoPixel needs a CPU clock frequency in devicetree, or it lights in the
+  wrong colour** *(measured)*. `ws2812-gpio` bit-bangs with NOP counts that
+  Kconfig derives from `/cpus/cpu@0`'s `clock-frequency` — and `nrf52840.dtsi`
+  declares none (`nrf52810` and `nrf52805` do). With no `zephyr,led-strip` chosen
+  node and no `delay-t*` properties either, all four delays fall through to
+  7/6/3/8 NOPs, values for a ~10 MHz part: at 64 MHz that is a 109 ns high pulse
+  where the WS2812 wants 700, and the LED latches garbage *while lighting up*,
+  which points at the colour mapping and away from the cause. `app.overlay`
+  declares `clock-frequency = <64000000>` on `&{/cpus/cpu@0}` (path syntax — the
+  node has no label), giving 44/38/22/51. Check with
+  `grep CONFIG_DELAY_T build/zephyr/.config`. The pin (`P0.16`) and the GRB
+  `color-mapping` were both right all along, and are now confirmed.
+
+- **`fs led <r> <g> <b>` is the only way to diagnose the pixel.** A NeoPixel has
+  no readback, so a timing fault, a channel-order fault and a wrong pin are
+  indistinguishable without sending a known colour and looking. Pure green
+  separates all three: a green/red swap is exactly what GRB-versus-RGB produces.
+
 - **`CONFIG_CLOCK_CONTROL_NRF=y` is required, or the NeoPixel driver will not
   compile** *(measured)*. Left at its default,
   `drivers/led_strip/ws2812_gpio.c:139` takes an `#else` branch that has
@@ -204,9 +222,9 @@ established on a real board.
 - **Do not restate an unverified hardware fact as known.** README keeps three
   lists — settled by running it, live limitations, still unverified — and that
   separation is the document's main value. Still on the unverified side: the
-  NeoPixel's pin (`P0.16`), whether INT1/DRDY/INT are routed to GPIOs at all, the
-  battery over a real discharge, and anything about behaviour over a long run —
-  the 16-bit `seq` wrap has never been reached.
+  whether INT1/DRDY/INT are routed to GPIOs at all, the battery over a real
+  discharge (so the LED has never been seen to *change* band), and anything about
+  behaviour over a long run — the 16-bit `seq` wrap has never been reached.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries

@@ -40,7 +40,8 @@ a 1 Hz environmental stream all running at once:
 | SHT30 | 26.5 °C, 54.2 %RH, and a fetch that blocks **397 µs** in steady state — not the ~152 ms this document feared |
 | Battery | 4056 mV, 85 %, USB flag set, from the pack on the board |
 | Magnetometer | **48.3 µT** total field — Earth's, once the board was moved away from a magnet |
-| Flash / RAM | 236 200 B (29 %) / 79 048 B (30 %) |
+| Status LED | green at a `high` band, on `P0.16` — **confirmed**, once the bit-bang timing was fixed |
+| Flash / RAM | 236 948 B (29 %) / 79 048 B (30 %) |
 
 The same, over BLE, with all four notify characteristics subscribed:
 
@@ -80,6 +81,12 @@ known, all of them recorded in place below rather than only here:
 8. Advertising cannot be restarted from the `disconnected` callback, so the
    board advertised exactly once per boot — see [restarting
    advertising](#restarting-advertising).
+
+9. The NeoPixel's bit-bang delays fell through to literals meant for a ~10 MHz
+   CPU, because nRF52840's dtsi declares no `cpu@0` clock frequency. The pixel
+   lit in the *wrong colour* rather than staying dark, which points at the colour
+   mapping and away from the real cause — see [the status led's bit-bang
+   timing](#the-status-leds-bit-bang-timing).
 
 And one thing the board corrected about the *bench* rather than about the
 firmware: the magnetometer's first readings were saturated on all three axes,
@@ -139,7 +146,7 @@ anything else. Verified against Zephyr 4.4.99.
 | Light level | APDS9960 | `0x39` | `avago,apds9960` | Driver exists; needs an overlay node |
 | Battery | divider to `AIN5`, 100k/200k | — | `voltage-divider` | Node in the board DTS (`vbatt`), but the ADC **channel** is not — see below |
 | User button | switch on `P1.02`, active low | — | `gpio-keys`, `INPUT_KEY_0`, alias `sw0` | **Already in the board DTS** |
-| Status LED | NeoPixel on `P0.16` | — | `worldsemi,ws2812-gpio` | Driver exists; needs an overlay node |
+| Status LED | NeoPixel on `P0.16` (**confirmed**) | — | `worldsemi,ws2812-gpio` | Needs an overlay node, and a CPU clock frequency — see below |
 | Pressure | BMP280 | `0x77` | `bosch,bme280` (accepts chip id `0x58`) | Available, **not used** |
 | Microphone | PDM MEMS | — | `nordic,nrf-pdm` | Available, **not used** |
 
@@ -451,6 +458,53 @@ counts, so there is resolution to spare and no risk of the wire clipping before 
 — which was the reason for the change. And a sensor that saturates is not necessarily a
 sensor that is broken: the cheapest way to tell the two apart is to move the range and see
 whether the reading moves with it.
+
+### the status led's bit-bang timing
+
+**The pixel lit in the wrong colour, and the cause was neither the pin nor the colour
+mapping.** `worldsemi,ws2812-gpio` has no clock of its own: it toggles the line with inline
+assembly and counts NOPs, and Kconfig works out how many from `/cpus/cpu@0`'s
+`clock-frequency`. Two things have to be true for that to happen, and neither was:
+
+```
+config DELAY_T1H
+	default $(dt_node_int_prop_int,$(DT_CHOSEN_LED_STRIP_PATH),delay-t1h)
+		  if $(dt_node_has_prop,$(DT_CHOSEN_LED_STRIP_PATH),delay-t1h)
+	default $(div,$(mul,700,$(dt_node_int_prop_int,/cpus/cpu@0,clock-frequency)),1000000000)
+		  if $(dt_node_has_prop,/cpus/cpu@0,clock-frequency)
+	default 7
+```
+
+There is no `zephyr,led-strip` chosen node and no `delay-t*` properties, and
+**`nrf52840.dtsi` declares no `clock-frequency` on `cpu@0`** — `nrf52810.dtsi` and
+`nrf52805.dtsi` do, which is what makes the omission easy to miss. So all four delays fell
+through to their last-resort literals, 7/6/3/8 NOPs, which are values for a roughly 10 MHz
+part. At 64 MHz a NOP is about 15.6 ns, so a "1" bit's high pulse came out at ~109 ns
+against the WS2812's ~700 ns, and the whole bit period was about a fifth of the 1.25 µs the
+part expects.
+
+The LED therefore latched garbage — and, importantly, **lit while doing it**. A dark pixel
+would have pointed straight at the pin. A lit pixel in the wrong colour points at the
+colour mapping, which was correct all along.
+
+The fix is one line in `app.overlay` declaring the frequency the SoC actually runs at,
+which yields 44/38/22/51 and makes the pixel read green at a battery band of `high`.
+Nothing else on this SoC reads that property; the drivers that do are all for other
+vendors' parts.
+
+```sh
+grep CONFIG_DELAY_T build/zephyr/.config     # 44/38/22/51, not 7/6/3/8
+```
+
+Two things this settles as a side effect. **The NeoPixel is on `P0.16`** — inherited from
+the Adafruit pinout and unverified until something lit. And the `color-mapping` in the
+overlay is right: GRB, as the part expects.
+
+`fs led <r> <g> <b>` exists because of this. A NeoPixel has no readback, so the only way to
+separate a timing fault from a channel-order fault from a wrong pin is to send a known
+colour and look — and pure green is the one that distinguishes all three, since a
+green/red channel swap is exactly what a GRB-versus-RGB mix-up produces. The override
+restores itself on the battery thread's next tick.
 
 ### how values are encoded
 
@@ -770,7 +824,15 @@ hysteresis are ported directly:
 The pixel is repainted **only on a band change**. `ws2812_gpio` bit-bangs the line with
 inline assembly and interrupts locked for the duration of the transfer — roughly 30 µs for
 one pixel at 24 bits — which is short, but it is also unnecessary a hundred times out of a
-hundred and one.
+hundred and one. That rule lives inside `led::show()` rather than at its call site: the
+battery thread calls it every cycle and `show()` returns early when the band it is handed
+is already the one on the pixel, which is the one place that can actually know. It also
+means an `fs led` override restores itself within a second instead of persisting until the
+charge happens to cross a threshold.
+
+Getting the pixel to display the *right* colour took a devicetree fix that has nothing to
+do with colour — see [the status led's bit-bang
+timing](#the-status-leds-bit-bang-timing).
 
 `prj.conf` must carry `CONFIG_CLOCK_CONTROL_NRF=y` for this to compile at all. Without it
 the nRF clock control resolves to the newer split `CLOCK_CONTROL_NRF_HFCLK`/`_LFCLK`
@@ -883,6 +945,7 @@ Beyond the built-ins, the application registers an `fs` command group, guarded b
 | `fs battery` | the last reading — millivolts, percent, and whether USB is present |
 | `fs env` | what the last SHT30 fetch cost, in microseconds, and how many have failed |
 | `fs stream <id> <0\|1>` | enable or disable one stream, the same thing RPC opcode `0x02` does |
+| `fs led <r> <g> <b>` | drive the pixel to a known colour; restores itself on the battery thread's next tick |
 | `fs bootloader` | reboot into the UF2 bootloader, so a reflash needs no hand on the board |
 
 `CONFIG_I2C_SHELL` earns its place here more than anywhere else in the repo:
@@ -1113,6 +1176,12 @@ with a shell.
   magnetometer](#the-magnetometer) for how a saturated reading was told apart from a broken
   part, which took one register write.
 
+- **The NeoPixel works, and it is on `P0.16`.** It shows green at a `high` battery band and
+  responds correctly to `fs led`, so the pin, the GRB colour mapping and the driver path
+  are all confirmed. Getting there needed a devicetree fix unrelated to any of them — see
+  [the status led's bit-bang timing](#the-status-leds-bit-bang-timing). What has *not* been
+  seen is the band actually *changing*, which needs a real discharge.
+
 - **Stack sizes are measured, not guessed.** `CONFIG_INIT_STACKS=y` and
   `CONFIG_THREAD_NAME=y` are set so `kernel thread stacks` reports high-water marks, and it
   does: imu 744/2048 (36 %), magn 496/1536 (32 %), env 400/1536 (26 %), battery 392/1024
@@ -1158,12 +1227,6 @@ with a shell.
 
 ### live limitations
 
-- **The NeoPixel has not been seen to light.** The pin (`P0.16`) is inherited from the
-  Adafruit pinout, not from Zephyr's board files, and a `ws2812-gpio` write to a
-  wrong-but-valid pin fails silently. The LED is also driven only from the battery band, so
-  with the board on USB and no pack attached it has had nothing to display. **Check:** run
-  it on a battery, or drive it by hand. **Fallback:** correcting one number in
-  `app.overlay`.
 - **The battery path has not been exercised with a real pack.** The ADC channel is
   configured and the divider ratio comes from devicetree, but every reading so far was
   taken with no cell attached. Percent, the band hysteresis and the `flags` USB bit are

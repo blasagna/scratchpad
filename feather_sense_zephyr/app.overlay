@@ -82,6 +82,29 @@
 	};
 };
 
+/*
+ * The CPU clock, which the NeoPixel's bit-banged timing is derived from.
+ *
+ * `worldsemi,ws2812-gpio` has no clock of its own: it toggles the line with
+ * inline assembly and counts NOPs, and Kconfig works out how many from
+ * /cpus/cpu@0's clock-frequency. nrf52840.dtsi does not declare one (nrf52810
+ * and nrf52805 do), and neither did this overlay, so CONFIG_DELAY_T1H and its
+ * three siblings fell all the way through to their last-resort literals -- 7,
+ * 6, 3 and 8 NOPs, which are values for a roughly 10 MHz part. At 64 MHz that
+ * made a "1" bit's high pulse about 109 ns where the WS2812 wants 700, and the
+ * LED decoded garbage: it lit, in the wrong colour, which is a far more
+ * confusing failure than staying dark.
+ *
+ * Declaring the frequency here is what the driver's own binding does in its
+ * first example, and it gives 44/38/22/51 NOPs. Nothing else on this SoC reads
+ * the property -- the drivers that do are all for other vendors' parts.
+ * Check it took: `grep CONFIG_DELAY_T build/zephyr/.config`.
+ */
+&{/cpus/cpu@0} {
+	/* Path syntax, not a label: nrf52840.dtsi gives the node none. */
+	clock-frequency = <64000000>;
+};
+
 / {
 	neopixel: ws2812 {
 		compatible = "worldsemi,ws2812-gpio";

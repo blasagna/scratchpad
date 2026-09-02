@@ -13,6 +13,7 @@
 #include "codec.hpp"
 #include "env.hpp"
 #include "imu.hpp"
+#include "led.hpp"
 #include "streams.hpp"
 #include "usb.hpp"
 
@@ -89,6 +90,38 @@ int cmd_env(const shell *sh, size_t, char **)
 	return 0;
 }
 
+int cmd_led(const shell *sh, size_t argc, char **argv)
+{
+	if (argc != 4) {
+		shell_error(sh, "usage: fs led <r> <g> <b>   (0-255 each)");
+		return -EINVAL;
+	}
+
+	const unsigned long r = strtoul(argv[1], nullptr, 0);
+	const unsigned long g = strtoul(argv[2], nullptr, 0);
+	const unsigned long b = strtoul(argv[3], nullptr, 0);
+
+	if (r > 255 || g > 255 || b > 255) {
+		shell_error(sh, "each channel must be 0-255");
+		return -EINVAL;
+	}
+
+	const int ret =
+		led::set(static_cast<uint8_t>(r), static_cast<uint8_t>(g), static_cast<uint8_t>(b));
+	if (ret != 0) {
+		shell_error(sh, "the pixel write failed (%d)", ret);
+		return ret;
+	}
+
+	shell_print(sh, "pixel set to r=%lu g=%lu b=%lu; it should look %s", r, g, b,
+		    (r && !g && !b)   ? "red"
+		    : (!r && g && !b) ? "green"
+		    : (!r && !g && b) ? "blue"
+				      : "like that mix");
+
+	return 0;
+}
+
 int cmd_stream(const shell *sh, size_t argc, char **argv)
 {
 	if (argc != 3) {
@@ -141,6 +174,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(battery, NULL, "The last battery reading", cmd_battery),
 	SHELL_CMD(env, NULL, "What the last SHT30 fetch cost", cmd_env),
 	SHELL_CMD_ARG(stream, NULL, "Enable or disable a stream", cmd_stream, 3, 0),
+	SHELL_CMD_ARG(led, NULL, "Drive the pixel: fs led <r> <g> <b>", cmd_led, 4, 0),
 	SHELL_CMD(bootloader, NULL, "Reboot into the UF2 bootloader", cmd_bootloader),
 	SHELL_SUBCMD_SET_END);
 
