@@ -53,13 +53,25 @@ to `//memory_optimization:__subpackages__` only.
 
 ## Gotchas
 
-- **`pahole` is installed (system `dwarves`, v1.25); `perf` is not.** valgrind is
-  a pixi-managed tool for the Bazel areas; see the root
-  [`README.md`](../README.md). The `data_layout` README documents running
-  `pahole` on the built binary to see struct/cache-line layout, and several
-  READMEs point at `valgrind --tool=cachegrind` (the paper's §7 tool) for
-  cache-miss counts — but no demo *requires* any of them. Everything runs and
-  passes on the runtime benchmark alone.
+- **`pahole` and `perf` are both installed; no demo requires either.** pahole is
+  the system `dwarves` (v1.25). perf comes from `linux-tools-common` +
+  `linux-tools-generic` and has to stay version-matched to the running kernel —
+  `/usr/bin/perf` is a wrapper that dispatches on `uname -r`, so after a kernel
+  upgrade reboot first, then install (v7.1.5 here, matching). valgrind is
+  pixi-managed for the Bazel areas; see the root [`README.md`](../README.md).
+  Note `.bazelrc`'s `--config=valgrind` runs *memcheck*, for correctness — not
+  `--tool=cachegrind`, which nothing in this area uses. Every demo runs and
+  passes on the runtime benchmark alone; these tools only enrich the narrative.
+- **Where perf actually adds something** — the demos whose README asserts a
+  mechanism that wall-clock timing only implies: `tlb_usage`
+  (`dTLB-load-misses`; its "did THP promote the region" caveat is otherwise
+  inferred from the shape of the two curves), `data_layout`'s alignment half and
+  `conflict_misses` (`L1-dcache-load-misses`; both claim a line/miss count), and
+  `instruction_cache` (`branch-misses`, behind the honest ~3% hint result, where
+  the README currently falls back to `objdump`). `perf c2c` is the purpose-built
+  tool for `false_sharing`. `perf_event_paranoid` is 2, which is enough for
+  per-process counting on our own binaries — counters come back scoped `:u`;
+  only system-wide `-a` needs it lowered.
 - **pahole needs `-c dbg`, the CamelCase type name, and a config-explicit path.**
   The default `fastbuild` emits line tables only, so pahole finds no types; and
   `-C` matches the C++ identifier, so it is `-C Order`, not the paper's
