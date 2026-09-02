@@ -193,7 +193,7 @@ async def run_ble(args: argparse.Namespace) -> int:
 
     async with BleakClient(address) as client:
         link = BleLink(client)
-        print(f"connected, ATT MTU {link.mtu}")
+        print("connected")
         await link.start_rpc()
         scales = await link.fetch_scales()
         print("scales:")

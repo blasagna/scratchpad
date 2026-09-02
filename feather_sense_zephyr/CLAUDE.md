@@ -163,17 +163,32 @@ established on a real board.
   `i2c scan i2c@40003000`, not `i2c scan i2c0`. Tab completion is the reliable
   way to get it.
 
-- **BLE is built but has never run.** No code path from `bt_gatt_notify` onward
-  has executed — the only host available had its Bluetooth adapter
-  rfkill-blocked. Do not describe any BLE behaviour here as working, and do not
-  quote a BLE throughput number as this firmware's; the ones in README are the
-  CircuitPython port's, as a floor.
+- **Restart advertising from `recycled`, never from `disconnected`**
+  *(measured)*. `bt_le_adv_start()` in the disconnected callback returns
+  `-ENOMEM` — the connection object is still held, so a connectable advertiser
+  has no slot. It fails quietly, and the symptom is not "BLE is broken" but "BLE
+  worked once": the board keeps streaming over USB and simply never advertises
+  again. Zephyr's `recycled` callback fires when the object is actually freed and
+  is documented for exactly this. No `k_work` and no extra thread needed — the
+  callback *is* the deferral.
+
+- **BLE carries the full stream** *(measured)*: 208.4 samples/s from device
+  timestamps, 0 errors, 0 sequence gaps, 0 device-side drops, ATT MTU 247, and
+  three consecutive connect/disconnect cycles. About 2.7 KB/s at ~30
+  notifications/s, well inside the ~4.4 KB/s the CircuitPython port reached.
+
+- **bleak cannot report the negotiated ATT MTU on BlueZ.** `mtu_size` warns and
+  returns its default of 23 forever, and there is no `_acquire_mtu()` in bleak 3.
+  `read_ble.py` reports the largest notification it has actually received
+  instead — a measurement of the same quantity and a lower bound on it. Do not
+  print `mtu_size`; it says the link is at the minimum when it is not.
 
 - **Do not restate an unverified hardware fact as known.** README keeps three
   lists — settled by running it, live limitations, still unverified — and that
-  separation is the document's main value. The NeoPixel's pin (`P0.16`), whether
-  INT1/DRDY/INT are routed, and every BLE figure are inherited or inferred, not
-  measured here.
+  separation is the document's main value. Still on the unverified side: the
+  NeoPixel's pin (`P0.16`), whether INT1/DRDY/INT are routed to GPIOs at all,
+  the battery over a real discharge, and the magnetometer's *values*, which sit
+  at the sensor's own rail for reasons not established.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries

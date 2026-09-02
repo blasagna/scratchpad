@@ -255,11 +255,31 @@ void disconnected_cb(bt_conn *conn, uint8_t reason)
 	/* Back to the MTU-independent default until the next host negotiates. */
 	streams::set_imu_batch_samples(streams::kMaxImuBatchSamples);
 
+	/* Advertising is NOT restarted here. See recycled_cb(). */
+}
+
+/*
+ * Restart advertising once the connection object has actually been freed.
+ *
+ * Doing this from disconnected_cb() is the obvious thing, and it does not work:
+ * the connection object is still held at that point, so a *connectable*
+ * advertiser has no slot to take and bt_le_adv_start() returns -ENOMEM. The
+ * board then advertises never again while continuing to stream perfectly over
+ * USB, which is what made it look fine. `recycled` is Zephyr's hook for exactly
+ * this; its own documentation calls it "the event to listen for to start a new
+ * connection or connectable advertiser". Measured: the error was -12, and the
+ * second BLE connection to this board was the one that found it.
+ */
+void recycled_cb()
+{
 	const int ret =
 		bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (ret != 0) {
 		LOG_ERR("could not restart advertising (%d)", ret);
+		return;
 	}
+
+	LOG_INF("advertising again");
 }
 
 /*
@@ -278,6 +298,7 @@ void mtu_updated_cb(bt_conn *conn, uint16_t tx, uint16_t rx)
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected_cb,
 	.disconnected = disconnected_cb,
+	.recycled = recycled_cb,
 };
 
 bt_gatt_cb gatt_callbacks = {

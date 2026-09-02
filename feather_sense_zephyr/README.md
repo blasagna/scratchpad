@@ -42,9 +42,19 @@ a 1 Hz environmental stream all running at once:
 | SHT30 | 25.6 °C, 56.1 %RH, and a fetch that blocks **854 µs** — not the ~152 ms this document feared |
 | Battery | 4056 mV, 85 %, USB flag set, from the pack on the board |
 
-BLE is built and advertises, but **has not been measured**: the only host
-available had its Bluetooth adapter rfkill-blocked. Every BLE number quoted
-below is still the CircuitPython port's, as a floor rather than a prediction.
+The same, over BLE, with all four notify characteristics subscribed:
+
+| | |
+|---|---|
+| IMU rate, from device timestamps | **208.4 samples/s** — the same as USB |
+| Decode errors, sequence gaps, device-side notification drops | **0** over a 20 s run |
+| Largest notification observed | **142 bytes**, so the ATT MTU is at least 145 |
+| ATT MTU the board negotiated | **247**, from the board's own log |
+
+So both transports carry the full 208 Hz stream with nothing dropped, which was
+the point of the whole design. The link is nowhere near saturated: about
+2.7 KB/s of samples against the ~4.4 KB/s the CircuitPython port reached at a
+23-byte MTU.
 
 Building the firmware turned up six things this document had wrong or had not
 known, all of them recorded in place below rather than only here:
@@ -67,6 +77,9 @@ known, all of them recorded in place below rather than only here:
    board — see [how values are encoded](#how-values-are-encoded).
 7. The scale table is in *nano*-SI, so a dimensionless field's identity is
    `1e9/1`. Writing `1/1` made a working light sensor report `0.0000`.
+8. Advertising cannot be restarted from the `disconnected` callback, so the
+   board advertised exactly once per boot — see [restarting
+   advertising](#restarting-advertising).
 
 ## requirements
 
@@ -585,15 +598,43 @@ subscribed; with only the former, a subscription that arrived first would stay p
 19 usable bytes for the life of the connection. The USB path uses the same number, since
 the CDC bulk endpoint is not the constraint on that link — one batch size, one encoder.
 
-**None of this has been executed.** See [live limitations](#live-limitations).
+Measured: the board logs `ATT MTU 247 -> 19 IMU samples per notification` twice
+per connection — once from the CCC callback and once from `att_mtu_updated` — and the
+largest notification the host actually receives is 142 bytes, an 11-sample batch. The cap
+is 19; what actually sets the batch size is the drain cadence, since a 48 ms drain has
+about ten samples waiting. The MTU is the ceiling, not the schedule.
+
+### restarting advertising
+
+**Advertising must be restarted from the `recycled` callback, not from `disconnected`.**
+This is the one thing in the BLE path that a build could not have caught and that a single
+connection would not have caught either.
+
+Calling `bt_le_adv_start()` from `disconnected` is the obvious thing to do and it fails
+with `-ENOMEM`: the connection object is still held at that point, so a *connectable*
+advertiser has no slot to take. The failure is quiet — one `LOG_ERR` line on a console
+nobody is reading — and its symptom is not "BLE is broken" but "BLE worked once". The board
+kept streaming perfectly over USB, kept answering its shell, and simply never advertised
+again until it was rebooted. It took a second connection attempt to find.
+
+Zephyr provides `recycled` for exactly this; its documentation calls it "the event to
+listen for to start a new connection or connectable advertiser", and it fires once the
+connection object has actually been freed. Three back-to-back connect/disconnect cycles now
+succeed. Note that this needed no `k_work` and no extra thread — the callback is the
+deferral.
 
 Two calibrations from the CircuitPython port, which ran the same link from the same board:
 it sustained roughly **110 notifications per second** on BlueZ at the **default 23-byte
 MTU**, saturating around 100 Hz of IMU (~4.4 KB/s); and requesting the 7.5 ms minimum
 connection interval measured *identical* to leaving the negotiated default alone, so that
-code was deleted rather than kept as a plausible-looking no-op. The expected win here is
-therefore MTU and the nRF52840's 2M PHY, not interval tuning — and if raising the MTU does
-not move the number, the next thing to check is the notification rate, not the interval.
+code was deleted rather than kept as a plausible-looking no-op. The expected win here was
+therefore MTU and the nRF52840's 2M PHY, not interval tuning.
+
+That prediction held. This firmware carries 208 Hz of IMU plus everything else at about
+30 notifications per second — well under the 110 that port managed — because each
+notification carries eleven samples instead of one. It is doing roughly 2.7 KB/s of
+samples, so the link is not the constraint and there is headroom left; the CircuitPython
+figure stands as the floor it was quoted as.
 
 ### usb serial framing
 
@@ -918,6 +959,23 @@ build     0.1.0+588f65e
   env      dev    0.00/s  host    1.00/s  batches     1  gap max     0.0 ms  seq gaps 0
 ```
 
+And over BLE, which is the same numbers through a different pipe:
+
+```
+[ 19.1s] errors 0  largest notification 142 B (ATT MTU >= 145)
+  imu      dev  208.97/s  host  214.12/s  batches    21  gap max     5.7 ms  seq gaps 0
+  magn     dev   20.00/s  host   19.92/s  batches    10  gap max    50.0 ms  seq gaps 0
+  env      dev    0.00/s  host    1.00/s  batches     1  gap max     0.0 ms  seq gaps 0
+  battery  dev    0.00/s  host    1.00/s  batches     1  gap max     0.0 ms  seq gaps 0
+```
+
+`largest notification` is there instead of an MTU because **bleak cannot report the
+negotiated ATT MTU on BlueZ**: `BleakClient.mtu_size` warns that it is returning the
+default and then returns 23 forever. Printing that would be worse than printing nothing —
+it claims the link is at the minimum when the board's own log says 247. The largest
+notification actually received is a measurement of the same quantity and a lower bound on
+it, and the two can be cross-checked against the console.
+
 `dev 208.15` against a chip ODR of 208 is the headline: the sample spacing is the chip's
 own clock, not the host's. The magnetometer's 52 ms `gap max` is its 50 ms sample spacing
 plus jitter, as expected for two samples per batch at 20 Hz. The IMU's 6.7 ms is the drain
@@ -1012,6 +1070,14 @@ with a shell.
   default: `emit()` puts a 242-byte batch on the caller's stack, which looked worth a bump
   until the number was read.
 
+- **BLE carries the full stream, and reconnects.** All four notify characteristics, the
+  RPC pair, MTU negotiation to 247, and three consecutive connect/disconnect cycles: 208.4
+  samples/s from device timestamps, 0 decode errors, 0 sequence gaps and 0 device-side
+  notification drops over 20 s. The rerun viewer runs over it too. The one defect found was
+  the re-advertise path — see [restarting advertising](#restarting-advertising) — and it
+  is exactly the shape the earlier version of this list predicted: "something small in that
+  untested path, not a throughput surprise".
+
 - **`ws2812_gpio.c` does not compile without `CONFIG_CLOCK_CONTROL_NRF=y`.** Confirmed
   again by this build. The symbol is now also deprecated in 4.4.99 and warns about it, so
   this will need revisiting; the alternatives are `worldsemi,ws2812-spi` off `spi1`, at the
@@ -1020,14 +1086,6 @@ with a shell.
 
 ### live limitations
 
-- **BLE has not been measured at all.** The GATT service is built, the board advertises as
-  `feather-sense`, and `read_ble.py` is written against it — but the only host available
-  had its Bluetooth adapter rfkill-blocked, so **no code path from `bt_gatt_notify` onward
-  has executed**. The MTU-derived batch sizing, the CCC callbacks, the RPC characteristic
-  pair and the reconnect handling are all unexercised. Every BLE figure in this document is
-  the CircuitPython port's, quoted as a floor. **Check:** `rfkill unblock bluetooth`, then
-  `pixi run ble --seconds 20`. Expect the first thing to go wrong to be something small in
-  that untested path, not a throughput surprise.
 - **The NeoPixel has not been seen to light.** The pin (`P0.16`) is inherited from the
   Adafruit pinout, not from Zephyr's board files, and a `ws2812-gpio` write to a
   wrong-but-valid pin fails silently. The LED is also driven only from the battery band, so

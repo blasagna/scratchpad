@@ -36,6 +36,7 @@ class BleLink:
         self._client = client
         self._rpc_seq = 0
         self._responses: asyncio.Queue[fp.RpcResponse] = asyncio.Queue()
+        self._largest_notification = 0
         self.errors = 0
 
     @staticmethod
@@ -109,6 +110,7 @@ class BleLink:
         """
 
         def handler(_sender: object, data: bytearray) -> None:
+            self._largest_notification = max(self._largest_notification, len(data))
             try:
                 on_batch(fp.parse_batch(bytes(data)))
             except ValueError:
@@ -118,8 +120,21 @@ class BleLink:
             await self._client.start_notify(uuid, handler)
 
     @property
-    def mtu(self) -> int:
-        return self._client.mtu_size
+    def largest_notification(self) -> int:
+        """The biggest notification payload seen so far, in bytes.
+
+        This exists because `BleakClient.mtu_size` is not usable here: on BlueZ
+        bleak has no way to read the negotiated ATT MTU, warns as much, and
+        reports its default of 23 forever. Printing that would be worse than
+        printing nothing -- it says the link is at the minimum when it is not.
+
+        The largest notification actually received is a *measurement* of the
+        same thing, and a lower bound on the MTU: a notification carries at most
+        `mtu - 3` bytes. The board knows the real number and logs it to its
+        console (`ATT MTU 247 -> 19 IMU samples per notification`), so the two
+        can be cross-checked.
+        """
+        return self._largest_notification
 
 
 async def run(address: str | None, seconds: float) -> int:
@@ -128,9 +143,7 @@ async def run(address: str | None, seconds: float) -> int:
 
     async with BleakClient(address) as client:
         link = BleLink(client)
-        # The MTU governs how many IMU samples the board puts in one
-        # notification: (mtu - 3 - 10) / 12. At 247 that is 19.
-        print(f"connected, ATT MTU {link.mtu}")
+        print("connected")
 
         await link.start_rpc()
         device_id, build_id = await link.identify()
@@ -157,7 +170,15 @@ async def run(address: str | None, seconds: float) -> int:
             if elapsed < 1.0:
                 continue
 
-            print(f"[{now - started:5.1f}s] errors {link.errors}")
+            # The MTU governs how many IMU samples the board puts in one
+            # notification -- (mtu - 3 - 10) / 12, which is 19 at 247 -- and the
+            # largest notification seen is the only view of that this side of
+            # the link has. See BleLink.largest_notification.
+            print(
+                f"[{now - started:5.1f}s] errors {link.errors}  "
+                f"largest notification {link.largest_notification} B "
+                f"(ATT MTU >= {link.largest_notification + 3})"
+            )
             for stat in stats.values():
                 if stat.samples:
                     print(stat.line(elapsed))
