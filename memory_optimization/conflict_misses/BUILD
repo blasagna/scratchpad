@@ -4,6 +4,7 @@ cc_library(
     name = "conflict_misses",
     srcs = ["conflict_misses.cpp"],
     hdrs = ["conflict_misses.hpp"],
+    deps = ["//memory_optimization/support:permutation"],
 )
 
 cc_test(

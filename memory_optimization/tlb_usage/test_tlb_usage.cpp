@@ -35,5 +35,19 @@ TEST(PageWalker, ZeroPagesIsSafe) {
   EXPECT_EQ(w.num_pages(), 0u);
 }
 
+// huge_backed() reads /proc/self/smaps; it must return without crashing and
+// agree that a 4 KiB-page region is never huge-backed. (We do not assert the
+// huge case is promoted, since THP is opportunistic and may decline.)
+TEST(PageWalker, HugeBackedIsHonest) {
+  PageWalker plain(2048, false);
+  EXPECT_FALSE(plain.huge_backed());
+
+  PageWalker empty(0, true);
+  EXPECT_FALSE(empty.huge_backed()); // nothing mapped
+
+  PageWalker huge(2048, true);
+  (void)huge.huge_backed(); // just must not crash
+}
+
 } // namespace
 } // namespace memory_optimization::tlb_usage

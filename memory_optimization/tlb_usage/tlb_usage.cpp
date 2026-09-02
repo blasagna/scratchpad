@@ -1,16 +1,18 @@
 #include "memory_optimization/tlb_usage/tlb_usage.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <new>
-#include <numeric>
-#include <random>
+#include <string>
 #include <vector>
 
 #include <sys/mman.h>
 #include <unistd.h>
+
+#include "memory_optimization/support/permutation.hpp"
 
 namespace memory_optimization::tlb_usage {
 
@@ -64,10 +66,8 @@ PageWalker::PageWalker(std::size_t num_pages, bool huge_pages, unsigned seed)
   std::memset(region_, 0, region_bytes_);
 
   // Random single cycle over the page nodes.
-  std::vector<std::size_t> order(num_pages_);
-  std::iota(order.begin(), order.end(), 0);
-  std::mt19937 rng(seed);
-  std::shuffle(order.begin(), order.end(), rng);
+  const std::vector<std::size_t> order =
+      support::random_permutation(num_pages_, seed);
   for (std::size_t i = 0; i < num_pages_; ++i) {
     page_node(order[i])->next = page_node(order[(i + 1) % num_pages_]);
   }
@@ -91,10 +91,35 @@ std::uintptr_t PageWalker::walk(std::size_t steps) const {
 }
 
 bool PageWalker::huge_backed() const {
-  // Read the AnonHugePages line for this range from /proc/self/smaps is heavy;
-  // instead we report the request. THP promotion is opportunistic, so callers
-  // treat this as "asked for", and the benchmark labels it as such.
-  return huge_pages_;
+  if (region_ == nullptr) {
+    return false;
+  }
+  // THP promotion is opportunistic, so "asked for huge pages" is not "got
+  // them". Report the truth by reading this mapping's AnonHugePages line from
+  // /proc/self/smaps: each mapping begins with a "start-end perms ..." header,
+  // and its AnonHugePages line gives the KiB actually backed by huge pages.
+  std::ifstream smaps("/proc/self/smaps");
+  if (!smaps) {
+    return false;
+  }
+  const auto want = reinterpret_cast<std::uintptr_t>(region_);
+  std::string line;
+  bool in_region = false;
+  while (std::getline(smaps, line)) {
+    unsigned long start = 0;
+    unsigned long end = 0;
+    char perms[8] = {};
+    if (std::sscanf(line.c_str(), "%lx-%lx %7s", &start, &end, perms) == 3) {
+      in_region = want >= start && want < end;
+      continue;
+    }
+    long kb = 0;
+    if (in_region &&
+        std::sscanf(line.c_str(), "AnonHugePages: %ld kB", &kb) == 1) {
+      return kb > 0;
+    }
+  }
+  return false;
 }
 
 } // namespace memory_optimization::tlb_usage

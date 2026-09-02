@@ -55,6 +55,11 @@ Matrix mul_transposed(const Matrix &a, const Matrix &b);
 // divergence, noted at the call site).
 Matrix mul_blocked(const Matrix &a, const Matrix &b);
 
+// An n x n matrix filled with reproducible pseudo-random values in [-1, 1].
+// Used by both the correctness test and the benchmark so they exercise the same
+// inputs; `seed` selects the sequence.
+Matrix random_matrix(std::size_t n, unsigned seed);
+
 } // namespace memory_optimization::matrix_multiply
 
 #endif // MEMORY_OPTIMIZATION_MATRIX_MULTIPLY_MATMUL_HPP

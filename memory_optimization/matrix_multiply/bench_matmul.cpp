@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <random>
 
 #include <benchmark/benchmark.h>
 
@@ -17,16 +16,6 @@
 
 namespace memory_optimization::matrix_multiply {
 namespace {
-
-Matrix random_matrix(std::size_t n, unsigned seed) {
-  std::mt19937 rng(seed);
-  std::uniform_real_distribution<double> dist(-1.0, 1.0);
-  Matrix m(n);
-  for (auto &x : m.data) {
-    x = dist(rng);
-  }
-  return m;
-}
 
 template <Matrix (*Mul)(const Matrix &, const Matrix &)>
 void run(benchmark::State &state) {

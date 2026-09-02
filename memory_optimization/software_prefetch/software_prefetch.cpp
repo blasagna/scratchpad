@@ -1,13 +1,12 @@
 #include "memory_optimization/software_prefetch/software_prefetch.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <numeric>
-#include <random>
 #include <vector>
 
 #include <xmmintrin.h>
+
+#include "memory_optimization/support/permutation.hpp"
 
 namespace memory_optimization::software_prefetch {
 
@@ -21,10 +20,8 @@ ChaseList::ChaseList(std::size_t count, std::size_t distance, unsigned seed)
 
   // Random single cycle over all nodes (see conflict_misses for the same idea):
   // a shuffled permutation whose consecutive entries link head-to-tail.
-  std::vector<std::size_t> order(count_);
-  std::iota(order.begin(), order.end(), 0);
-  std::mt19937 rng(seed);
-  std::shuffle(order.begin(), order.end(), rng);
+  const std::vector<std::size_t> order =
+      support::random_permutation(count_, seed);
 
   for (std::size_t i = 0; i < count_; ++i) {
     Node &cur = nodes_[order[i]];

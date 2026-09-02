@@ -4,6 +4,7 @@ cc_library(
     name = "software_prefetch",
     srcs = ["software_prefetch.cpp"],
     hdrs = ["software_prefetch.hpp"],
+    deps = ["//memory_optimization/support:permutation"],
 )
 
 cc_test(

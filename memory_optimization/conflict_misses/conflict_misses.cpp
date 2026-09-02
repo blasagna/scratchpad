@@ -4,9 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <new>
-#include <numeric>
-#include <random>
 #include <vector>
+
+#include "memory_optimization/support/permutation.hpp"
 
 namespace memory_optimization::conflict_misses {
 
@@ -31,10 +31,8 @@ ChaseList::ChaseList(std::size_t count, std::size_t stride, unsigned seed)
   // A random permutation of [0, count) whose successive entries form one cycle
   // covering every node -- a random single cycle, so the traversal is a random
   // walk the prefetcher cannot follow.
-  std::vector<std::size_t> order(count_);
-  std::iota(order.begin(), order.end(), 0);
-  std::mt19937 rng(seed);
-  std::shuffle(order.begin(), order.end(), rng);
+  const std::vector<std::size_t> order =
+      support::random_permutation(count_, seed);
 
   for (std::size_t i = 0; i < count_; ++i) {
     Node *cur = node_at(order[i]);

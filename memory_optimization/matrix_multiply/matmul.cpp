@@ -2,10 +2,21 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <random>
 
 #include "memory_optimization/support/cacheinfo.hpp"
 
 namespace memory_optimization::matrix_multiply {
+
+Matrix random_matrix(std::size_t n, unsigned seed) {
+  std::mt19937 rng(seed);
+  std::uniform_real_distribution<double> dist(-1.0, 1.0);
+  Matrix m(n);
+  for (auto &x : m.data) {
+    x = dist(rng);
+  }
+  return m;
+}
 
 Matrix mul_naive(const Matrix &a, const Matrix &b) {
   const std::size_t n = a.n;

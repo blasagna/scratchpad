@@ -4,6 +4,7 @@ cc_library(
     name = "tlb_usage",
     srcs = ["tlb_usage.cpp"],
     hdrs = ["tlb_usage.hpp"],
+    deps = ["//memory_optimization/support:permutation"],
 )
 
 cc_test(

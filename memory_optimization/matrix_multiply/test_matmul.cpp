@@ -1,22 +1,11 @@
 #include "memory_optimization/matrix_multiply/matmul.hpp"
 
 #include <cstddef>
-#include <random>
 
 #include <gtest/gtest.h>
 
 namespace memory_optimization::matrix_multiply {
 namespace {
-
-Matrix random_matrix(std::size_t n, unsigned seed) {
-  std::mt19937 rng(seed);
-  std::uniform_real_distribution<double> dist(-1.0, 1.0);
-  Matrix m(n);
-  for (auto &x : m.data) {
-    x = dist(rng);
-  }
-  return m;
-}
 
 void expect_equal(const Matrix &x, const Matrix &y) {
   ASSERT_EQ(x.n, y.n);

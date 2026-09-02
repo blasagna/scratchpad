@@ -37,7 +37,14 @@ template <bool Huge> void run(benchmark::State &state) {
   state.counters["cycles_per_access"] =
       benchmark::Counter(static_cast<double>(cycles) /
                          (static_cast<double>(state.iterations()) * kSteps));
-  state.SetLabel(Huge ? "2MiB" : "4KiB");
+  // Report whether the kernel actually promoted the region, not just what we
+  // asked for -- if THP declined, the "huge" row is really running on 4 KiB
+  // pages, which explains a converged result (see the README).
+  if constexpr (Huge) {
+    state.SetLabel(walker.huge_backed() ? "2MiB" : "2MiB(not promoted)");
+  } else {
+    state.SetLabel("4KiB");
+  }
 }
 
 // 512 pages (2 MiB) fits the L2 TLB; 128Ki pages (512 MiB of address space)
