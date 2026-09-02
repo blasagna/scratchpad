@@ -14,26 +14,59 @@ focusing on the "Zephyr freestanding application" pattern. The zephyr workspace 
 There is a prior art for this board that is worth reading first:
 `~/code/remapy/adafruit_feather_sense/` is a CircuitPython application streaming the same
 IMU and magnetometer over the same two transports, with measurements for most of the
-decisions below. Where this document quotes a number, that is where it came from.
+decisions below. Where this document quotes a number **and does not say it was measured
+here**, that is where it came from.
 
 ## status
 
-**No firmware has been written, and nothing has been run on the board.** This document is
-the design contract; the firmware and the host programs land afterwards, in the order
-`dfg/` used — contract first, port second.
+**Implemented, built, flashed and run on hardware.** The firmware is in `src/`
+and `drivers/`, the host programs in `host/`, and the `native_sim` tests in
+`tests/`. What has been exercised on a real board, and what has not, is listed
+at the end under [known limitations and open
+questions](#known-limitations-and-open-questions) — that separation is this
+document's main value and it is kept up.
 
-What *has* been done is that the [devicetree overlay](#devicetree-overlay) below was
-built, minus the IMU node whose driver does not exist yet. `west build -b
-adafruit_feather_nrf52840/nrf52840/sense/uf2` links and emits a `zephyr.uf2` (200912 B
-flash, 43996 B RAM for a config with I²C, the three in-tree sensors, ADC, the LED strip,
-input, shell and Bluetooth). That build is what turned up the two Kconfig traps recorded
-below, so the overlay and the `prj.conf` notes are verified rather than merely plausible.
-Every other Zephyr path, symbol, binding and driver behaviour named here was checked
-against the 4.4.99 tree in `~/zephyrproject`.
+Measured on the board, over USB CDC, with a 208 Hz IMU, a 20 Hz magnetometer and
+a 1 Hz environmental stream all running at once:
 
-Everything about how the *hardware* behaves is either quoted from the CircuitPython port
-or listed in [known limitations and open questions](#known-limitations-and-open-questions)
-as unverified. The two are kept apart on purpose.
+| | |
+|---|---|
+| IMU rate, from device timestamps | **208.4 samples/s** (the chip's ODR is 208) |
+| Magnetometer rate | **20.0 samples/s** |
+| Decode errors and sequence gaps | **0** in every run, all five streams at once |
+| FIFO overruns | **0**, after the IMU thread learned to flush the boot backlog |
+| Flash | 236 088 B, 29 % of the 792 KB application partition |
+| RAM | 79 048 B, 30 % of 256 KB |
+| IMU WHO_AM_I | **0x69 — this board carries the LSM6DS33**, not the LSM6DS3TR-C |
+| Accelerometer magnitude at rest | 9.99 m/s² |
+| SHT30 | 25.6 °C, 56.1 %RH, and a fetch that blocks **854 µs** — not the ~152 ms this document feared |
+| Battery | 4056 mV, 85 %, USB flag set, from the pack on the board |
+
+BLE is built and advertises, but **has not been measured**: the only host
+available had its Bluetooth adapter rfkill-blocked. Every BLE number quoted
+below is still the CircuitPython port's, as a floor rather than a prediction.
+
+Building the firmware turned up six things this document had wrong or had not
+known, all of them recorded in place below rather than only here:
+
+1. The image linked at flash offset 0 and would have erased the SoftDevice
+   and the MBR the bootloader itself needs — see [building and
+   flashing](#building-and-flashing).
+2. Zephyr's boot-time CDC ACM initializer registers only the *first* instance,
+   so the data port was built and never enumerated — see [the second CDC ACM
+   instance](#the-second-cdc-acm-instance).
+3. `CONFIG_I2C_NRFX_TWIM` is a third promptless symbol and cannot be asserted in
+   `prj.conf`.
+4. The battery divider *does* need an overlay: the board declares `vbatt` but no
+   ADC channel to go with it, and the result is a silent 0 mV — see [battery and
+   the status led](#battery-and-the-status-led).
+5. Zephyr's SHT30 driver runs in **periodic** mode by default, not the blocking
+   single-shot conversion assumed here, which voids this document's largest
+   performance worry — see [the environmental read](#the-environmental-read).
+6. The magnetometer's wire unit clipped before the sensor did, on the very first
+   board — see [how values are encoded](#how-values-are-encoded).
+7. The scale table is in *nano*-SI, so a dimensionless field's identity is
+   `1e9/1`. Writing `1/1` made a working light sensor report `0.0000`.
 
 ## requirements
 
@@ -82,15 +115,19 @@ anything else. Verified against Zephyr 4.4.99.
 
 | Input | Chip | I²C | Zephyr driver | Status |
 |---|---|---|---|---|
-| Accelerometer + gyroscope | LSM6DS33 **or** LSM6DS3TR-C | `0x6a` | **none in tree** | Needs an out-of-tree driver — see below |
+| Accelerometer + gyroscope | LSM6DS33 (**confirmed**, `WHO_AM_I` 0x69) | `0x6a` | **none in tree** | Out-of-tree driver in `drivers/lsm6ds3trc/` |
 | Magnetometer | LIS3MDL | `0x1c` | `st,lis3mdl-magn` | Driver exists; needs an overlay node |
 | Temperature + humidity | SHT30 | `0x44` | `sensirion,sht3xd` | **Already in the board DTS** (`sht3xd@44`) |
 | Light level | APDS9960 | `0x39` | `avago,apds9960` | Driver exists; needs an overlay node |
-| Battery | divider to `AIN5`, 100k/200k | — | `voltage-divider` | **Already in the board DTS** (`vbatt`) |
+| Battery | divider to `AIN5`, 100k/200k | — | `voltage-divider` | Node in the board DTS (`vbatt`), but the ADC **channel** is not — see below |
 | User button | switch on `P1.02`, active low | — | `gpio-keys`, `INPUT_KEY_0`, alias `sw0` | **Already in the board DTS** |
 | Status LED | NeoPixel on `P0.16` | — | `worldsemi,ws2812-gpio` | Driver exists; needs an overlay node |
 | Pressure | BMP280 | `0x77` | `bosch,bme280` (accepts chip id `0x58`) | Available, **not used** |
 | Microphone | PDM MEMS | — | `nordic,nrf-pdm` | Available, **not used** |
+
+`i2c scan i2c@40003000` on the board finds exactly five: `0x1c`, `0x39`,
+`0x44`, `0x6a` and `0x77`. That is the table above, minus the microphone, which
+is not an I²C part.
 
 Four consequences worth stating outright.
 
@@ -99,7 +136,8 @@ Four consequences worth stating outright.
 LSM6DS3TR-C are in none of them. The nearest fit is `st,lsm6dsl`, whose `WHO_AM_I` check
 expects `0x6a` — which the LSM6DS3TR-C happens to answer, and the LSM6DS33 (`0x69`) does
 not — but that driver offers data-ready triggers only, with **no FIFO support at all**, so
-it cannot serve requirement 3.2's batching from a hardware-clocked source. What *is*
+it cannot serve requirement 3.2's batching from a hardware-clocked source. This board turns
+out to carry the **LSM6DS33**, so `st,lsm6dsl` would have rejected it outright. What *is*
 available is ST's own register-level driver, already vendored in the west workspace at
 `modules/hal/st/sensor/stmemsc/lsm6ds3tr-c_STdC/driver/` and wired into the build at
 `stmemsc/CMakeLists.txt:69` behind `CONFIG_USE_STDC_LSM6DS3TR_C`. That symbol has **no
@@ -129,6 +167,8 @@ the Zephyr form of the CircuitPython port's rule that **output data rate is set,
 inherited**; there it was a runtime call, here it is a build-time symbol, and the failure
 mode of getting it wrong (re-reading samples the chip has not refreshed) is identical.
 
+### the second CDC ACM instance
+
 **The console is already on USB, and that is a problem the board solves for free.** The
 `sense/uf2` board variant includes `boards/common/usb/cdc_acm_serial.dtsi`, which creates
 a `board_cdc_acm_uart` CDC ACM instance and chooses it for `zephyr,console` and
@@ -138,41 +178,112 @@ between two binary frames on every host attach. Here the overlay declares a **se
 CDC ACM instance for data, and log output can never reach it. That is a structural fix,
 not a workaround.
 
+**It does not work for free, though.** That same board fragment turns on
+`CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT`, whose initializer at
+`subsys/usb/device_next/app/cdc_acm_serial.c` says in its own comment: *"This code only
+registers the first CDC-ACM instance."* Left in charge, it builds the application's
+`cdc_acm_data` instance, binds a Zephyr device to it, and never enumerates it — so writes
+to the data port succeed and go nowhere, which is the worst shape a fault can take. The
+fix is to turn the boot initializer off in `prj.conf` and do the usbd setup in
+`src/usb.cpp` with `usbd_register_all_classes()`, which takes both. The host then sees two
+ACM devices, and `lsusb -v` shows both interfaces.
+
+**Which `/dev/ttyACM*` is which is answered by descriptor, not by order.** The
+`zephyr,cdc-acm-uart` binding's `label` property *becomes the USB interface string
+descriptor*, so the overlay names them "Feather Sense console" and "Feather Sense data"
+and Linux exposes the string at `/sys/class/tty/ttyACMn/device/interface`.
+`host/read_serial.py`'s `find_port()` resolves the data port that way and refuses to guess
+if it cannot. On the board this ran on the data port came up as `ttyACM1` and the console
+as `ttyACM0`, but nothing depends on that.
+
 ## design
 
 ### devicetree overlay
 
+`app.overlay`, in full — this is the file, not a paraphrase of it:
+
 ```dts
+/*
+ * The board DTS declares exactly one of the six sensors on the internal I2C
+ * bus (the SHT30). The IMU, the magnetometer, the light sensor and the
+ * NeoPixel are invisible to devicetree until they are declared here.
+ *
+ * See README.md, "hardware notes".
+ */
+
+#include <zephyr/dt-bindings/adc/adc.h>
 #include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/led/led.h>
 
-/*
- * The board DTS declares only the SHT30. Everything else on the internal I²C bus,
- * plus the NeoPixel, is added here.
- */
 &i2c0 {
-	/* EasyDMA. The board files use "nordic,nrf-twi", which is the non-DMA
-	 * peripheral; TWIM is the same pins with DMA behind them. */
+	/* EasyDMA. adafruit_feather_nrf52840_common.dtsi gives this bus
+	 * "nordic,nrf-twi", the legacy register-at-a-time peripheral; TWIM is
+	 * the same pins with DMA behind them. This one line is the whole of
+	 * requirement 2's "use DMA where possible" on this board. Confirm it
+	 * took with `grep CONFIG_I2C_NRFX_TWIM build/zephyr/.config`.
+	 */
 	compatible = "nordic,nrf-twim";
-	clock-frequency = <I2C_BITRATE_FAST>;   /* 400 kHz */
+	clock-frequency = <I2C_BITRATE_FAST>;	/* 400 kHz */
 
 	imu: lsm6ds3trc@6a {
-		compatible = "scratchpad,lsm6ds3trc";   /* out-of-tree, see drivers/ */
+		/* Out-of-tree; see drivers/lsm6ds3trc/. Zephyr ships no driver
+		 * for either part this board has carried.
+		 */
+		compatible = "scratchpad,lsm6ds3trc";
 		reg = <0x6a>;
-		/* irq-gpios: only if INT1 is routed. See known limitations. */
+		/* No irq-gpios: the FIFO is drained on a k_timer. Whether INT1
+		 * is routed to a GPIO at all is unverified -- see README.md,
+		 * "known limitations".
+		 */
 	};
 
 	magn: lis3mdl@1c {
 		compatible = "st,lis3mdl-magn";
 		reg = <0x1c>;
-		/* irq-gpios: only if DRDY is routed. See known limitations. */
+		/* No irq-gpios: selects CONFIG_LIS3MDL_TRIGGER_NONE. */
 	};
 
 	light: apds9960@39 {
 		compatible = "avago,apds9960";
 		reg = <0x39>;
-		/* int-gpios: only if INT is routed. Absent selects
-		 * CONFIG_APDS9960_FETCH_MODE_POLL automatically. */
+		/* No int-gpios: selects CONFIG_APDS9960_FETCH_MODE_POLL. */
+	};
+};
+
+/*
+ * The battery divider's ADC channel.
+ *
+ * The board dtsi declares the `vbatt` voltage-divider node itself -- ADC
+ * channel 5, output-ohms 100k, full-ohms 200k -- but it declares no `channel@5`
+ * under &adc to go with it, and without one ADC_DT_SPEC_GET() yields a spec
+ * with channel_cfg_dt_node_exists = false and vref_mv = 0. Nothing fails
+ * loudly: adc_channel_setup_dt() configures no channel, the `adc` shell
+ * answers "Channel 5 not configured", and adc_raw_to_millivolts_dt() multiplies
+ * by a zero reference and reports 0 mV forever. Measured on hardware; the
+ * design document had claimed the divider needed no overlay at all.
+ */
+&adc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@5 {
+		reg = <5>;
+		/* The divider halves the pack, so a 4.2 V cell presents 2.1 V.
+		 * Gain 1/6 against the 0.6 V internal reference puts full scale
+		 * at 3.6 V, which covers that with room to spare and is the
+		 * usual nRF52 battery arrangement. */
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		/* The reference itself, not the full-scale input.
+		 * adc_raw_to_millivolts_dt() reads this through DT_PROP_OR(...,
+		 * 0), so omitting it costs a wrong answer rather than a build
+		 * error -- every reading converts to 0 mV. */
+		zephyr,vref-mv = <600>;
+		/* 100k in parallel with 100k is a 50k source, which needs a
+		 * long sample window; 40 us is the SAADC's maximum. */
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_AIN5>;
+		zephyr,resolution = <12>;
 	};
 };
 
@@ -195,22 +306,50 @@ not a workaround.
 
 /*
  * A second CDC ACM instance, for binary sample data only. The board's own
- * `board_cdc_acm_uart` keeps the console, the shell and the log, so the two
- * never share a pipe.
+ * `board_cdc_acm_uart` (from boards/common/usb/cdc_acm_serial.dtsi, which the
+ * sense/uf2 variant includes) keeps the console, the shell and the log, so the
+ * two can never share a pipe. This is the structural fix for the defect that
+ * cost the CircuitPython port a trustworthy error counter.
  */
 &zephyr_udc0 {
 	cdc_acm_data: cdc_acm_data {
 		compatible = "zephyr,cdc-acm-uart";
+		/* The binding's `label` becomes the USB *interface string
+		 * descriptor*, which is how the host tells the two ACM ports
+		 * apart without assuming enumeration order: on Linux it lands
+		 * in /sys/class/tty/ttyACMn/device/interface. host/ resolves
+		 * the port by this string. See host/read_serial.py, find_port().
+		 */
+		label = "Feather Sense data";
 	};
+};
+
+/* Same treatment for the board's own console instance, so neither port has to
+ * be identified by elimination. */
+&board_cdc_acm_uart {
+	label = "Feather Sense console";
 };
 ```
 
-The battery divider and the user button need no overlay at all: the common board dtsi
-already declares a `voltage-divider` node on `&adc 5` with `output-ohms = <100000>` and
-`full-ohms = <200000>`, and a `gpio-keys` `button0` on `gpio1 2` with
-`zephyr,code = <INPUT_KEY_0>` and the `sw0` alias. Battery reads go through
-`<zephyr/drivers/adc/voltage_divider.h>`; the button goes through the `input` subsystem,
-which means no debounce code and no polling loop of our own.
+Two things in there are corrections to what this document originally claimed.
+
+**The battery divider does need an overlay after all.** The board dtsi declares the
+`vbatt` node — a `voltage-divider` on `&adc 5` with `output-ohms = <100000>` and
+`full-ohms = <200000>` — but it declares no matching `channel@5` under `&adc`, and
+`ADC_DT_SPEC_GET()` needs one for gain, reference, acquisition time and `vref-mv`.
+Without it nothing fails loudly: `adc_channel_setup_dt()` configures no channel, the
+`adc` shell answers `Channel 5 not configured`, and `adc_raw_to_millivolts_dt()`
+multiplies by a `DT_PROP_OR(..., 0)` reference and reports **0 mV forever**. `fs battery`
+read `0 mV 0 %` on the first firmware and that is why.
+
+**The `label` properties are load-bearing**, not documentation: the binding turns them
+into USB interface string descriptors, which is what lets the host resolve the data port
+without assuming enumeration order. See [the second CDC ACM
+instance](#the-second-cdc-acm-instance).
+
+The user button still needs no overlay: the board dtsi has a `gpio-keys` `button0` on
+`gpio1 2` with `zephyr,code = <INPUT_KEY_0>` and the `sw0` alias, so the button goes
+through the `input` subsystem with no debounce code and no polling loop of our own.
 
 ### threads and data flow
 
@@ -227,16 +366,33 @@ Button events arrive on an `input` subsystem callback with no thread of their ow
 the micro:bit application, and are pushed straight onto both tx queues.
 
 Two notes on the priorities. The env thread is the lowest of the sampling threads
-deliberately: Zephyr's `sht3xd` driver does a blocking single-shot conversion, and the
-CircuitPython port's most expensive lesson was that 1 Hz environmental reads stalled its
-loop for **~152 ms of every second** and cost ~7.6 IMU samples per second. Preemptive
-scheduling *contains* that here — a blocked env thread cannot delay a higher-priority IMU
-thread — but it does not make the read cheaper, and the actual cost is unmeasured until
-this runs. The tx threads sit above env and battery so a full queue drains ahead of new
-low-rate work.
+deliberately, on the assumption that its read was expensive; see [the environmental
+read](#the-environmental-read) for what that turned out to cost. The tx threads sit above
+env and battery so a full queue drains ahead of new low-rate work.
 
 Everything is threads and message queues; there is no `k_work` anywhere, matching both
-existing Zephyr areas.
+existing Zephyr areas. Three threads not in the table serve the transports rather than the
+sensors: `tx_ble` and `tx_usb` drain the two queues, and `usb_rx` reassembles COBS frames
+from the interrupt handler's ring buffer and answers RPC requests. Every RPC opcode
+answers from cached state — `get battery` reads the battery thread's last sample rather
+than the ADC — so a request never blocks the thread it arrived on, which is what lets a
+GATT write be answered inline on the Bluetooth RX thread.
+
+### the environmental read
+
+This document's largest performance worry was that Zephyr's `sht3xd` driver "does a
+blocking single-shot conversion", quoting the CircuitPython port's ~152 ms per second as
+an upper bound to check against. **The premise was wrong.** The driver's measurement-mode
+choice defaults to `CONFIG_SHT3XD_PERIODIC_MODE` at one measurement per second, not to
+`SHT3XD_SINGLE_SHOT_MODE` — so a fetch is a `FETCH_DATA` command and a six-byte read, not
+a conversion, and `fs env` reports it in microseconds because milliseconds could not
+resolve it.
+
+Periodic mode brings its own trap, which the single-shot assumption hid. The chip NACKs
+`FETCH_DATA` when no new measurement is ready, so a 1 Hz reader against a 1-measurement-
+per-second chip loses the race whenever it drifts ahead, and the driver reports
+`Failed to fetch samples`. `CONFIG_SHT3XD_MPS_2=y` gives the chip twice the reader's rate
+so there is always one waiting. `fs env` counts the failures, and it should read 0.
 
 ### how values are encoded
 
@@ -255,23 +411,51 @@ Taken together they suggest a split, and this design takes it:
 
 The scaling RPC then reports **every** stream uniformly, so the host has one decoder path
 regardless of which side did the arithmetic. Each field is described as
-`value_in_nano_SI = raw × num / den`:
+`value_in_nano_SI = raw × num / den`, one entry per field **in wire order**, so the host
+zips the scales against the sample's fields and needs no per-stream knowledge at all:
 
 | stream | field | unit | num | den | i.e. |
 |---|---|---|---|---|---|
-| imu | accel x,y,z | m/s² | 59820565 | 100 | 0.061 mg/LSB at ±2 g |
 | imu | gyro x,y,z | rad/s | 15271631 | 100 | 8.75 mdps/LSB at ±250 dps |
-| magn | x,y,z | T | 10 | 1 | wire is centi-µT |
+| imu | accel x,y,z | m/s² | 59820565 | 100 | 0.061 mg/LSB at ±2 g |
+| magn | x,y,z | T | 100 | 1 | wire is deci-µT |
 | env | temperature | °C | 10000000 | 1 | wire is centi-°C |
 | env | humidity | %RH | 10000000 | 1 | wire is centi-% |
-| env | light | lux | 1000000000 | 1 | wire is lux |
+| env | light | — | 1000000000 | 1 | a raw ALS count |
 | battery | millivolts | V | 1000000 | 1 | |
 | battery | percent | % | 1000000000 | 1 | |
+| battery | flags | — | 1000000000 | 1 | |
+| button | code, pressed, pad | — | 1000000000 | 1 | |
 
 The accel and gyro rows are ST's own sensitivities, from
 `lsm6ds3tr-c_STdC/driver/lsm6ds3tr-c_reg.c:102` and `:127`. The gyro row is rounded to
 the nearest 0.01 nrad/s, because the degree-to-radian factor is irrational and an exact
-rational would be a fiction.
+rational would be a fiction. Gyro is listed first because that is the order the chip's
+FIFO produces, which is the order on the wire.
+
+Three of those rows were wrong until the board corrected them.
+
+**Dimensionless is `1000000000/1`, not `1/1`.** The whole table is in *nano*-SI, so
+identity is a billion. A count of 1 written as `1/1` decodes to 1e-9. The symptom was a
+light sensor that appeared dead: the chip reported a perfectly good clear-channel count of
+129 and the host printed `0.0000`, having divided it by a billion. It is a mistake with no
+error message and a plausible-looking result, which is the kind worth a named constant —
+`kRawCount` in `src/rpc.cpp`.
+
+**The light field is a raw count, not lux.** Zephyr's APDS9960 driver returns
+`sample_crgb[0]` — the clear channel's raw ADC count — verbatim for `SENSOR_CHAN_LIGHT`
+(`drivers/sensor/apds9960/apds9960.c:275`). It does no photometric conversion, so
+reporting the field as lux would have been a unit this firmware cannot support.
+Requirement 1.6 asks for "light level", which is what this is.
+
+**The magnetometer's wire unit is deci-µT, not centi-µT.** This is the one that mattered.
+The LIS3MDL's smallest full scale is ±4 gauss = ±400 µT, and centi-µT puts that at ±40000
+— past an `int16` — so the *wire* clipped before the sensor did. That is not a theoretical
+concern: the first board this ran on sat in a field of roughly 570 µT and railed all three
+axes at once, reporting `(-32768, 32767, -32768)`. Deci-µT reaches ±3276.7 µT, eight times
+the chip's range, and costs nothing real — the 0.1 µT step is below the part's own ~0.32 µT
+RMS noise. The saturating clamp in `src/magn.cpp` is kept, now unreachable through this
+sensor, which is the state a clamp should be in.
 
 **The cost of this design, stated plainly:** a host can no longer decode a capture it did
 not ask the scales for. Both CLIs therefore fetch the scale table at connect and print it,
@@ -291,7 +475,14 @@ batch  = [ t_ms:u32 ][ seq:u16 ][ period_us:u16 ][ stream_id:u8 ][ count:u8 ]
 Little-endian throughout; the header is 10 bytes, which leaves the `int16` sample array
 2-byte aligned.
 
-- `t_ms` is `k_uptime_get_32()` at the **first** sample in the batch, not at transmit.
+- `t_ms` is `k_uptime_get_32()` at the **first** sample in the batch, not at transmit. For
+  the IMU it is derived by back-dating the drain time by `(count - 1) × period_us`, since
+  the newest sample in the FIFO is the one that had just arrived. That inherits the drain's
+  own jitter at batch boundaries — the measured `gap max` across a boundary is 5.9–6.7 ms
+  against a 4.808 ms period — while the spacing *within* a batch is the chip's clock
+  exactly. Deriving `t_ms` from a free-running sample counter instead would make the
+  spacing look perfectly uniform and would be manufacturing that uniformity, so it is not
+  done.
 - `period_us` is the spacing between samples within the batch, from the chip's own ODR.
   The host back-dates the rest of the batch from it. This exists because the micro:bit
   host viewer has an `--accel-batch-time={spread,arrival}` flag whose `spread` mode has to
@@ -305,8 +496,8 @@ Sample bodies:
 | stream_id | stream | sample | bytes |
 |---|---|---|---|
 | 1 | imu | `int16 gx,gy,gz,ax,ay,az` | 12 |
-| 2 | magn | `int16 x,y,z` | 6 |
-| 3 | env | `int16 temp_c_centi` · `uint16 rh_centi` · `uint16 lux` | 6 |
+| 2 | magn | `int16 x,y,z` (deci-µT) | 6 |
+| 3 | env | `int16 temp_c_centi` · `uint16 rh_centi` · `uint16 light` | 6 |
 | 4 | battery | `uint16 mv` · `uint8 percent` · `uint8 flags` | 4 |
 | 5 | button | `uint16 code` · `uint8 pressed` · `uint8 _pad` | 4 |
 
@@ -318,17 +509,22 @@ and it is about *simultaneity*, not speed: read separately the two are about a m
 apart and independently timestamped, which is a lie about a single physical sample instant
 that any downstream fusion inherits.
 
+`period_us` is a `uint16`, so it tops out at 65.5 ms. That is fine for everything batched
+here (4808 µs for the IMU, 50000 for the magnetometer) and meaningless for everything that
+is not, where `count` is 1 and the field is set to 0 — there is nothing to back-date.
+
 There is no CRC. GATT notifications are acknowledged, USB CDC is reliable, and COBS
 resynchronises at the next delimiter; the CircuitPython port shipped without one and
 recorded no framing errors it could attribute to corruption. The `seq` field is the thing
-that would surface a problem, and it is cheap.
+that would surface a problem, and it is cheap. Over USB it has read 0 gaps and 0 decode
+errors in every run so far.
 
 ### streams
 
 | id | stream | source | rate | batched |
 |---|---|---|---|---|
-| 1 | imu (accel + gyro) | FIFO watermark | 208 Hz | yes |
-| 2 | magn | DRDY trigger, else timer | 20 Hz | yes |
+| 1 | imu (accel + gyro) | FIFO watermark IRQ if INT1 is routed, else timer — **currently the timer** | 208 Hz | yes, up to 19 |
+| 2 | magn | DRDY trigger if routed, else timer — **currently the timer** | 20 Hz | yes, 2 |
 | 3 | env (temperature, humidity, light) | timer | 1 Hz | no |
 | 4 | battery | timer; emitted only on a ≥1 % change | ≤1 Hz | no |
 | 5 | button | `input` callback | event | no |
@@ -346,6 +542,20 @@ The gyro tracks the textbook √2-per-doubling almost exactly; the accel barely 
 because its at-rest noise is dominated by ambient vibration rather than sensor bandwidth.
 **Do not assume √2 applies to every stream — it did not here.** Going higher "for
 headroom" buys another √2 of gyro noise for nothing.
+
+The magnetometer batches **two** samples, not four. At 20 Hz the stream is 120 B/s and
+batching buys throughput this link does not need; what it costs is latency, and the
+design's budget is well under 100 ms. Two samples is exactly 100 ms and halves the
+notification count; four would spend 200 ms to save nothing.
+
+The IMU's timer drains at the FIFO watermark's cadence —
+`CONFIG_LSM6DS3TRC_FIFO_WATERMARK_SAMPLES` (10) over 208 Hz, so every 48 ms — and then
+loops until the FIFO is empty, because one wake may cover several batches if a
+lower-priority thread held the CPU. A backlog past 96 samples is treated as a stall: the
+FIFO is flushed rather than drained, because catching up would put stale samples on the
+wire carrying plausible-looking back-dated timestamps, and a `seq` gap is the honest
+report. That is the CircuitPython port's schedule-from-the-deadline rule applied to a
+hardware queue.
 
 ### GATT layout
 
@@ -365,11 +575,17 @@ class, so a host can subscribe to only what it needs; plus an RPC pair.
 the bytes on BLE and the bytes on USB are identical and there is exactly one encoder and
 one decoder.
 
-Batch size is computed at runtime from the negotiated MTU inside the CCC callback, the way
+Batch size is computed at runtime from the negotiated MTU, the way
 `microbit_v2_zephyr/src/ble.c` does it: `(bt_gatt_get_mtu(conn) - 3 - 10) / 12`. At
 `CONFIG_BT_L2CAP_TX_MTU=247` that is 19 IMU samples per notification — about 11
-notifications per second at 208 Hz. It is capped so latency stays bounded well under
-100 ms.
+notifications per second at 208 Hz, and about 91 ms of latency, which is the cap this
+design budgets for. It is recomputed both in the CCC callback *and* in an
+`att_mtu_updated` callback, because BlueZ often raises the MTU after the host has already
+subscribed; with only the former, a subscription that arrived first would stay pinned at
+19 usable bytes for the life of the connection. The USB path uses the same number, since
+the CDC bulk endpoint is not the constraint on that link — one batch size, one encoder.
+
+**None of this has been executed.** See [live limitations](#live-limitations).
 
 Two calibrations from the CircuitPython port, which ran the same link from the same board:
 it sustained roughly **110 notifications per second** on BlueZ at the **default 23-byte
@@ -381,16 +597,27 @@ not move the number, the next thing to check is the notification rate, not the i
 
 ### usb serial framing
 
-The `cdc_acm_data` instance carries `cobs(batch) + 0x00`. BLE does not need COBS because a
-GATT notification is already a delimited datagram; a byte stream is not, so the serial path
-adds framing and the BLE path does not. Both carry the same `batch` bytes inside.
+The `cdc_acm_data` instance carries `cobs([channel] + payload) + 0x00`. BLE does not need
+COBS because a GATT notification is already a delimited datagram; a byte stream is not, so
+the serial path adds framing and the BLE path does not.
+
+The leading channel byte is the part this document originally left out, and it is not
+optional. Sample batches and RPC responses share the one pipe in the device-to-host
+direction, so "distinguished by direction" only answers half the question — the host still
+has to tell a batch from a reply. The channel byte is the serial analogue of a GATT
+characteristic: on BLE the characteristic identifies the channel and nothing extra goes on
+the wire; on serial one byte does the same job. `0x01` is a batch, `0x02` an RPC frame in
+either direction, and `0x00` cannot be used because it is the delimiter. **The `payload`
+bytes are identical on both transports**, which is what keeps there being one encoder and
+one decoder.
 
 Requirement 3.1's "combined packet to maximize throughput" is served by the same batching
-the BLE path uses, with the batch sized to the CDC bulk endpoint rather than to an ATT MTU.
-The CircuitPython port measured its USB emit at 0.126 ms for a 20-byte frame and found
-batching four frames saved ~1.6 % of loop time — i.e. **the transport was never its
-bottleneck**, and it will be even less of one here. Batching on this link is for the
-host's sake (fewer wakeups, fewer syscalls per sample) rather than the board's.
+the BLE path uses. The CircuitPython port measured its USB emit at 0.126 ms for a 20-byte
+frame and found batching four frames saved ~1.6 % of loop time — i.e. **the transport was
+never its bottleneck**, and it is even less of one here: at 208 Hz in 19-sample batches the
+link carries about 11 frames per second and the measured host rate tracks the device rate
+to within the window quantisation. Batching on this link is for the host's sake (fewer
+wakeups, fewer syscalls per sample) rather than the board's.
 
 ### remote procedure calls
 
@@ -410,22 +637,34 @@ arrives. `status` is 0 on success and a negative errno otherwise.
 |---|---|---|---|
 | `0x01` | get battery | — | `uint16 mv` · `uint8 percent` · `uint8 flags` |
 | `0x02` | set stream | `uint8 stream_id` · `uint8 enable` | `uint8 stream_id` · `uint8 enable` as applied |
-| `0x03` | get scale | `uint8 stream_id` | `uint8 stream_id` · `uint8 n` · n × (`uint8 unit` · `int32 num` · `int32 den`) |
+| `0x03` | get scale | `uint8 stream_id` | `uint8 stream_id` · `uint8 n` · n × (`uint8 unit` · `int32 num` · `int32 den`), one per sample field in wire order |
 | `0x04` | get serial | — | 8 bytes, from `hwinfo_get_device_id()` |
 | `0x05` | get build id | — | UTF-8, ≤ 48 bytes |
 
 `0x02` returns the state it actually applied rather than echoing the request, so
 "enable a stream this build does not have" is a visible no-op rather than a silent lie.
 `0x04` uses the `hwinfo` API (`CONFIG_HWINFO=y`), which on this SoC reads the FICR
-`DEVICEID` words — a real per-chip identifier, not a build constant. `0x05` reports the
+`DEVICEID` words — a real per-chip identifier, not a build constant. On the board here it
+answers `2313EF1FD198023B`, which is the same eight bytes CircuitPython reported as its
+board UID (`3B0298D11FEF1323`) in the opposite byte order — a useful confirmation that it
+is the chip's identity and not something the firmware made up. `0x05` reports the
 `VERSION` file's app version plus a `git describe` injected as a compile definition from
-`CMakeLists.txt`, so a board can be traced back to a commit.
+`CMakeLists.txt`, so a board can be traced back to a commit; it currently answers
+`0.1.0+588f65e`.
+
+The largest reply is `get scale` for the IMU: six fields, so 3 + 2 + 54 = 59 bytes. That
+exceeds the 20 usable bytes of a default 23-byte ATT MTU, so a BLE host must negotiate a
+larger one before the scale table is fetchable — which every modern stack does, and which
+this design wants raised anyway.
 
 ### battery and the status led
 
 Battery voltage comes from the existing `vbatt` node via `VOLTAGE_DIVIDER_DT_SPEC_GET` and
 `voltage_divider_scale_dt()`, which applies the declared 100k/200k ratio rather than a
-hand-written factor of two. Percent is the same crude linear 3.2 V–4.2 V curve the
+hand-written factor of two — **plus the `channel@5` node `app.overlay` has to add**,
+without which every reading is 0 mV and nothing says so. The node is reached with
+`DT_PATH(vbatt)` rather than `DT_NODELABEL`: the board dtsi declares it as a bare `vbatt
+{ ... }` under the root with no label. Percent is the same crude linear 3.2 V–4.2 V curve the
 CircuitPython port used — no lookup table, no OCV correction, no coulomb counting — and the
 `flags` byte reports USB presence.
 
@@ -474,37 +713,91 @@ west build -b adafruit_feather_nrf52840/nrf52840/sense/uf2 -p auto .
 west flash
 ```
 
-The `uf2` variant is the right target: it sets `CONFIG_BUILD_OUTPUT_UF2=y`, and `west
-flash` then copies `zephyr.uf2` to the bootloader's mass-storage drive. Enter the
-bootloader by tapping the reset button twice quickly; a mass-storage device named
-`FTHRSNSBOOT` appears on the host. The non-`uf2` `sense` variant flashes over SWD with pyocd or
-J-Link instead, which this board exposes only as pads, so it is the harder path unless a
-probe is already wired.
+### the image must be linked at the code partition
 
-That variant also brings USB CDC console and shell along for free, via
-`boards/common/usb/cdc_acm_serial.dtsi`. The host sees two ACM devices once the
-application's own `cdc_acm_data` instance is added — one is the shell, the other is
-binary sample data. Which `/dev/ttyACM*` is which follows enumeration order and should be
-resolved by descriptor rather than assumed; opening the data one with a terminal is
-harmless but useless.
+**`CONFIG_USE_DT_CODE_PARTITION=y` in `prj.conf` is not optional, and its absence is
+silent.** Neither of this board's `*_uf2_defconfig` files sets it, so the image links at
+`CONFIG_FLASH_LOAD_OFFSET=0` and `zephyr.uf2` reports `start address: 0x0`. Writing that
+through the UF2 bootloader lands the application on top of the s140 SoftDevice — and on
+top of the **MBR at 0x0, which the Adafruit bootloader itself depends on**, taking the
+bootloader with it and leaving SWD as the only way back. This board exposes SWD as pads
+only.
 
-`west build -t menuconfig` for the usual reasons.
+It is an upstream board-support gap rather than a design question: the ItsyBitsy nRF52840
+carries the same bootloader and the same flash layout and *does* set it
+(`boards/adafruit/itsybitsy/adafruit_itsybitsy_nrf52840_defconfig`). With the line in
+place the image links at the DTS `code_partition`, 0x26000.
+
+**Check the build output, not `.config`.** `CONFIG_FLASH_LOAD_OFFSET` is written to
+`.config` as `=0` when the setting is *missing* and disappears from the file entirely when
+it is present — so grepping for it reads backwards. The line `west build` prints is the
+reliable check:
+
+```
+Converted to uf2, output size: 472576, start address: 0x26000
+```
+
+`0x0` there means the setting was lost and the image must not be flashed.
+
+Zephyr brings its own BLE controller and never calls the SoftDevice; it is left in place
+only because the bootloader expects it to be there.
+
+### getting into the bootloader
+
+The `uf2` variant sets `CONFIG_BUILD_OUTPUT_UF2=y`, and `west flash` copies `zephyr.uf2`
+to the bootloader's mass-storage drive — which requires the board to be *in* the
+bootloader, in UF2 mode. Three ways, in descending order of convenience:
+
+- **`fs bootloader` at the shell.** This firmware writes the Adafruit bootloader's
+  `DFU_MAGIC_UF2_RESET` (`0x57`) to `NRF_POWER->GPREGRET` and resets. GPREGRET survives a
+  soft reset, so the bootloader comes up in UF2 mode and `FTHRSNSBOOT` appears. This is the
+  reason that command exists: without it every reflash costs a hand on the board, and the
+  board is normally somewhere a hand is not.
+- **Double-tap the reset button**, which is the only option when the running firmware is
+  something else, or is wedged.
+- **Serial DFU**, which is where a 1200-baud touch on a *CircuitPython* board lands (it
+  enumerates CDC only, with no mass-storage drive, so `west flash` cannot see it). Flash it
+  with `adafruit-nrfutil` instead — this is how the very first Zephyr image got onto a board
+  that was running CircuitPython:
+
+  ```sh
+  adafruit-nrfutil dfu genpkg --dev-type 0x0052 --application build/zephyr/zephyr.hex fw.zip
+  adafruit-nrfutil dfu serial --package fw.zip -p /dev/ttyACM0 -b 115200 --singlebank
+  ```
+
+  Zephyr's own CDC ACM implements no 1200-baud hook, so the touch only works against
+  firmware that does.
+
+The host sees **two** ACM devices once the application is running, told apart by their
+interface string descriptors rather than by enumeration order. `west build -t menuconfig`
+for the usual reasons.
 
 ## console shell
 
-The shell runs on `board_cdc_acm_uart` — a USB CDC device, so `/dev/ttyACM0` with no
-extra wiring:
+The shell runs on `board_cdc_acm_uart` — a USB CDC device, so no extra wiring. Resolve
+which port it is by descriptor rather than assuming:
 
 ```sh
+grep -l "Feather Sense console" /sys/class/tty/ttyACM*/device/interface
 pyserial-miniterm /dev/ttyACM0 115200      # ships in west's venv; Ctrl-] to quit
 ```
 
 The baud rate is ignored — this is a USB CDC endpoint, not a real UART — but every tool
 wants one, so 115200 is as good as any.
 
-Beyond the built-ins, the application registers commands in the file that owns the data,
-guarded by `#ifdef CONFIG_SHELL`, following both existing Zephyr areas. `CONFIG_I2C_SHELL`
-earns its place here more than anywhere else in the repo:
+Beyond the built-ins, the application registers an `fs` command group, guarded by
+`#ifdef CONFIG_SHELL`, following both existing Zephyr areas:
+
+| Command | Answers |
+|---|---|
+| `fs stats` | batches emitted, drops per transport, USB frame and rx-error counters, the current IMU batch size, and which streams are enabled |
+| `fs imu` | `WHO_AM_I` and which part it means, samples and batches so far, FIFO overruns and stall flushes |
+| `fs battery` | the last reading — millivolts, percent, and whether USB is present |
+| `fs env` | what the last SHT30 fetch cost, in microseconds, and how many have failed |
+| `fs stream <id> <0\|1>` | enable or disable one stream, the same thing RPC opcode `0x02` does |
+| `fs bootloader` | reboot into the UF2 bootloader, so a reflash needs no hand on the board |
+
+`CONFIG_I2C_SHELL` earns its place here more than anywhere else in the repo:
 
 ```
 i2c scan i2c@40003000                 # which parts this board revision actually has
@@ -513,9 +806,16 @@ i2c read_byte i2c@40003000 0x6a 0x0f  # WHO_AM_I: 0x69 = LSM6DS33, 0x6a = LSM6DS
 
 The device argument is the devicetree node's full name, not its label — `i2c0` is a label
 and the shell will not accept it. Tab completion over the device list is the reliable way
-to get it right. That second command is what answers the IMU question in [known
-limitations](#known-limitations-and-open-questions). `CONFIG_SENSOR_SHELL` and
-`CONFIG_ADC_SHELL` give a way to read every stream without a host program attached at all.
+to get it right. That second command is what settled the IMU question: **this board
+answers `0x69`, an LSM6DS33.**
+
+`CONFIG_SENSOR_SHELL` and `CONFIG_ADC_SHELL` give a way to read every stream without a
+host program attached at all, which is what tells a driver fault from an application one —
+`sensor get lsm6ds3trc@6a` reading 9.97 m/s² on Z while the stream reported zeros would
+have located a bug in one call. `CONFIG_INPUT_SHELL` does the same for the button:
+`input report 1 11 1` injects a synthetic press and drives the whole path, notification
+included, because `buttons.cpp` registers with `INPUT_CALLBACK_DEFINE(NULL, ...)` and
+cannot tell a synthetic event from a real one.
 
 ## tests
 
@@ -526,37 +826,50 @@ the host test.
 
 ```sh
 west build -b native_sim -p auto -d build_test tests/codec && ./build_test/zephyr/zephyr.exe
-west twister -p native_sim -T tests
+west twister -p native_sim -T tests        # 52 test cases, 4 configurations
 ```
 
 Two modules qualify, and only two — the rest of this firmware is hardware:
 
-- `src/codec.cpp` — batch header pack/unpack and COBS encode/decode. The COBS tests should
-  fuzz round trips and pin the 253/254/255-byte block-split boundaries explicitly; that is
-  where every COBS implementation goes wrong, and the CircuitPython port's suite is the
-  model.
+- `src/codec.cpp` — batch header pack/unpack, the scale-field layout, and COBS
+  encode/decode. The COBS tests round-trip every length up to a full batch in both the
+  all-non-zero and all-zero shapes, and pin the 253/254/255-byte block-split boundaries
+  explicitly; that is where every COBS implementation goes wrong. The header and
+  scale-field layouts are asserted against literal expected bytes rather than through this
+  file's own unpacker — a test that only round-trips would agree with any layout — and that
+  is what caught a hand-converted hex constant during development.
 - `src/battery_level.cpp` — divider millivolts to percent, and the hysteresis band
   function. The band function is pure and has a genuinely interesting property to test:
-  that it moves in both directions and that no sequence of inputs can latch it.
+  that it moves in both directions and that no sequence of inputs can latch it. A sweep
+  from 100 % down to 0 and back is what catches an implementation that widened one
+  threshold without narrowing its opposite — which passes every individual crossing test
+  and still gets stuck, and is the defect the CircuitPython port's README records shipping
+  as an LED that displayed a constant amber.
 
 ## host side
 
 Four programs in one nested pixi environment at `host/`, separate for the same reason
-`microbit_v2_zephyr/host/` is: neither bleak nor rerun is a repo-wide dependency. They
-come in a pair per transport plus a viewer, and share definitions through a plain import
-rather than a second copy.
+`microbit_v2_zephyr/host/` is: neither bleak nor rerun is a repo-wide dependency. They come
+in a pair per transport plus a viewer, and share definitions through a plain import rather
+than a second copy.
 
 | Program | Transport | Does |
 |---|---|---|
-| `feather_protocol.py` | neither — no I/O | the wire format, the decoders, and the RPC client |
-| `read_serial.py` | USB CDC, pyserial | measures the link |
-| `read_ble.py` | BLE, bleak | measures the link |
-| `feather_rerun.py` | either, by flag | plots what the other three decode |
+| `feather_protocol.py` | neither — no I/O | the wire format, the decoders, the scale table, the RPC frames, and the rate arithmetic |
+| `read_serial.py` | USB CDC, pyserial | owns the serial link; measures it |
+| `read_ble.py` | BLE, bleak | owns the BLE link; measures it |
+| `feather_rerun.py` | either, by flag | plots what the other two decode |
 
 `feather_protocol.py` is the **only** host-side definition of the wire format. Every
-constant in it carries a `# Must match ../src/<file>.cpp: <SYMBOL>` comment naming the
-firmware symbol it mirrors, as `microbit_v2_zephyr/host/ble_stream.py` does. It contains
-no I/O: the two readers own their transports, and both hand bytes to the same decoder.
+constant in it carries a `# Must match ../src/<file>: <SYMBOL>` comment naming the firmware
+symbol it mirrors, as `microbit_v2_zephyr/host/ble_stream.py` does. It contains no I/O: the
+two readers own their transports, and both hand bytes to the same decoder. `feather_rerun.py`
+imports `SerialLink` and `BleLink` from the readers rather than opening links of its own,
+the way `ble_rerun.py` imports `ble_stream`.
+
+`read_serial.py` resolves the data port by its **USB interface string descriptor** and
+refuses to guess: `find_port()` reads `/sys/class/tty/ttyACM*/device/interface` and matches
+`"Feather Sense data"`, erroring out if nothing or more than one thing claims it.
 
 ```sh
 cd host
@@ -573,7 +886,10 @@ from the CircuitPython port because getting it wrong there over-reported by ~10 
 
 - **`dev`** — `(count - 1) × 1000 / (last_ts - first_ts)`, from device timestamps. This is
   the number to quote. It needs no clock synchronisation between board and host, and
-  `count - 1` is the number of intervals actually spanned.
+  `count - 1` is the number of intervals actually spanned. A consequence worth expecting:
+  a stream that delivers only one sample in a window reports `0.00`, because one sample
+  spans no intervals. That is the rule being honest, not a bug — the 1 Hz env stream reads
+  `dev 0.00` in a 1 s window and a true rate over a longer one.
 - **`host`** — `count / measured elapsed`. It only tells you the link kept up. Divide by
   *measured* elapsed, never by the nominal window: a window gated on `>= 1.0 s` is always
   overshot, and a true 91 Hz stream then reports "100/s", flatteringly.
@@ -589,17 +905,44 @@ from the CircuitPython port because getting it wrong there over-reported by ~10 
 Each reader fetches the scale table over RPC at connect and prints it before streaming,
 since decoding depends on it.
 
+What that produces on this board, over USB, with everything running:
+
+```
+data port /dev/ttyACM1
+serial    2313EF1FD198023B
+build     0.1.0+588f65e
+...
+[  4.0s] errors 0
+  imu      dev  208.15/s  host  203.28/s  batches    20  gap max     6.7 ms  seq gaps 0
+  magn     dev   20.00/s  host   19.93/s  batches    10  gap max    52.0 ms  seq gaps 0
+  env      dev    0.00/s  host    1.00/s  batches     1  gap max     0.0 ms  seq gaps 0
+```
+
+`dev 208.15` against a chip ODR of 208 is the headline: the sample spacing is the chip's
+own clock, not the host's. The magnetometer's 52 ms `gap max` is its 50 ms sample spacing
+plus jitter, as expected for two samples per batch at 20 Hz. The IMU's 6.7 ms is the drain
+jitter at batch boundaries described under [wire format](#wire-format); within a batch the
+spacing is exactly `period_us`. `host` oscillating between 203 and 214 is window
+quantisation — 20 versus 21 batches — and is why `dev` is the number to quote.
+
 ### visualizing the streams
 
 `feather_rerun.py` follows `microbit_v2_zephyr/host/ble_rerun.py`: `rr.init` then
 `rr.spawn(memory_limit=...)` (not `rr.init(spawn=True)`, whose bool form cannot forward the
 limit), an `rrb.Grid` of `rrb.TimeSeriesView`s built by a `build_blueprint`, static
 `rr.SeriesLines` styling logged once, and `rr.set_time` + `rr.log(..., rr.Scalars(...))`
-per sample. Unit conversion happens here, host-side, from the scale table the device
-reported — there is no hard-coded conversion factor in the viewer.
+per sample. Six views: acceleration, angular rate, magnetic field, environment, battery,
+and button state.
+
+**Unit conversion happens here, host-side, from the scale table the device reported.**
+There is no hard-coded conversion factor in the viewer — it asks the board what a raw count
+means and multiplies. The one cosmetic exception is the magnetometer, plotted in µT rather
+than the tesla the scale table reports, because nobody reads a magnetometer plot in tesla.
 
 Batched samples are back-dated using the batch's own `period_us`, so there is no
-`--accel-batch-time` flag to choose and no nominal rate to assume.
+`--accel-batch-time` flag to choose and no nominal rate to assume. Everything is plotted
+against the *device* timeline, rebased so the session starts at zero, which is the same
+timeline the rate numbers are computed on.
 
 ## divergences from the circuitpython port
 
@@ -607,14 +950,14 @@ Batched samples are back-dated using the batch's own `period_us`, so there is no
 
 | | CircuitPython port | here | why |
 |---|---|---|---|
-| Framing | COBS on both transports | COBS on serial only | A GATT notification is already a datagram |
+| Framing | COBS on both transports | COBS + a channel byte on serial only | A GATT notification is already a datagram, and the characteristic already says which channel |
 | Payload | one sensor sample per frame, `int32` pre-scaled | batches of raw `int16` | Requirement 3.2; and pre-scaling was pure cost on a 208 Hz path |
 | Scales | a shared `SCALES` table in a file both sides import | reported over RPC | Requirement 5.3, and a range change stops needing a reflash |
 | Timestamps | per-sample, host-derived rate | per-batch, plus `period_us` | Removes the viewer's spread-vs-arrival guess |
 | Drop detection | inferred from timestamp spacing | explicit `seq` per stream | Separates device drops from link drops |
-| Data channel | shared with the console | its own CDC ACM instance | The status-bar contamination bug cannot occur |
+| Data channel | shared with the console | its own CDC ACM instance, named by its USB interface descriptor | The status-bar contamination bug cannot occur, and neither port has to be identified by enumeration order |
 | Sampling | cooperative polling loop | FIFO watermark + preemptive threads | CircuitPython has no user-defined interrupt handlers; this is the port's single biggest unlock |
-| Environmental | removed entirely (blocked ~152 ms/s) | kept, on the lowest-priority thread | Requirements 1.4–1.6 ask for them, and preemption contains what cooperative scheduling could not |
+| Environmental | removed entirely (blocked ~152 ms/s) | kept, on the lowest-priority thread | Requirements 1.4–1.6 ask for them — and Zephyr's driver runs the SHT30 in periodic mode, so the read this port deleted over is not the read Zephyr does |
 | Derived motion | gravity / linear accel computed on the host | not computed at all | Out of scope; belongs to the future `dfg` graph |
 | RPC | none — everything was a reflash | five opcodes | Requirement 5 |
 | Status LED | NeoPixel, bands + hysteresis | same, unchanged | It was already right |
@@ -629,87 +972,130 @@ samples), and the measurement discipline in [measuring the link](#measuring-the-
 
 ## known limitations and open questions
 
-Most items here are claims this design has *not* verified, each with the check that would
-settle it and the fallback if it goes the other way. The two that *were* settled — by the
-test build described under [status](#status) — say so explicitly. Nothing else below should
-be treated as known.
+Split three ways: what a real board settled, what is a live limitation, and what remains
+unverified. Keeping those apart is this document's main job — the CircuitPython port's
+README carries a correction recording what designing on an unmeasured claim cost it, and
+three of the entries below were promoted from the third list to the first by ten minutes
+with a shell.
 
-- **Which IMU is on this board is unknown.** Adafruit swapped the LSM6DS33 for the
-  pin-compatible LSM6DS3TR-C in January 2024. `WHO_AM_I` (register `0x0f`) reads `0x69` for
-  the DS33 and `0x6a` for the DS3TR-C — the latter is `LSM6DS3TR_C_ID` in
-  `lsm6ds3tr-c_reg.h:178`. The CircuitPython port never determined it either; it probes at
-  runtime and falls back. Zephyr's own board documentation
-  (`boards/adafruit/feather_nrf52840/doc/index.rst`) lists the LSM6DS33, but that is the
-  original part list, not evidence about any particular unit. **Check:**
-  `i2c read_byte i2c@40003000 0x6a 0x0f` at the shell on first boot. **Fallback:** none needed —
-  the out-of-tree driver accepts both ids, since the two parts share the register map this
-  driver uses. But the number should be recorded here once it is known, so this paragraph
-  can be deleted.
+### settled by running it
 
-- **The NeoPixel's pin is assumed, not verified.** Nothing in Zephyr's board files declares
-  it: the overlay above uses `P0.16` because that is what the `worldsemi,ws2812-gpio`
-  binding's own example uses on an nRF board and what the Feather nRF52840 pinout reports.
-  **Check:** the Adafruit pinout page, or drive the pin and watch. **Fallback:** correcting
-  one number in `app.overlay`. If the pixel stays dark with no error, this is the first
-  thing to doubt — a `ws2812-gpio` write to a wrong-but-valid pin fails silently.
+- **The IMU is an LSM6DS33.** `i2c read_byte i2c@40003000 0x6a 0x0f` answers `0x69`.
+  Adafruit swapped the DS33 for the pin-compatible LSM6DS3TR-C in January 2024; this unit
+  predates that, or the swap did not reach it. The out-of-tree driver accepts both ids and
+  drives this one through ST's LSM6DS3TR-C register driver without complaint, which is the
+  outcome that design anticipated. `sensor get lsm6ds3trc@6a` reads 9.97 m/s² on Z with the
+  board flat.
+- **The multi-sample FIFO burst read works.** The driver reads up to 20 records — 240
+  bytes — in one I²C burst from `FIFO_DATA_OUT_L`, relying on the chip re-presenting that
+  two-register window rather than running off the end of the register map. It does: the
+  measured device-timestamp rate is 208.4/s against a 208 Hz ODR, and zero FIFO overruns or
+  misalignments have been logged.
+- **`CONFIG_I2C_NRFX_TWIM=y` is what the build resolves to**, and TWIM is what is bound —
+  but it cannot be *asserted* in `prj.conf`, which was the third promptless-symbol trap
+  after `USE_STDC_LSM6DS3TR_C` (and, unlike that one, `I2C_NRFX_TWIM` is set purely by the
+  overlay). `grep CONFIG_I2C_NRFX_TWIM build/zephyr/.config` is the check.
+- **The LIS3MDL and APDS9960 fallbacks resolve on their own.** With no `irq-gpios` and no
+  `int-gpios`, Kconfig picks `CONFIG_LIS3MDL_TRIGGER_NONE=y` and
+  `CONFIG_APDS9960_FETCH_MODE_POLL=y` with no help, and both sensors read correctly that
+  way.
+- **The SHT30 read is cheap, and the ~152 ms figure was never applicable.** See [the
+  environmental read](#the-environmental-read). The driver defaults to periodic mode, so
+  there is no conversion to block on; what the assumption hid was a fetch-vs-produce race,
+  fixed with `CONFIG_SHT3XD_MPS_2=y`.
+- **Stack sizes are measured, not guessed.** `CONFIG_INIT_STACKS=y` and
+  `CONFIG_THREAD_NAME=y` are set so `kernel thread stacks` reports high-water marks, and it
+  does: imu 744/2048 (36 %), magn 496/1536 (32 %), env 400/1536 (26 %), battery 392/1024
+  (38 %), tx_ble 520/2048, tx_usb 448/2048, usb_rx 568/2048, and the input subsystem's own
+  thread 392/1024 (38 %) *after* a button event has pushed a batch through
+  `streams::emit()`. That last one is why `CONFIG_INPUT_THREAD_STACK_SIZE` is left at its
+  default: `emit()` puts a 242-byte batch on the caller's stack, which looked worth a bump
+  until the number was read.
 
-- **Whether the IMU's INT1 is routed to a GPIO at all is unverified.** The CircuitPython
-  port leaves this explicitly open, and the Zephyr board files say nothing because they do
-  not describe the IMU at all. **Check:** the Adafruit schematic, and a scope or a
-  `gpio get` on the candidate pin. **Fallback:** drain the FIFO on a `k_timer` instead of on
-  a watermark IRQ. This matters less than it sounds: the sample *spacing* still comes from
-  the chip's own clock either way, so `period_us` and the simultaneity argument both hold;
-  what is lost is wake latency and a little CPU. Requirement 2 says "wherever possible", and
-  if it is not possible this is why.
+- **`ws2812_gpio.c` does not compile without `CONFIG_CLOCK_CONTROL_NRF=y`.** Confirmed
+  again by this build. The symbol is now also deprecated in 4.4.99 and warns about it, so
+  this will need revisiting; the alternatives are `worldsemi,ws2812-spi` off `spi1`, at the
+  cost of a byte of buffer per bit and one SPI pin, or the two-word upstream fix to the
+  driver's `#else` branch at `ws2812_gpio.c:139`.
 
-- **Whether the LIS3MDL's DRDY and the APDS9960's INT are routed is likewise unverified.**
-  **Fallbacks:** both are automatic and were confirmed by the test build — with no
-  `irq-gpios` and no `int-gpios` in the overlay, Kconfig resolved to
-  `CONFIG_LIS3MDL_TRIGGER_NONE=y` and `CONFIG_APDS9960_FETCH_MODE_POLL=y` on its own.
-  Neither fallback needs a code change, only an absent overlay property.
+### live limitations
 
-- **The SHT30 read cost is unmeasured.** Zephyr's `sht3xd` driver issues a blocking
-  single-shot conversion. The CircuitPython port measured its environmental reads at
-  ~152 ms per second of blocking and deleted them over it — though most of that was the
-  BMP280, at ~45 ms per forced-mode conversion, and that chip is not used here. The SHT30
-  alone may be far cheaper. It is quoted as an upper bound, not a prediction. Preemptive scheduling means a
-  blocked env thread cannot delay the IMU, which is a real structural improvement, but it
-  does not make the read cheaper and it does not prove the read is cheap. **Check:** time
-  `sensor_sample_fetch` on the shell before trusting the 1 Hz budget. **Fallback:** the
-  SHT3x also has a periodic mode; if the single-shot cost is bad, that is where to go.
+- **BLE has not been measured at all.** The GATT service is built, the board advertises as
+  `feather-sense`, and `read_ble.py` is written against it — but the only host available
+  had its Bluetooth adapter rfkill-blocked, so **no code path from `bt_gatt_notify` onward
+  has executed**. The MTU-derived batch sizing, the CCC callbacks, the RPC characteristic
+  pair and the reconnect handling are all unexercised. Every BLE figure in this document is
+  the CircuitPython port's, quoted as a floor. **Check:** `rfkill unblock bluetooth`, then
+  `pixi run ble --seconds 20`. Expect the first thing to go wrong to be something small in
+  that untested path, not a throughput surprise.
+- **The NeoPixel has not been seen to light.** The pin (`P0.16`) is inherited from the
+  Adafruit pinout, not from Zephyr's board files, and a `ws2812-gpio` write to a
+  wrong-but-valid pin fails silently. The LED is also driven only from the battery band, so
+  with the board on USB and no pack attached it has had nothing to display. **Check:** run
+  it on a battery, or drive it by hand. **Fallback:** correcting one number in
+  `app.overlay`.
+- **The battery path has not been exercised with a real pack.** The ADC channel is
+  configured and the divider ratio comes from devicetree, but every reading so far was
+  taken with no cell attached. Percent, the band hysteresis and the `flags` USB bit are
+  covered by host tests and by construction, not by a discharge curve.
+- **The magnetometer reads at or near its own full scale, and why is not established.**
+  After the move to deci-µT the wire reaches ±3276.7 µT and no longer clips, but the
+  LIS3MDL itself is close to its rail: with `CONFIG_LIS3MDL_FS=4` the raw range tops out at
+  ±32767 LSB ≈ ±479 µT per axis, and the samples come back at −477.5, +477.6, −477.9 µT —
+  within half a percent of that on all three axes at once. A single external field vector
+  does not usually saturate every axis equally, so **this is not necessarily a strong local
+  field**; a hard-iron offset, the low-power operating mode the driver selects by default
+  (`CTRL_REG1` reads `0x94`, so `OM = 00`), or a fault would all look similar. The chip's
+  identity and configuration are correct — `WHO_AM_I` reads `0x3d`, and the ODR and
+  full-scale registers hold what `prj.conf` asked for — so if it is a fault it is not in the
+  setup path. **Checks, in order:** move the board and see whether the numbers move; compare
+  against the CircuitPython port, which read the same part on the same board; then try
+  `CONFIG_LIS3MDL_FS=8`, which doubles the range at a proportional cost in resolution. The
+  wire format does not need to change again either way. Until this is settled, treat the
+  magnetometer stream as unvalidated: the transport and the decode are proven, the *values*
+  are not.
+- **The battery's "≥1 % change" rule throttles nothing in practice.** Requirement 1.7 is
+  implemented literally and the percent is an integer, so any change is at least one point
+  — but the ADC reading dithers by about 10 mV, which *is* one point on the 3.2–4.2 V
+  linear curve, so the stream emits roughly every second rather than rarely. It is 4 bytes
+  a second and harmless, and the requirement is met as written, but it is not doing the job
+  it was put there to do. The fix is to filter the millivolts before converting — the
+  SAADC's own `zephyr,oversampling` property is the cheapest version, and a longer average
+  is the better one. Neither has been done, because the right time constant should be
+  chosen against a discharge curve and nobody has measured one; an invented one would be
+  the same mistake this document keeps warning about, in a smaller costume.
 
-- **The overlay builds; the IMU node in it does not exist yet.** Everything above was
-  compiled and linked for `adafruit_feather_nrf52840/nrf52840/sense/uf2` **except** the
-  `imu` node: the `scratchpad,lsm6ds3trc` compatible is created by the out-of-tree driver
-  this document proposes and by nothing else, so it was omitted from the test build. The
-  three in-tree sensor nodes, the TWIM change, the 400 kHz clock, the NeoPixel node and the
-  second CDC ACM instance all resolved, and `CONFIG_I2C_NRFX_TWIM=y` confirms the DMA
-  peripheral is the one actually bound.
+- **`period_us` is a `uint16`**, so a batched stream slower than about 15 Hz cannot express
+  its spacing. Nothing batched here is (the magnetometer is 50 000 µs), and the unbatched
+  streams set it to 0, but a future 5 Hz batched stream would need a wider field or a
+  different unit.
 
-- **`ws2812_gpio.c` does not compile in Zephyr 4.4.99 as this board configures it.** With
-  `CONFIG_CLOCK_CONTROL_NRF` unset — which is the default here, since the board pulls in
-  the newer split HFCLK/LFCLK drivers — the driver's `#else` branch at
-  `drivers/led_strip/ws2812_gpio.c:139` calls `nrf_clock_control_release(drv_data->...)`
-  against a `drv_data` that no longer exists in that function. **Fix:**
-  `CONFIG_CLOCK_CONTROL_NRF=y`, which was verified to build. **If that ever stops being
-  acceptable:** the same NeoPixel can be driven by `worldsemi,ws2812-spi` off `spi1`, at
-  the cost of a byte of buffer per bit and one of the board's SPI pins, or the branch can
-  be fixed upstream — it is a two-word patch.
+### still unverified
 
-- **No throughput number in this document was measured on this firmware.** The BLE and USB
-  figures quoted are the CircuitPython port's, on the same board and the same host, and
-  they are there as a *floor* and a calibration, not as a prediction. In particular, this
-  design's expected BLE win comes from a 247-byte MTU and the 2M PHY, and neither has been
-  demonstrated here.
-
-- **Pressure and the microphone are deliberately out of scope.** The BMP280 is reachable —
-  Zephyr's `bosch,bme280` driver accepts its chip id `0x58` at
-  `drivers/sensor/bosch/bme280/bme280.c:358` — and the nRF52840's PDM peripheral has a
-  driver and EasyDMA. Neither is in the requirements. If pressure is added later: put the
-  BMP280 in normal mode so a read is a register fetch rather than a forced conversion,
-  lower the pressure oversampling from its default, and derive altitude on the host rather
-  than paying a second conversion for it.
-
+- **Whether the IMU's INT1 is routed to a GPIO at all.** The Zephyr board files say nothing
+  because they do not describe the IMU, and the CircuitPython port left it open too. The
+  shipping configuration therefore has no `irq-gpios` and drains the FIFO on a `k_timer`,
+  and the driver's trigger path (`drivers/lsm6ds3trc/lsm6ds3trc_trigger.c`) is **compiled
+  out and untested**. This matters less than it sounds: the sample *spacing* still comes
+  from the chip's own clock either way — which the measured 208.4/s confirms — so
+  `period_us` and the simultaneity argument both hold. What is lost is wake latency and a
+  little CPU. Requirement 2 says "wherever possible", and if it is not possible this is why.
+  **Check:** the Adafruit schematic, or arm the watermark interrupt and sweep the candidate
+  GPIOs with `gpio get`.
+- **Whether the LIS3MDL's DRDY and the APDS9960's INT are routed.** Same shape, and the
+  fallbacks are automatic and confirmed working, so this is a performance question rather
+  than a correctness one.
+- **Nothing has run for longer than a minute.** The `seq` wrap at 16 bits, the `t_ms` wrap
+  at 32 bits (49.7 days), queue behaviour under a host that stops reading, and the stall
+  clamp in `src/imu.cpp` (which needs a 96-sample backlog to fire) are all untested by
+  elapsed time.
+- **Pressure and the microphone are deliberately out of scope.** The BMP280 answers at
+  `0x77` on the bus scan and Zephyr's `bosch,bme280` driver accepts its chip id `0x58` at
+  `drivers/sensor/bosch/bme280/bme280.c:358`; the nRF52840's PDM peripheral has a driver and
+  EasyDMA. Neither is in the requirements. If pressure is added later: put the BMP280 in
+  normal mode so a read is a register fetch rather than a forced conversion, lower the
+  pressure oversampling from its default, and derive altitude on the host rather than paying
+  a second conversion for it.
 - **The `dfg` integration named as future work needs no firmware change.** `dfg` has no
   concept of a free-running source node — a node with zero inputs is a validation error,
   and graph inputs are the only sources. A host reader is therefore an *application driving

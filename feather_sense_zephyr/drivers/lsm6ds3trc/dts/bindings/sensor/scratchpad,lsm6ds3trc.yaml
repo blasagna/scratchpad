@@ -1,0 +1,26 @@
+# Copyright (c) 2026 Bob DiMaiolo
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  LSM6DS3TR-C / LSM6DS33 6-axis IMU on I2C.
+
+  One binding for both parts. Adafruit swapped the LSM6DS33 for the
+  pin-compatible LSM6DS3TR-C in January 2024 without changing the board, and
+  the two share every register this driver touches; they differ only in
+  WHO_AM_I (0x69 and 0x6a respectively), which the driver accepts either of.
+
+  This compatible is defined by this application and by nothing else -- Zephyr
+  has no in-tree driver for either part.
+
+compatible: "scratchpad,lsm6ds3trc"
+
+include: [sensor-device.yaml, i2c-device.yaml]
+
+properties:
+  irq-gpios:
+    type: phandle-array
+    description: |
+      The chip's INT1 pin, on which the FIFO watermark is signalled. Optional:
+      with it absent the driver builds without trigger support and the
+      application drains the FIFO on a timer instead. Whether INT1 is routed to
+      a GPIO on the Feather Sense is unverified -- see README.md.

@@ -1,0 +1,126 @@
+/*
+ * The board DTS declares exactly one of the six sensors on the internal I2C
+ * bus (the SHT30). The IMU, the magnetometer, the light sensor and the
+ * NeoPixel are invisible to devicetree until they are declared here.
+ *
+ * See README.md, "hardware notes".
+ */
+
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/led/led.h>
+
+&i2c0 {
+	/* EasyDMA. adafruit_feather_nrf52840_common.dtsi gives this bus
+	 * "nordic,nrf-twi", the legacy register-at-a-time peripheral; TWIM is
+	 * the same pins with DMA behind them. This one line is the whole of
+	 * requirement 2's "use DMA where possible" on this board. Confirm it
+	 * took with `grep CONFIG_I2C_NRFX_TWIM build/zephyr/.config`.
+	 */
+	compatible = "nordic,nrf-twim";
+	clock-frequency = <I2C_BITRATE_FAST>;	/* 400 kHz */
+
+	imu: lsm6ds3trc@6a {
+		/* Out-of-tree; see drivers/lsm6ds3trc/. Zephyr ships no driver
+		 * for either part this board has carried.
+		 */
+		compatible = "scratchpad,lsm6ds3trc";
+		reg = <0x6a>;
+		/* No irq-gpios: the FIFO is drained on a k_timer. Whether INT1
+		 * is routed to a GPIO at all is unverified -- see README.md,
+		 * "known limitations".
+		 */
+	};
+
+	magn: lis3mdl@1c {
+		compatible = "st,lis3mdl-magn";
+		reg = <0x1c>;
+		/* No irq-gpios: selects CONFIG_LIS3MDL_TRIGGER_NONE. */
+	};
+
+	light: apds9960@39 {
+		compatible = "avago,apds9960";
+		reg = <0x39>;
+		/* No int-gpios: selects CONFIG_APDS9960_FETCH_MODE_POLL. */
+	};
+};
+
+/*
+ * The battery divider's ADC channel.
+ *
+ * The board dtsi declares the `vbatt` voltage-divider node itself -- ADC
+ * channel 5, output-ohms 100k, full-ohms 200k -- but it declares no `channel@5`
+ * under &adc to go with it, and without one ADC_DT_SPEC_GET() yields a spec
+ * with channel_cfg_dt_node_exists = false and vref_mv = 0. Nothing fails
+ * loudly: adc_channel_setup_dt() configures no channel, the `adc` shell
+ * answers "Channel 5 not configured", and adc_raw_to_millivolts_dt() multiplies
+ * by a zero reference and reports 0 mV forever. Measured on hardware; the
+ * design document had claimed the divider needed no overlay at all.
+ */
+&adc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@5 {
+		reg = <5>;
+		/* The divider halves the pack, so a 4.2 V cell presents 2.1 V.
+		 * Gain 1/6 against the 0.6 V internal reference puts full scale
+		 * at 3.6 V, which covers that with room to spare and is the
+		 * usual nRF52 battery arrangement. */
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		/* The reference itself, not the full-scale input.
+		 * adc_raw_to_millivolts_dt() reads this through DT_PROP_OR(...,
+		 * 0), so omitting it costs a wrong answer rather than a build
+		 * error -- every reading converts to 0 mV. */
+		zephyr,vref-mv = <600>;
+		/* 100k in parallel with 100k is a 50k source, which needs a
+		 * long sample window; 40 us is the SAADC's maximum. */
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_AIN5>;
+		zephyr,resolution = <12>;
+	};
+};
+
+/ {
+	neopixel: ws2812 {
+		compatible = "worldsemi,ws2812-gpio";
+		gpios = <&gpio0 16 0>;
+		chain-length = <1>;
+		color-mapping = <LED_COLOR_ID_GREEN
+				 LED_COLOR_ID_RED
+				 LED_COLOR_ID_BLUE>;
+	};
+
+	aliases {
+		imu0 = &imu;
+		magn0 = &magn;
+		light0 = &light;
+	};
+};
+
+/*
+ * A second CDC ACM instance, for binary sample data only. The board's own
+ * `board_cdc_acm_uart` (from boards/common/usb/cdc_acm_serial.dtsi, which the
+ * sense/uf2 variant includes) keeps the console, the shell and the log, so the
+ * two can never share a pipe. This is the structural fix for the defect that
+ * cost the CircuitPython port a trustworthy error counter.
+ */
+&zephyr_udc0 {
+	cdc_acm_data: cdc_acm_data {
+		compatible = "zephyr,cdc-acm-uart";
+		/* The binding's `label` becomes the USB *interface string
+		 * descriptor*, which is how the host tells the two ACM ports
+		 * apart without assuming enumeration order: on Linux it lands
+		 * in /sys/class/tty/ttyACMn/device/interface. host/ resolves
+		 * the port by this string. See host/read_serial.py, find_port().
+		 */
+		label = "Feather Sense data";
+	};
+};
+
+/* Same treatment for the board's own console instance, so neither port has to
+ * be identified by elimination. */
+&board_cdc_acm_uart {
+	label = "Feather Sense console";
+};

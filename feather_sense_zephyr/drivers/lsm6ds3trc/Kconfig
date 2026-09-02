@@ -1,0 +1,89 @@
+# LSM6DS3TR-C / LSM6DS33 6-axis IMU -- out-of-tree driver
+#
+# Zephyr ships no driver for either part. `drivers/sensor/st/` has lsm6ds0,
+# lsm6dsl, lsm6dso, lsm6dso16is and the lsm6dsv* family; neither of the two
+# parts this board has carried is among them. The nearest fit, st,lsm6dsl,
+# rejects the LSM6DS33's WHO_AM_I (0x69) and has no FIFO support at all, so it
+# cannot batch from a hardware-clocked source.
+
+menuconfig LSM6DS3TRC
+	bool "LSM6DS3TR-C / LSM6DS33 6-axis IMU"
+	default y
+	depends on DT_HAS_SCRATCHPAD_LSM6DS3TRC_ENABLED
+	depends on ZEPHYR_HAL_ST_MODULE
+	select I2C
+	select GPIO if $(dt_compat_any_has_prop,$(DT_COMPAT_SCRATCHPAD_LSM6DS3TRC),irq-gpios)
+	select HAS_STMEMSC
+	# USE_STDC_LSM6DS3TR_C is a bare `bool` with no prompt
+	# (modules/hal_st/Kconfig:168), so it can only be reached by `select` --
+	# assigning it in prj.conf is a hard configuration error.
+	select USE_STDC_LSM6DS3TR_C
+	help
+	  Enable the application-local driver for the LSM6DS3TR-C (WHO_AM_I
+	  0x6a) and the pin-compatible LSM6DS33 (0x69), layered over ST's
+	  vendored stmemsc register driver. Both ids are accepted: the two parts
+	  share the register map this driver uses, and Adafruit swapped one for
+	  the other mid-production.
+
+if LSM6DS3TRC
+
+choice LSM6DS3TRC_TRIGGER_MODE
+	prompt "Trigger mode"
+	default LSM6DS3TRC_TRIGGER_NONE
+	help
+	  Whether the FIFO watermark is delivered as an interrupt on INT1.
+	  Whether INT1 is routed to a GPIO on this board at all is unverified
+	  (see README.md), so the default is no trigger and the application
+	  drains the FIFO on a k_timer instead. The sample *spacing* comes from
+	  the chip's own clock either way; what a trigger buys is wake latency.
+
+config LSM6DS3TRC_TRIGGER_NONE
+	bool "No trigger"
+
+config LSM6DS3TRC_TRIGGER_GLOBAL_THREAD
+	bool "Use global thread"
+	depends on GPIO
+	depends on $(dt_compat_any_has_prop,$(DT_COMPAT_SCRATCHPAD_LSM6DS3TRC),irq-gpios)
+	select LSM6DS3TRC_TRIGGER
+
+config LSM6DS3TRC_TRIGGER_OWN_THREAD
+	bool "Use own thread"
+	depends on GPIO
+	depends on $(dt_compat_any_has_prop,$(DT_COMPAT_SCRATCHPAD_LSM6DS3TRC),irq-gpios)
+	select LSM6DS3TRC_TRIGGER
+
+endchoice
+
+config LSM6DS3TRC_TRIGGER
+	bool
+
+if LSM6DS3TRC_TRIGGER
+
+config LSM6DS3TRC_THREAD_PRIORITY
+	int "Thread priority"
+	depends on LSM6DS3TRC_TRIGGER_OWN_THREAD
+	default 10
+
+config LSM6DS3TRC_THREAD_STACK_SIZE
+	int "Thread stack size"
+	depends on LSM6DS3TRC_TRIGGER_OWN_THREAD
+	default 1024
+
+endif # LSM6DS3TRC_TRIGGER
+
+config LSM6DS3TRC_FIFO_WATERMARK_SAMPLES
+	int "FIFO watermark, in six-axis samples"
+	default 10
+	range 1 340
+	help
+	  How many complete gyro+accel samples accumulate before the FIFO
+	  reports a watermark. At the 208 Hz this application runs, 10 samples
+	  is about 48 ms of latency. The chip's watermark is expressed in 16-bit
+	  words and each sample is six of them, so the register value is six
+	  times this.
+
+module = LSM6DS3TRC
+module-str = LSM6DS3TRC
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # LSM6DS3TRC

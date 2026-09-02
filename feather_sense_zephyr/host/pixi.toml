@@ -1,0 +1,39 @@
+[workspace]
+authors = ["Bob DiMaiolo <bdimaiolo@gmail.com>"]
+channels = ["conda-forge"]
+name = "feather_sense_zephyr_host"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+# Trailing arguments pass through, so `pixi run serial --seconds 20` works.
+# `serial` needs the board's data CDC ACM port free -- it resolves the port by
+# its USB interface string descriptor, so nothing has to be assumed about
+# enumeration order. `ble` needs the host's Bluetooth adapter up and the board
+# advertising as "feather-sense".
+serial = "python read_serial.py"
+ble = "python read_ble.py"
+# `pixi run viz --transport ble --window 10`.
+viz = "python feather_rerun.py"
+# Checked here rather than by the root `type-py` task, whose environment has
+# neither bleak nor rerun and would report nothing but missing imports.
+# microbit_v2_zephyr/host, dfg/python and rust_python_bindings set the same
+# precedent: an area with its own environment is checked with its own task.
+# `-p default` matches the preset the root task uses; without it pyrefly falls
+# back to the lenient `basic`.
+type = "pyrefly check -p default ."
+
+[dependencies]
+python = ">=3.14.6,<3.15"
+# The USB CDC data port. The console port is a Zephyr shell and is not this
+# environment's business.
+pyserial = ">=3.5,<4"
+bleak = ">=3.0.2,<4"
+pyrefly = ">=1.1.1,<2"
+
+# The upstream wheel, which is what rerun actually ships and what
+# ~/code/remapy and microbit_v2_zephyr/host both use. Not the conda-forge build.
+# The package is `rerun-sdk` and it imports as `rerun`; the PyPI package named
+# plain `rerun` is an unrelated file watcher -- do not add it.
+[pypi-dependencies]
+rerun-sdk = ">=0.36.0,<0.37"

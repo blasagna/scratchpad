@@ -1,0 +1,11 @@
+tests:
+  battery_level.percent:
+    platform_allow:
+      - native_sim
+    tags:
+      - battery_level
+  battery_level.band:
+    platform_allow:
+      - native_sim
+    tags:
+      - battery_level
