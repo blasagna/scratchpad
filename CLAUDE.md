@@ -30,6 +30,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `rpi_pico_rust_debug/` | A minimal embassy `no_std` firmware for the Raspberry Pi Pico W (RP2040), for exercising `probe-rs` debugging — breakpoints, watchpoints, panic backtraces — via a deliberate bug | [`rpi_pico_rust_debug/CLAUDE.md`](rpi_pico_rust_debug/CLAUDE.md) |
 | `rpi_pico_zephyr_debug/` | The C++/Zephyr counterpart of `rpi_pico_rust_debug` for the same Pico W: the same deliberate ring-buffer bug, for exercising OpenOCD + Raspberry Pi Debug Probe debugging (breakpoints, watchpoints, fatal-error backtraces) via `west`, plus a `native_sim` ztest suite for the pure conversion | [`rpi_pico_zephyr_debug/CLAUDE.md`](rpi_pico_zephyr_debug/CLAUDE.md) |
 | `memory_optimization/` | C++ demos of the cache/memory optimization techniques in Section 6 of Drepper's "What Every Programmer Should Know About Memory" — one small project per technique (Bazel + Google Benchmark; NUMA excluded) | [`memory_optimization/CLAUDE.md`](memory_optimization/CLAUDE.md) |
+| `feather_sense_zephyr/` | A Zephyr RTOS application for the Adafruit Feather Sense (nRF52840) — IMU, magnetometer, environmental and battery streams over both USB CDC and BLE, with an RPC channel (west). **Design contract only so far**: the area is `README.md` plus its `CLAUDE.md`, with no firmware yet | [`feather_sense_zephyr/CLAUDE.md`](feather_sense_zephyr/CLAUDE.md) |
 
 ## Build systems by language
 
@@ -51,8 +52,9 @@ runs automatically on a `Stop` hook, so you rarely need to invoke it by hand.
 `fmt-c` takes its file list from `git ls-files` rather than a `**` glob, so that
 gitignored build directories are skipped. That matters because some of them hold
 symlinks that lead out of the repo — the west areas' `build/` directories
-(`microbit_v2_zephyr/build/` and `rpi_pico_zephyr_debug/build/`) link to the
-Zephyr installation, and a glob that follows them reformats it in place.
+(`microbit_v2_zephyr/build/`, `rpi_pico_zephyr_debug/build/`, and
+`feather_sense_zephyr/build/` once that area has firmware) link to the Zephyr
+installation, and a glob that follows them reformats it in place.
 
 `pixi run lint-c` runs cppcheck over the 7 Bazel C/C++ areas. Memory checking for a
 given area is `bazel test <targets> --config=valgrind` (needs the system package
