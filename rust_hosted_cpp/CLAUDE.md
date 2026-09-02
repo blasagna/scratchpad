@@ -7,11 +7,9 @@ plain C++20, no build config at all) and `rust/` (crate `lrukit` — the
 `#[cxx::bridge]`, a shim, the safe API, every test, and the only executable).
 The full walkthrough is in [`README.md`](README.md).
 
-This is the counterpart of [`../cpp_rust_bindings`](../cpp_rust_bindings), which
-binds a C++ library that is *also* a first-class Bazel target with its own
-GoogleTest suite and its own CLI. Same seam, opposite trade: there is nothing to
-keep in sync here, and equally nothing to fall back on — cargo is the only thing
-that compiles this C++, and Rust is the only thing that tests it.
+That is the whole trade: there is nothing to keep in sync, and equally nothing
+to fall back on — cargo is the only thing that compiles this C++, and Rust is
+the only thing that tests it.
 
 ## Commands
 
@@ -36,11 +34,12 @@ area.
   but this crate. The one-way dependency is what keeps "cargo hosts the C++" a
   choice rather than a trap.
 - **The Rust tests own the C++ logic, because nothing else does.** `tests/cache.rs`
-  covers eviction order, promotion, and the counters — the suite that would be
-  GoogleTest in the sibling area. `src/lib.rs`'s `mod tests` covers the seam. Do
-  not carry over that area's "don't re-test the logic in Rust" rule; here that
-  would leave `cpp/lrukit.cpp` untested. A behavior not asserted in `rust/` is
-  not asserted anywhere.
+  covers eviction order, promotion, and the counters — everything a GoogleTest
+  suite would cover if this C++ had one. `src/lib.rs`'s `mod tests` covers the
+  seam. Where a C++ library has its own test binary the usual rule is "don't
+  re-test the logic in Rust, only the seam"; that rule does not apply here and
+  following it would leave `cpp/lrukit.cpp` untested. A behavior not asserted in
+  `rust/` is not asserted anywhere.
 - **Every bridge function is declared `-> Result<T>`, without exception.** That
   declaration is what makes cxx generate the try/catch. Without it a `throw`
   unwinds into Rust frames that cannot handle it and the process aborts. This

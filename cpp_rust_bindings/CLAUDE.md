@@ -7,16 +7,13 @@ and a C++ CLI) and `rust/` (crate `exprkit` — the `#[cxx::bridge]`, a shim,
 the safe API, and a Rust CLI). The full walkthrough is in
 [`README.md`](README.md).
 
-This is the mirror of [`../rust_python_bindings`](../rust_python_bindings),
-which exports Rust *to* a higher-level language. Same layering discipline,
-different hazards: exceptions rather than error returns, object lifetime rather
-than reference counting, two build systems rather than one.
+The hazards of this direction are exceptions rather than error returns, object
+lifetime rather than reference counting, and two build systems rather than one.
 
-[`../rust_hosted_cpp`](../rust_hosted_cpp) is the same seam with the second
-ecosystem removed — a C++ library with no build file, no test binary, and no CLI
-of its own. Compare the two before adding a `BUILD` to a new C++ library: the
-duplication documented below is the price of the C++ side staying independently
-buildable, and it is a price worth naming out loud rather than paying by reflex.
+Think before adding a `BUILD` to a new C++ library here: the duplication
+documented below is the price of the C++ side staying independently buildable —
+its own Bazel target, its own GoogleTest suite, its own CLI — and it is a price
+worth naming out loud rather than paying by reflex.
 
 ## Commands
 
