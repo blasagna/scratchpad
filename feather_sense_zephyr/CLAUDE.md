@@ -142,6 +142,19 @@ established on a real board.
   describe the gain as latency or CPU — it is neither, and the numbers are in
   README, "the imu's INT1 line".
 
+- **The APDS9960's INT is `P1.00`, and `app.overlay` deliberately does not declare
+  it** *(measured)*. Open-drain and active-low — which is why the magnetometer
+  sweep had to run pull-ups as well as pull-downs; a pull-down pass alone reads 0
+  in both states for a pin like this and would have returned a confident, wrong
+  negative. **Do not "fix" the missing `int-gpios`**: poll mode returns on its
+  first `STATUS` read, because `PERS` has `APERS = 0` and every ALS cycle raises
+  `AINT` unconditionally, so `CONFIG_APDS9960_FETCH_MODE_INTERRUPT` would replace
+  an immediate read with a wait for the next integration cycle (~103 ms at
+  `ATIME = 219`). The pin exists; using it is a regression. Behind that same loop
+  is a 10-second `APDS9960_MAX_WAIT_TIME`, reachable only if something writes
+  `PERS` — forcing it made the env stream vanish for 25 s while reporting 0 errors
+  and 0 `seq` gaps, and while the IMU and magnetometer carried on untouched.
+
 - **The LIS3MDL's DRDY and INT pins go nowhere** *(measured)*. The same sweep that
   found INT1 was run against both, in both polarities and with both pull
   directions, over all 32 pins with no known owner. Both signals were asserted
@@ -254,10 +267,11 @@ established on a real board.
 
 - **Do not restate an unverified hardware fact as known.** README keeps three
   lists — settled by running it, live limitations, still unverified — and that
-  separation is the document's main value. Still on the unverified side:
-  whether the APDS9960's INT is routed to a GPIO, the battery over a real
-  discharge (so the LED has never been seen to *change* band), and anything about
-  behaviour over a long run — the 16-bit `seq` wrap has never been reached.
+  separation is the document's main value. All three interrupt-routing
+  questions are now settled (INT1 is `P1.11`, the APDS9960's INT is `P1.00`, the
+  LIS3MDL's DRDY and INT go nowhere). Still on the unverified side: the battery
+  over a real discharge (so the LED has never been seen to *change* band), and
+  anything about behaviour over a long run — the 16-bit `seq` wrap has never been reached.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries

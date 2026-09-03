@@ -613,6 +613,49 @@ against an internal pull-up, so something ties it low. It is not a sensor line �
 move for either signal — and the board files claim `k32src = "rc"`, so what is on it is
 unexplained.
 
+#### and on the light sensor, which does have one
+
+**The APDS9960's INT is `P1.00`** — and the right thing to do with it is nothing. Both
+halves of that are worth the space.
+
+Finding it needed no threshold work either. `fs stream 3 0` stops the env thread, which is
+the only thing that writes `AICLEAR`, so `STATUS` latches at `0x33` — `AINT` *and* `PINT`
+already set. `ENABLE`'s `AIEN` and `PIEN` bits are all that gate the pin, and poll mode
+leaves both clear, so setting them is the entire experiment:
+
+| `ENABLE` | | `P1.00` under a pull-up |
+|---|---|---|
+| `0x07` | `AIEN`, `PIEN` clear | 1 |
+| `0x17` | `AIEN` — ALS interrupt | **0** |
+| `0x27` | `PIEN` — proximity interrupt | **0** |
+| `0x07` | clear again | 1 |
+
+Two independent sources and a clean return, the same shape that settled `P1.11`.
+
+**This pin is open-drain and active-low**, which is the retroactive justification for having
+swept the magnetometer with pull-ups as well as pull-downs. A pull-down sweep reads 0 in
+both states here and reports nothing — so had the LIS3MDL's DRDY been wired this way, the
+pull-down pass alone would have produced a confident and wrong negative.
+
+**Why leave it unrouted.** Zephyr's poll-mode fetch reads `STATUS` once and only enters its
+wait loop `while (!(tmp & AINT))` if the flag is clear. It never is: `PERS` has `APERS = 0`,
+which on this part means *every* ALS cycle raises `AINT` unconditionally, threshold logic
+bypassed. So the poll returns on its first read with data already waiting, and
+`CONFIG_APDS9960_FETCH_MODE_INTERRUPT` would replace that with a wait for the *next*
+integration cycle — up to ~103 ms at `ATIME = 219`. Using the pin would make a 1 Hz read
+slower, not faster.
+
+The wait loop is not dead code, though, and its bound is `APDS9960_MAX_WAIT_TIME` — **10
+seconds**. Setting `APERS = 15` with the window opened to `[0, 0xffff]` puts `AINT` out of
+reach and shows exactly what that costs: `STATUS` drops to `0x23`, and the env stream
+**disappears from the host's report entirely** for 25 s. Two things about that are worth
+keeping. It is invisible in the error counters — 0 decode errors, 0 `seq` gaps, because a
+stream that never emits cannot gap. And the IMU and magnetometer did not notice: 208.32/s
+and 19.98/s throughout, which is the thread-priority layout in [threads and data
+flow](#threads-and-data-flow) doing its job, measured rather than argued. Nothing in this
+application writes `PERS`, so the stall is unreachable as shipped — but it is one register
+write away, and that write would look harmless.
+
 ### the status led's bit-bang timing
 
 **The pixel lit in the wrong colour, and the cause was neither the pin nor the colour
@@ -1330,6 +1373,13 @@ with a shell.
   49 ms timer it replaced delivered an eleventh sample 21.7 % of the time. See [the imu's
   INT1 line](#the-imus-int1-line).
 
+- **The APDS9960's INT is `P1.00`, and is deliberately left unrouted.** Open-drain and
+  active-low, confirmed from two independent sources. Declaring it would make the 1 Hz read
+  *slower*, because poll mode already returns on its first `STATUS` read — see [and on the
+  light sensor, which does have one](#and-on-the-light-sensor-which-does-have-one). That
+  section also records the 10-second stall hiding behind `APDS9960_MAX_WAIT_TIME`, which is
+  unreachable as shipped and one register write from not being.
+
 - **The LIS3MDL's DRDY and INT pins are not connected to the SoC** — so its timer fallback
   is not a fallback, it is the only option. Both signals were asserted inside the chip and
   neither reached any of the 32 candidate GPIOs, under pull-downs and pull-ups and in both
@@ -1339,7 +1389,8 @@ with a shell.
 - **The LIS3MDL and APDS9960 fallbacks resolve on their own.** With no `irq-gpios` and no
   `int-gpios`, Kconfig picks `CONFIG_LIS3MDL_TRIGGER_NONE=y` and
   `CONFIG_APDS9960_FETCH_MODE_POLL=y` with no help, and both sensors read correctly that
-  way.
+  way. For the magnetometer that is now the only option; for the light sensor it is a
+  choice, and the better one.
 - **The SHT30 read is cheap, and the ~152 ms figure was never applicable.** See [the
   environmental read](#the-environmental-read). The driver defaults to periodic mode, so
   there is no conversion to block on; what the assumption hid was a fetch-vs-produce race,
@@ -1438,11 +1489,6 @@ with a shell.
 
 ### still unverified
 
-- **Whether the APDS9960's INT is routed.** The last of the three, and answerable by the
-  same sweep — see [the same sweep on the
-  magnetometer](#the-same-sweep-on-the-magnetometer) for the shape of it. The light sensor
-  is read once a second inside the environmental stream, so the answer changes very little
-  either way. The magnetometer half of this question is now settled, and the answer was no.
 - **Nothing has run for longer than a minute.** The `seq` wrap at 16 bits, the `t_ms` wrap
   at 32 bits (49.7 days), queue behaviour under a host that stops reading, and the stall
   clamp in `src/imu.cpp` (which needs a 96-sample backlog to fire) are all untested by
