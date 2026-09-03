@@ -42,7 +42,7 @@ a 1 Hz environmental stream all running at once:
 | Magnetometer | **48.3 µT** total field — Earth's, once the board was moved away from a magnet |
 | Status LED | green at a `high` band, on `P0.16` — **confirmed**, once the bit-bang timing was fixed |
 | IMU drain | the chip's own FIFO-watermark interrupt, on **`P1.11`** — every batch exactly 10 samples, 1251 of 1251 |
-| Flash / RAM | 236 948 B (29 %) / 79 048 B (30 %) |
+| Flash / RAM | 238 164 B (29 %) / 79 096 B (30 %) |
 
 The same, over BLE, with all four notify characteristics subscribed:
 
