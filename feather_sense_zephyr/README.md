@@ -42,8 +42,16 @@ a 1 Hz environmental stream all running at once:
 | Magnetometer | **48.3 µT** total field — Earth's, once the board was moved away from a magnet |
 | Status LED | green at a `high` band, on `P0.16` — **confirmed**, once the bit-bang timing was fixed |
 | IMU drain | the chip's own FIFO-watermark interrupt, on **`P1.11`** — every batch exactly 10 samples, 1251 of 1251 |
-| Flash / RAM | 238 164 B (29 %) / 79 096 B (30 %) |
+| Flash / RAM | 238 152 B (29 %) / 79 096 B (30 %) — from a clean tree; see the note below |
 | Longest run | **90 minutes**, 1 125 800 IMU samples, 0 errors, 0 seq gaps - and the 16-bit `seq` counter wrapped, see [a long run](#a-long-run) |
+
+The flash figure moves by a few bytes with the commit it was built at, and not because
+anything got bigger. `get build id` reports `git describe`, which CMake resolves at
+configure time and compiles in as a string — and the image ends up carrying the commit in
+more than one form (`23146c7`, `0.1.0+23146c7`, and a 12-character prefix). A dirty tree
+spells the describe output `e1c6f52-dirty`, six characters longer. Rebuilding the *same*
+source pristine, so that only that string changed, moved the image by 12 bytes: 238 164 to
+238 152. Quote the figure from a clean tree, and do not read a small delta as code growth.
 
 The same, over BLE, with all four notify characteristics subscribed:
 
@@ -825,8 +833,10 @@ They were originally declared in the five producing translation units — `struc
 `src/magn.cpp`, `src/env.cpp` and `src/buttons.cpp`, and `battery::Reading` in
 `src/battery.hpp`. That stated each layout in a place nothing could check, because those
 files pull in Zephyr headers and the host-side parity test builds with a plain hosted
-compiler. Moving them changed no bytes and no generated code: flash and RAM came out
-identical at 238 164 B and 79 096 B.
+compiler. Moving them changed no bytes and no generated code: the builds either side of
+the move came out identical, at 238 164 B and 79 096 B with the dirty-tree build id both
+sides. (A clean build at this commit reports 238 152 B for the reason given under
+[status](#status) — a shorter `git describe` string, not smaller code.)
 
 Two consequences worth knowing:
 
