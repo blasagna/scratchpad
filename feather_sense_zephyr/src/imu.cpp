@@ -31,6 +31,35 @@ namespace
 
 #define IMU_NODE DT_ALIAS(imu0)
 
+/*
+ * The driver's FIFO records go on the wire untouched -- publish() hands the
+ * array straight to streams::emit() -- so lsm6ds3trc_sample *is* the IMU's
+ * sample layout on the link without ever being converted into codec::ImuSample.
+ * That conversion is exactly what the design forbids on this path, so the two
+ * types cannot be tied together by the compiler in the ordinary way, and this
+ * is the only translation unit that sees both. Assert it here or nowhere.
+ *
+ * The `(-1)` comparison is a signedness check: if one field were uint16_t, both
+ * sides promote to int and -1 == 65535 is false. Zephyr builds C++ against its
+ * minimal libc++ with -nostdinc++, so <type_traits> is not available to say it
+ * more directly.
+ */
+#define ASSERT_IMU_FIELD(field)                                                                    \
+	static_assert(offsetof(lsm6ds3trc_sample, field) == offsetof(codec::ImuSample, field));    \
+	static_assert(sizeof(lsm6ds3trc_sample::field) == sizeof(codec::ImuSample::field));        \
+	static_assert(decltype(lsm6ds3trc_sample::field)(-1) ==                                    \
+		      decltype(codec::ImuSample::field)(-1))
+
+static_assert(sizeof(lsm6ds3trc_sample) == sizeof(codec::ImuSample));
+ASSERT_IMU_FIELD(gx);
+ASSERT_IMU_FIELD(gy);
+ASSERT_IMU_FIELD(gz);
+ASSERT_IMU_FIELD(ax);
+ASSERT_IMU_FIELD(ay);
+ASSERT_IMU_FIELD(az);
+
+#undef ASSERT_IMU_FIELD
+
 const device *const dev = DEVICE_DT_GET(IMU_NODE);
 
 constexpr size_t kStackSize = 2048;

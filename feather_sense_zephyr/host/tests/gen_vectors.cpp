@@ -107,6 +107,68 @@ void emit_scale(uint8_t unit, int32_t num, int32_t den)
 	std::printf("scale %u %d %d %s\n", unit, num, den, to_hex(out).c_str());
 }
 
+/*
+ * fields <stream_id> <hex> <v0> <v1> ...
+ *
+ * One sample body built through the firmware's own struct, then the bytes it
+ * occupies and the values it holds. This is what pins field *signedness*: the
+ * bytes alone cannot distinguish int16 -32768 from uint16 32768, so the values
+ * are printed beside them and the Python has to agree about both.
+ *
+ * Until the sample layouts moved into codec.hpp these could not be generated at
+ * all -- the structs lived in translation units that include Zephyr headers,
+ * which this build cannot compile.
+ */
+void emit_fields_imu(int16_t gx, int16_t gy, int16_t gz, int16_t ax, int16_t ay, int16_t az)
+{
+	const ImuSample sample = {gx, gy, gz, ax, ay, az};
+	std::vector<uint8_t> bytes(sizeof(sample));
+
+	std::memcpy(bytes.data(), &sample, sizeof(sample));
+	std::printf("fields %u %s %d %d %d %d %d %d\n", kStreamImu, to_hex(bytes).c_str(),
+		    sample.gx, sample.gy, sample.gz, sample.ax, sample.ay, sample.az);
+}
+
+void emit_fields_magn(int16_t x, int16_t y, int16_t z)
+{
+	const MagnSample sample = {x, y, z};
+	std::vector<uint8_t> bytes(sizeof(sample));
+
+	std::memcpy(bytes.data(), &sample, sizeof(sample));
+	std::printf("fields %u %s %d %d %d\n", kStreamMagn, to_hex(bytes).c_str(), sample.x,
+		    sample.y, sample.z);
+}
+
+void emit_fields_env(int16_t temperature_centi_c, uint16_t humidity_centi_pct, uint16_t light_level)
+{
+	const EnvSample sample = {temperature_centi_c, humidity_centi_pct, light_level};
+	std::vector<uint8_t> bytes(sizeof(sample));
+
+	std::memcpy(bytes.data(), &sample, sizeof(sample));
+	std::printf("fields %u %s %d %u %u\n", kStreamEnv, to_hex(bytes).c_str(),
+		    sample.temperature_centi_c, sample.humidity_centi_pct, sample.light_level);
+}
+
+void emit_fields_battery(uint16_t millivolts, uint8_t percent, uint8_t flags)
+{
+	const BatterySample sample = {millivolts, percent, flags};
+	std::vector<uint8_t> bytes(sizeof(sample));
+
+	std::memcpy(bytes.data(), &sample, sizeof(sample));
+	std::printf("fields %u %s %u %u %u\n", kStreamBattery, to_hex(bytes).c_str(),
+		    sample.millivolts, sample.percent, sample.flags);
+}
+
+void emit_fields_button(uint16_t code, uint8_t pressed, uint8_t pad)
+{
+	const ButtonSample sample = {code, pressed, pad};
+	std::vector<uint8_t> bytes(sizeof(sample));
+
+	std::memcpy(bytes.data(), &sample, sizeof(sample));
+	std::printf("fields %u %s %u %u %u\n", kStreamButton, to_hex(bytes).c_str(), sample.code,
+		    sample.pressed, sample.pad);
+}
+
 /* sizes -- the constants feather_protocol.py restates, straight from the header. */
 void emit_sizes()
 {
@@ -192,6 +254,31 @@ int main()
 	emit_batch(2000, 7, 0, kStreamEnv, 1);
 	emit_batch(3000, 8, 0, kStreamBattery, 1);
 	emit_batch(4000, 9, 0, kStreamButton, 1);
+
+	/*
+	 * Field vectors, chosen at the edges where a signedness mistake shows.
+	 * The env row is the one that matters most: `light_level` is a raw
+	 * clear-channel count that really does exceed 32767, so reading it
+	 * signed is a live bug and not a theoretical one.
+	 */
+	emit_fields_imu(-32768, -32768, -32768, -32768, -32768, -32768);
+	emit_fields_imu(32767, 32767, 32767, 32767, 32767, 32767);
+	emit_fields_imu(1, -1, 2, -2, 3, -3);
+	emit_fields_imu(0, 0, 0, 0, 0, 16393); /* one g on az at +-2 g */
+
+	emit_fields_magn(-32768, 32767, 0);
+	emit_fields_magn(483, -483, 1);
+
+	emit_fields_env(-32768, 65535, 65535);
+	emit_fields_env(32767, 0, 32768);
+	emit_fields_env(2650, 5420, 129); /* 26.50 degC, 54.20 %RH, a real count */
+
+	emit_fields_battery(65535, 255, 255);
+	emit_fields_battery(4056, 85, kBatteryFlagUsb);
+	emit_fields_battery(0, 0, 0);
+
+	emit_fields_button(65535, 1, 0);
+	emit_fields_button(11, 0, 0); /* INPUT_KEY_0, released */
 
 	/* The scale rows rpc.cpp reports, including the dimensionless one whose
 	 * identity is 1e9/1 -- writing 1/1 there made a working light sensor

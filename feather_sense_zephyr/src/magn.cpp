@@ -50,12 +50,6 @@ constexpr uint16_t kPeriodUs = 1000000 / kRateHz;
  */
 constexpr uint8_t kBatchSamples = 2;
 
-struct Sample {
-	int16_t x, y, z;
-};
-
-static_assert(sizeof(Sample) == codec::kMagnSampleBytes);
-
 k_timer timer;
 
 /*
@@ -88,7 +82,7 @@ int16_t gauss_to_deci_ut(const sensor_value &value)
 
 void entry(void *, void *, void *)
 {
-	Sample batch[kBatchSamples];
+	codec::MagnSample batch[kBatchSamples];
 	uint8_t filled = 0;
 	uint32_t first_t_ms = 0;
 
@@ -114,7 +108,7 @@ void entry(void *, void *, void *)
 			first_t_ms = k_uptime_get_32();
 		}
 
-		batch[filled] = Sample{
+		batch[filled] = codec::MagnSample{
 			.x = gauss_to_deci_ut(values[0]),
 			.y = gauss_to_deci_ut(values[1]),
 			.z = gauss_to_deci_ut(values[2]),
@@ -123,7 +117,7 @@ void entry(void *, void *, void *)
 
 		if (filled == kBatchSamples) {
 			streams::emit(codec::kStreamMagn, first_t_ms, kPeriodUs, filled, batch,
-				      filled * sizeof(Sample));
+				      filled * sizeof(codec::MagnSample));
 			filled = 0;
 		}
 	}

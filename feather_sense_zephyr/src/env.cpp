@@ -44,14 +44,6 @@ k_thread thread;
 constexpr int kPriority = 8;
 constexpr int kPeriodMs = 1000;
 
-struct Sample {
-	int16_t temperature_centi_c;
-	uint16_t humidity_centi_pct;
-	uint16_t light_level;
-};
-
-static_assert(sizeof(Sample) == codec::kEnvSampleBytes);
-
 k_timer timer;
 uint32_t fetch_us;
 uint32_t failures;
@@ -81,7 +73,7 @@ void entry(void *, void *, void *)
 			continue;
 		}
 
-		Sample sample = {};
+		codec::EnvSample sample = {};
 		sensor_value value;
 
 		/* Cycle counter, not k_uptime_get_32(): the whole point of the

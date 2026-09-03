@@ -7,13 +7,13 @@ reach everything, and this suite covers the rest:
 - **Behaviour the device has no opinion about** -- how a malformed frame is
   counted and resynchronised, what a truncated batch raises, how rates are
   computed. ``codec.cpp`` encodes; none of this is its business.
-- **Per-stream field signedness**, which is a genuine gap in the parity test
-  rather than a division of labour. ``sample_bytes()`` lives in ``codec.cpp``
-  and is checked over there, but the ``Sample`` structs that say which fields
-  are signed live in ``../../src/env.cpp`` and its siblings, behind Zephyr
-  headers the standalone parity build cannot compile. So the pin below is a pin
-  against *this* file changing, not a cross-check: flipping ``"<hHH"`` to
-  ``"<hhH"`` passes the parity suite, and only the assertions here object.
+- **Per-stream field signedness.** This used to be a genuine gap: the ``Sample``
+  structs lived in ``../../src/env.cpp`` and its siblings, behind Zephyr headers
+  the standalone parity build cannot compile, so flipping ``"<hHH"`` to
+  ``"<hhH"`` passed parity and only the pin here objected. The layouts now live
+  in ``codec.hpp`` and parity checks them against the firmware's own structs.
+  The assertions below are kept as a second, compiler-free statement of the same
+  thing: they still run where there is no C++ compiler and parity is skipped.
 - **The 16-bit ``seq`` wrap**, which the arithmetic has always handled and no
   run was ever long enough to reach.
 
@@ -162,21 +162,21 @@ class ParseBatch(unittest.TestCase):
                     self.assertEqual(len(sample), len(fp.STREAM_FIELDS[stream_id]))
 
     def test_field_signedness_matches_what_the_firmware_packs(self) -> None:
-        """The gap the parity suite cannot cover; see this module's docstring.
+        """A compiler-free restatement of what parity now checks directly.
 
         Each case is the extreme that separates a signed reading from an
-        unsigned one, against the struct in the firmware file named beside it.
+        unsigned one, against the struct in `codec.hpp` named beside it.
         """
-        # ../../src/imu.cpp: int16 gx,gy,gz,ax,ay,az -- raw registers, and gyro
+        # codec::ImuSample: int16 gx,gy,gz,ax,ay,az -- raw registers, and gyro
         # at +-2000 dps needs the full signed range.
         imu = make_batch(stream_id=fp.STREAM_IMU, body=b"\x00\x80" * 6, count=1)
         self.assertEqual(imu.samples[0], (-32768,) * 6)
 
-        # ../../src/magn.cpp: int16 x,y,z in deci-uT.
+        # codec::MagnSample: int16 x,y,z in deci-uT.
         magn = make_batch(stream_id=fp.STREAM_MAGN, body=b"\xff\x7f" * 3, count=1)
         self.assertEqual(magn.samples[0], (32767,) * 3)
 
-        # ../../src/env.cpp:48 -- int16 temperature_centi_c, then uint16
+        # codec::EnvSample -- int16 temperature_centi_c, then uint16
         # humidity_centi_pct and uint16 light_level. Light is a raw clear-channel
         # count and does exceed 32767, so reading it signed is not academic.
         env = make_batch(
@@ -184,13 +184,13 @@ class ParseBatch(unittest.TestCase):
         )
         self.assertEqual(env.samples[0], (-32768, 65535, 65535))
 
-        # ../../src/battery.cpp: uint16 mv, uint8 percent, uint8 flags.
+        # codec::BatterySample: uint16 mv, uint8 percent, uint8 flags.
         battery = make_batch(
             stream_id=fp.STREAM_BATTERY, body=b"\xff\xff\x64\x01", count=1
         )
         self.assertEqual(battery.samples[0], (65535, 100, fp.BATTERY_FLAG_USB))
 
-        # ../../src/buttons.cpp: uint16 code, uint8 pressed, uint8 pad.
+        # codec::ButtonSample: uint16 code, uint8 pressed, uint8 pad.
         button = make_batch(
             stream_id=fp.STREAM_BUTTON, body=b"\xff\xff\x01\x00", count=1
         )

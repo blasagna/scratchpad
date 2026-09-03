@@ -23,14 +23,6 @@ LOG_MODULE_REGISTER(buttons, LOG_LEVEL_INF);
 namespace
 {
 
-struct Sample {
-	uint16_t code;
-	uint8_t pressed;
-	uint8_t pad;
-};
-
-static_assert(sizeof(Sample) == codec::kButtonSampleBytes);
-
 const device *const button_port = DEVICE_DT_GET(DT_GPIO_CTLR(DT_ALIAS(sw0), gpios));
 
 void button_handler(input_event *event, void *)
@@ -39,7 +31,7 @@ void button_handler(input_event *event, void *)
 		return;
 	}
 
-	const Sample sample = {
+	const codec::ButtonSample sample = {
 		.code = static_cast<uint16_t>(event->code),
 		.pressed = static_cast<uint8_t>(event->value != 0 ? 1 : 0),
 		.pad = 0,

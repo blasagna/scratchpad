@@ -36,13 +36,87 @@ constexpr size_t kStreamCount = kStreamMax - kStreamMin + 1;
 /* Sample body sizes, in bytes. Every one is a whole number of 16-bit words, so
  * the sample array stays 2-byte aligned behind the 10-byte header.
  */
-constexpr size_t kImuSampleBytes = 12;    /* int16 gx,gy,gz,ax,ay,az */
-constexpr size_t kMagnSampleBytes = 6;    /* int16 x,y,z */
-constexpr size_t kEnvSampleBytes = 6;     /* int16 temp_c_centi, uint16 rh_centi, uint16 lux */
-constexpr size_t kBatterySampleBytes = 4; /* uint16 mv, uint8 percent, uint8 flags */
-constexpr size_t kButtonSampleBytes = 4;  /* uint16 code, uint8 pressed, uint8 pad */
+constexpr size_t kImuSampleBytes = 12;
+constexpr size_t kMagnSampleBytes = 6;
+constexpr size_t kEnvSampleBytes = 6;
+constexpr size_t kBatterySampleBytes = 4;
+constexpr size_t kButtonSampleBytes = 4;
 
-/* Battery `flags` bits. */
+/* --- sample layouts ------------------------------------------------------- */
+
+/*
+ * One sample body per stream, in wire order.
+ *
+ * These belong here, beside the header and the framing, because they *are* the
+ * wire format: streams::emit() takes a `const void *` and the transports memcpy
+ * the struct's bytes onto the link, so the in-memory layout is the on-wire
+ * layout with nothing in between. Both the nRF52840 and every host that decodes
+ * this are little-endian, which is the assumption that makes that legal.
+ *
+ * They were previously declared in the five producing translation units, which
+ * stated the layout somewhere nothing could check it. host/tests/ builds this
+ * header with the host compiler and generates its parity vectors through these
+ * exact structs; from the producers it could not, because those files pull in
+ * Zephyr headers. Field *signedness* was the part that went unchecked as a
+ * result -- see host/tests/test_cpp_parity.py.
+ *
+ * Signedness is not decoration here: `light_level` is a raw clear-channel count
+ * that really does exceed 32767, and the gyro at +-2000 dps really does use the
+ * whole of int16.
+ */
+
+/*
+ * Gyro precedes accel and the two share one timestamp -- the order the chip's
+ * FIFO and its OUTX_L_G-onward block produce them, so the encoder never
+ * reorders anything. This must stay layout-identical to lsm6ds3trc_sample,
+ * which src/imu.cpp asserts field by field: the driver's records are memcpy'd
+ * onto the wire without passing through this type, so nothing else would catch
+ * the two drifting apart.
+ */
+struct ImuSample {
+	int16_t gx, gy, gz;
+	int16_t ax, ay, az;
+};
+
+/* Deci-microtesla. Centi would clip at the chip's own +-400 uT full scale. */
+struct MagnSample {
+	int16_t x, y, z;
+};
+
+struct EnvSample {
+	int16_t temperature_centi_c;
+	uint16_t humidity_centi_pct;
+	uint16_t light_level; /* the raw clear-channel count, not lux */
+};
+
+struct BatterySample {
+	uint16_t millivolts;
+	uint8_t percent;
+	uint8_t flags;
+};
+
+struct ButtonSample {
+	uint16_t code;
+	uint8_t pressed;
+	uint8_t pad;
+};
+
+/*
+ * The sizes above are the design's statement of the budget; the structs are the
+ * fields. These tie the two together.
+ *
+ * Deliberately not `constexpr size_t kImuSampleBytes = sizeof(ImuSample)`: a
+ * constant derived from the struct would follow it silently, and the point of
+ * having both is that a change has to be made in two places that then have to
+ * agree.
+ */
+static_assert(sizeof(ImuSample) == kImuSampleBytes);
+static_assert(sizeof(MagnSample) == kMagnSampleBytes);
+static_assert(sizeof(EnvSample) == kEnvSampleBytes);
+static_assert(sizeof(BatterySample) == kBatterySampleBytes);
+static_assert(sizeof(ButtonSample) == kButtonSampleBytes);
+
+/* Battery `flags` bits, in BatterySample::flags. */
 constexpr uint8_t kBatteryFlagUsb = 0x01;
 
 /* --- batch header --------------------------------------------------------- */

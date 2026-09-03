@@ -203,6 +203,29 @@ class CppParity(unittest.TestCase):
                 for sample in batch.samples:
                     self.assertEqual(len(sample), len(fp.STREAM_FIELDS[stream_id]))
 
+    def test_sample_fields_decode_to_the_values_the_firmware_packed(self) -> None:
+        """Signedness, which this suite could not reach until the layouts moved.
+
+        The bytes alone cannot separate int16 -32768 from uint16 32768, so the
+        generator prints the values its own structs hold and the decoder has to
+        agree about those too. `light_level` is the field that matters most: a
+        raw clear-channel count that really does exceed 32767.
+        """
+        for row in self.rows("fields"):
+            stream_id = int(row[0])
+            body = _unhex(row[1])
+            expected = tuple(int(v) for v in row[2:])
+            names = fp.STREAM_FIELDS[stream_id]
+
+            with self.subTest(stream=fp.STREAM_NAMES[stream_id], values=expected):
+                self.assertEqual(len(expected), len(names))
+                self.assertEqual(len(body), fp.STREAM_SAMPLE_BYTES[stream_id])
+
+                header = struct.pack("<IHHBB", 0, 0, 0, stream_id, 1)
+                batch = fp.parse_batch(header + body)
+
+                self.assertEqual(batch.samples[0], expected)
+
     def test_scale_fields_parse_to_what_the_firmware_packed(self) -> None:
         for unit_s, num_s, den_s, hex_s in self.rows("scale"):
             unit, num, den = int(unit_s), int(num_s), int(den_s)

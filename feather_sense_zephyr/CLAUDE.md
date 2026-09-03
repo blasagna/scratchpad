@@ -212,6 +212,20 @@ established on a real board.
   cannot tell them apart. It is the serial analogue of a GATT characteristic; the
   `payload` bytes stay identical on both transports.
 
+- **The five sample layouts live in `codec.hpp`, not in the streams that
+  produce them**, because `streams::emit()` takes a `const void *` and the
+  transports memcpy the struct straight onto the link — the in-memory layout
+  *is* the wire layout. Keeping them beside the header and the framing is also
+  what lets `host/tests/` compile them. Two things not to undo: `battery::Reading`
+  is an `using` alias for `codec::BatterySample` rather than a second struct, and
+  **`src/imu.cpp` never constructs a `codec::ImuSample`** — the driver's
+  `lsm6ds3trc_sample` records go from the FIFO burst onto the wire untouched, and
+  converting them would be the per-sample work this design exists to avoid. The
+  two IMU types are tied by `static_assert` on size, offset, width and signedness
+  instead; `src/imu.cpp` is the only translation unit that sees both. The
+  signedness check compares `(-1)` through each field's type because Zephyr's
+  `-nostdinc++` libc++ has no `<type_traits>`.
+
 - **The wire format gets exactly one host-side definition**, in
   `host/feather_protocol.py`, with every constant carrying a
   `# Must match ../src/<file>: <SYMBOL>` comment. The readers own their
@@ -221,14 +235,13 @@ established on a real board.
   own encoder, not against a transcription of it.** `tests/test_cpp_parity.py`
   compiles `src/codec.cpp` with the host compiler — it is Zephyr-header-free so
   that `native_sim` can build it, and that property is reused here — and
-  requires the Python to reproduce its bytes. **Its blind spot is field
-  signedness**: `sample_bytes()` is in `codec.cpp` and is covered, but the
-  `Sample` structs that say which fields are signed are in `src/env.cpp` and its
-  siblings, behind Zephyr headers the standalone build cannot compile. Flipping
-  env's `"<hHH"` to `"<hhH"` passes parity *(verified by mutation)* and is caught
-  only by `tests/test_feather_protocol.py`. Do not treat a green parity run as
-  covering the sample layouts; moving those structs into `codec.hpp` is what
-  would actually close it.
+  requires the Python to reproduce its bytes *and* the values behind them.
+  Signedness used to be its blind spot, because the `Sample` structs lived in
+  `src/env.cpp` and its siblings behind Zephyr headers; they are in `codec.hpp`
+  now, so `gen_vectors.cpp` builds field vectors through the firmware's own
+  structs and both directions fail *(verified by mutation)* — env's `"<hHH"` to
+  `"<hhH"` on the host, and `EnvSample::light_level` to `int16_t` on the
+  firmware, the latter as a narrowing error that stops the generator compiling.
 
 - **Quote the device-timestamp rate, not the host arrival rate.** `dev` is
   `(count - 1) × 1000 / (last_ts - first_ts)` and needs no clock sync; `host`
@@ -344,7 +357,8 @@ established on a real board.
 - `src/imu.cpp` — FIFO drain at 208 Hz into batches, with the stall clamp.
 - `src/magn.cpp`, `src/env.cpp`, `src/battery.cpp`, `src/buttons.cpp` — the
   lower-rate streams; buttons is an `input` callback with no thread.
-- `src/codec.{hpp,cpp}` — batch header, scale-field layout, and COBS.
+- `src/codec.{hpp,cpp}` — batch header, the five sample layouts, scale-field
+  layout, and COBS.
   Zephyr-header-free, shared with the host tests.
 - `src/battery_level.{hpp,cpp}` — divider mV → percent and the hysteresis band
   function. Zephyr-header-free, shared with the host tests.

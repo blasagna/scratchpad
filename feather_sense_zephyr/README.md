@@ -813,6 +813,37 @@ Sample bodies:
 | 4 | battery | `uint16 mv` · `uint8 percent` · `uint8 flags` | 4 |
 | 5 | button | `uint16 code` · `uint8 pressed` · `uint8 _pad` | 4 |
 
+#### the sample layouts live with the rest of the wire format
+
+All five are declared in [`src/codec.hpp`](src/codec.hpp), beside the batch header and the
+framing, because they **are** the wire format: `streams::emit()` takes a `const void *` and
+the transports memcpy the struct's bytes onto the link, so the in-memory layout *is* the
+on-wire layout with nothing in between. Both the nRF52840 and every host that decodes this
+are little-endian, which is what makes that legal.
+
+They were originally declared in the five producing translation units — `struct Sample` in
+`src/magn.cpp`, `src/env.cpp` and `src/buttons.cpp`, and `battery::Reading` in
+`src/battery.hpp`. That stated each layout in a place nothing could check, because those
+files pull in Zephyr headers and the host-side parity test builds with a plain hosted
+compiler. Moving them changed no bytes and no generated code: flash and RAM came out
+identical at 238 164 B and 79 096 B.
+
+Two consequences worth knowing:
+
+- **`battery::Reading` is now an alias for `codec::BatterySample`**, not a second struct.
+  The bytes `streams::emit()` sends and the bytes RPC opcode `0x01` answers with are the
+  same bytes, so a separate API type would have been a copy of the wire layout with a
+  copy's failure mode.
+- **The IMU is the exception, and keeps one.** `src/imu.cpp` never constructs a
+  `codec::ImuSample`: the driver's `lsm6ds3trc_sample` records go from the FIFO burst onto
+  the wire untouched, which is the whole reason that path is a `memcpy` and the `get scale`
+  RPC is load-bearing. Converting them into the codec type would be exactly the per-sample
+  work the design forbids. So the two types are tied together by `static_assert` instead —
+  size, and per field the offset, width and *signedness*, the last by comparing `(-1)`
+  through each field's type, since Zephyr's `-nostdinc++` libc++ has no `<type_traits>`.
+  `src/imu.cpp` is the only translation unit that sees both types: it asserts there or
+  nowhere.
+
 Gyro precedes accel in the IMU sample because that is the order the LSM6DS3TR-C's FIFO
 and its `OUTX_L_G`-onward register block produce them; reordering would mean touching
 every sample for nothing. The two halves come out of one burst and therefore share one
@@ -1228,22 +1259,32 @@ It is deliberately two suites, because they can reach different things:
   rows, and every shared constant. Nothing here is checked against a transcription of the
   other side, which is the same reason `tests/codec/src/main.cpp` pins literals rather than
   round-tripping. Skipped, not failed, where there is no C++ compiler.
-- `tests/test_feather_protocol.py` covers what parity cannot: behaviour the device has no
-  opinion about (malformed-frame counting and resynchronisation, truncated batches, the rate
-  arithmetic) and **per-stream field signedness**.
+- `tests/test_feather_protocol.py` covers what parity has no opinion to check against:
+  behaviour the device does not participate in — malformed-frame counting and
+  resynchronisation, truncated batches, the rate arithmetic — plus a compiler-free
+  restatement of the field layouts, so that something still holds them when parity is
+  skipped for want of a C++ compiler.
 
-That last item is a real gap in the parity test rather than a division of labour, and it is
-worth stating plainly. `sample_bytes()` lives in `codec.cpp` and is checked across the
-languages; the `Sample` structs that say which fields are *signed* live in `src/env.cpp` and
-its siblings, behind Zephyr headers the standalone build cannot compile. So flipping the env
-format from `"<hHH"` to `"<hhH"` passes the parity suite — verified by mutation, not
-assumed — and only `test_feather_protocol.py` objects. It matters most for `light`, a raw
-clear-channel count that genuinely exceeds 32767. Closing it properly means moving those
-structs into `codec.hpp`, which is a firmware change and not done here.
+Field **signedness** was a real gap in the parity test until the sample layouts moved, and
+the way it closed is worth recording. `sample_bytes()` has always been in `codec.cpp` and
+checked across the languages, but the `Sample` structs that say which fields are *signed*
+lived in `src/env.cpp` and its four siblings — behind Zephyr headers the standalone build
+cannot compile. Flipping the env format from `"<hHH"` to `"<hhH"` therefore passed the
+parity suite, verified by mutation rather than assumed. It matters most for `light`, a raw
+clear-channel count that genuinely exceeds 32767, where reading it signed is a live bug and
+not a theoretical one.
 
-Every check above was mutation-tested: six edits to `feather_protocol.py` — the COBS block
-size, a channel constant, the env signedness, the header format, the sequence mask — each
-fail at least one suite, and an unmodified control passes both.
+The five layouts now live in `codec.hpp` under [sample
+layouts](#the-sample-layouts-live-with-the-rest-of-the-wire-format), so
+`gen_vectors.cpp` builds its vectors through the firmware's own structs and the decoder has
+to agree about the values as well as the bytes — the bytes alone cannot separate an int16
+`-32768` from a uint16 `32768`. Both directions are now caught: the host mutation above
+fails parity, and changing `EnvSample::light_level` to `int16_t` fails it too, as a
+narrowing error when the generator will not compile.
+
+Every check above was mutation-tested: edits to `feather_protocol.py` — the COBS block size,
+a channel constant, the env signedness, the header format, the sequence mask — and to
+`codec.hpp` each fail at least one suite, and an unmodified control passes both.
 
 ## host side
 

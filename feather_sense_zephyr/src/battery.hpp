@@ -8,14 +8,21 @@
 
 #include <stdint.h>
 
+#include "codec.hpp"
+
 namespace battery
 {
 
-struct Reading {
-	uint16_t millivolts;
-	uint8_t percent;
-	uint8_t flags;
-};
+/*
+ * The battery sample, which is also this module's public type.
+ *
+ * One type rather than two that must agree: the bytes `streams::emit()` puts on
+ * the wire and the bytes RPC opcode 0x01 answers with are the same bytes, so a
+ * separate API struct would be a copy of the wire layout with a copy's failure
+ * mode. The layout itself lives in codec.hpp with the other four, where the
+ * host-side parity test can compile it.
+ */
+using Reading = codec::BatterySample;
 
 int start();
 
