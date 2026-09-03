@@ -127,6 +127,21 @@ established on a real board.
   (`button0`, `INPUT_KEY_0`, alias `sw0`) *is* in the board DTS and needs
   nothing.
 
+- **The IMU's INT1 is `P1.11`** *(measured)*, and the FIFO is drained on its
+  watermark interrupt. No datasheet, board file or pinout says so; it was found
+  by routing `INT1_DRDY_XL` — which latches *statically* high here, because this
+  firmware reads the FIFO and so never clears `XLDA` by reading `OUTX_L_XL` —
+  and then sweeping every free GPIO with the `devmem` shell, each configured as
+  an input with a pull-down. INT2 is not routed. **Enabling it takes two
+  changes**: `irq-gpios` in `app.overlay` *and*
+  `CONFIG_LSM6DS3TRC_TRIGGER_GLOBAL_THREAD=y`, because the driver's Kconfig
+  choice defaults to `NONE`; with only the first, the board logs `INT1 trigger
+  refused; falling back to the timer`. What it buys is a batch boundary locked to
+  the sensor's clock: every batch is exactly the 10-sample watermark, where the
+  49 ms timer it replaced delivered an eleventh sample 21.7 % of the time. Do not
+  describe the gain as latency or CPU — it is neither, and the numbers are in
+  README, "the imu's INT1 line".
+
 - **The IMU stream carries raw `int16` register values; the scale-factor RPC
   carries the units.** Do not "helpfully" pre-scale it on the device. That is
   what keeps the 208 Hz path a `memcpy` off the FIFO burst, what stops gyro at
@@ -221,10 +236,10 @@ established on a real board.
 
 - **Do not restate an unverified hardware fact as known.** README keeps three
   lists — settled by running it, live limitations, still unverified — and that
-  separation is the document's main value. Still on the unverified side: the
-  whether INT1/DRDY/INT are routed to GPIOs at all, the battery over a real
-  discharge (so the LED has never been seen to *change* band), and anything about
-  behaviour over a long run — the 16-bit `seq` wrap has never been reached.
+  separation is the document's main value. Still on the unverified side:
+  whether the LIS3MDL's DRDY and the APDS9960's INT are routed to GPIOs, the
+  battery over a real discharge (so the LED has never been seen to *change*
+  band), and anything about behaviour over a long run — the 16-bit `seq` wrap has never been reached.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries
@@ -262,8 +277,8 @@ established on a real board.
 - `drivers/lsm6ds3trc/` — the app-local sensor driver as a Zephyr module
   (`zephyr/module.yml`, its own `Kconfig`, and `dts/bindings/` including a
   `vendor-prefixes.txt` for the `scratchpad` prefix). `lsm6ds3trc.h` is the
-  app-facing FIFO API; `lsm6ds3trc_trigger.c` is compiled only when the node has
-  `irq-gpios`, which it currently does not.
+  app-facing FIFO API; `lsm6ds3trc_trigger.c` needs both `irq-gpios` on the node
+  and a non-NONE Kconfig trigger mode, and gets both.
 - `src/main.cpp` — device readiness checks and thread startup, in dependency
   order. USB first: the console rides a CDC endpoint nothing brings up until it
   runs.

@@ -7,6 +7,7 @@
  */
 
 #include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/led/led.h>
 
@@ -26,10 +27,15 @@
 		 */
 		compatible = "scratchpad,lsm6ds3trc";
 		reg = <0x6a>;
-		/* No irq-gpios: the FIFO is drained on a k_timer. Whether INT1
-		 * is routed to a GPIO at all is unverified -- see README.md,
-		 * "known limitations".
+		/* INT1, carrying the FIFO watermark. Nothing documents this
+		 * pin -- it was found by driving INT1 statically high and
+		 * reading every free GPIO, see README.md, "the imu's INT1
+		 * line". The property alone does not switch the trigger on:
+		 * the driver's Kconfig choice defaults to
+		 * LSM6DS3TRC_TRIGGER_NONE, so prj.conf selects GLOBAL_THREAD
+		 * as well.
 		 */
+		irq-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
 	};
 
 	magn: lis3mdl@1c {

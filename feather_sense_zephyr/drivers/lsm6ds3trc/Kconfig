@@ -32,10 +32,13 @@ choice LSM6DS3TRC_TRIGGER_MODE
 	default LSM6DS3TRC_TRIGGER_NONE
 	help
 	  Whether the FIFO watermark is delivered as an interrupt on INT1.
-	  Whether INT1 is routed to a GPIO on this board at all is unverified
-	  (see README.md), so the default is no trigger and the application
-	  drains the FIFO on a k_timer instead. The sample *spacing* comes from
-	  the chip's own clock either way; what a trigger buys is wake latency.
+	  The default is no trigger, so a board that does not route INT1 needs
+	  no configuration to build; the application then drains the FIFO on a
+	  k_timer instead. The Feather Sense does route it, to P1.11, and the
+	  application selects GLOBAL_THREAD -- see README.md, "the imu's INT1
+	  line". The sample *spacing* comes from the chip's own clock either
+	  way; what the trigger buys is a batch boundary locked to the sensor's
+	  clock rather than beating against the SoC's.
 
 config LSM6DS3TRC_TRIGGER_NONE
 	bool "No trigger"

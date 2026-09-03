@@ -22,5 +22,8 @@ properties:
     description: |
       The chip's INT1 pin, on which the FIFO watermark is signalled. Optional:
       with it absent the driver builds without trigger support and the
-      application drains the FIFO on a timer instead. Whether INT1 is routed to
-      a GPIO on the Feather Sense is unverified -- see README.md.
+      application drains the FIFO on a timer instead. Present is not sufficient
+      either -- the Kconfig trigger-mode choice defaults to NONE, so a board
+      that wants the interrupt sets both. On the Feather Sense INT1 is P1.11;
+      INT2 is not routed, which is why there is no second property here. See
+      README.md, "the imu's INT1 line".

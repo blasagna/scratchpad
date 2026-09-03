@@ -41,6 +41,7 @@ a 1 Hz environmental stream all running at once:
 | Battery | 4056 mV, 85 %, USB flag set, from the pack on the board |
 | Magnetometer | **48.3 µT** total field — Earth's, once the board was moved away from a magnet |
 | Status LED | green at a `high` band, on `P0.16` — **confirmed**, once the bit-bang timing was fixed |
+| IMU drain | the chip's own FIFO-watermark interrupt, on **`P1.11`** — every batch exactly 10 samples, 1251 of 1251 |
 | Flash / RAM | 236 948 B (29 %) / 79 048 B (30 %) |
 
 The same, over BLE, with all four notify characteristics subscribed:
@@ -49,7 +50,7 @@ The same, over BLE, with all four notify characteristics subscribed:
 |---|---|
 | IMU rate, from device timestamps | **208.4 samples/s** — the same as USB |
 | Decode errors, sequence gaps, device-side notification drops | **0** over a 20 s run |
-| Largest notification observed | **142 bytes**, so the ATT MTU is at least 145 |
+| Largest notification observed | **130 bytes**, so the ATT MTU is at least 133 — a fixed size now that every IMU batch is exactly the watermark |
 | ATT MTU the board negotiated | **247**, from the board's own log |
 
 So both transports carry the full 208 Hz stream with nothing dropped, which was
@@ -57,7 +58,7 @@ the point of the whole design. The link is nowhere near saturated: about
 2.7 KB/s of samples against the ~4.4 KB/s the CircuitPython port reached at a
 23-byte MTU.
 
-Building the firmware turned up six things this document had wrong or had not
+Building the firmware turned up ten things this document had wrong or had not
 known, all of them recorded in place below rather than only here:
 
 1. The image linked at flash offset 0 and would have erased the SoftDevice
@@ -87,6 +88,10 @@ known, all of them recorded in place below rather than only here:
    lit in the *wrong colour* rather than staying dark, which points at the colour
    mapping and away from the real cause — see [the status led's bit-bang
    timing](#the-status-leds-bit-bang-timing).
+10. The IMU's INT1 **is** routed, to `P1.11`, and this document's own suggested
+   way of finding it would not have worked — a watermark interrupt pulses, and a
+   shell reads one pin at a time. See [the imu's INT1
+   line](#the-imus-int1-line).
 
 And one thing the board corrected about the *bench* rather than about the
 firmware: the magnetometer's first readings were saturated on all three axes,
@@ -237,6 +242,7 @@ as `ttyACM0`, but nothing depends on that.
  */
 
 #include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/led/led.h>
 
@@ -256,10 +262,15 @@ as `ttyACM0`, but nothing depends on that.
 		 */
 		compatible = "scratchpad,lsm6ds3trc";
 		reg = <0x6a>;
-		/* No irq-gpios: the FIFO is drained on a k_timer. Whether INT1
-		 * is routed to a GPIO at all is unverified -- see README.md,
-		 * "known limitations".
+		/* INT1, carrying the FIFO watermark. Nothing documents this
+		 * pin -- it was found by driving INT1 statically high and
+		 * reading every free GPIO, see README.md, "the imu's INT1
+		 * line". The property alone does not switch the trigger on:
+		 * the driver's Kconfig choice defaults to
+		 * LSM6DS3TRC_TRIGGER_NONE, so prj.conf selects GLOBAL_THREAD
+		 * as well.
 		 */
+		irq-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
 	};
 
 	magn: lis3mdl@1c {
@@ -310,6 +321,29 @@ as `ttyACM0`, but nothing depends on that.
 		zephyr,input-positive = <NRF_SAADC_AIN5>;
 		zephyr,resolution = <12>;
 	};
+};
+
+/*
+ * The CPU clock, which the NeoPixel's bit-banged timing is derived from.
+ *
+ * `worldsemi,ws2812-gpio` has no clock of its own: it toggles the line with
+ * inline assembly and counts NOPs, and Kconfig works out how many from
+ * /cpus/cpu@0's clock-frequency. nrf52840.dtsi does not declare one (nrf52810
+ * and nrf52805 do), and neither did this overlay, so CONFIG_DELAY_T1H and its
+ * three siblings fell all the way through to their last-resort literals -- 7,
+ * 6, 3 and 8 NOPs, which are values for a roughly 10 MHz part. At 64 MHz that
+ * made a "1" bit's high pulse about 109 ns where the WS2812 wants 700, and the
+ * LED decoded garbage: it lit, in the wrong colour, which is a far more
+ * confusing failure than staying dark.
+ *
+ * Declaring the frequency here is what the driver's own binding does in its
+ * first example, and it gives 44/38/22/51 NOPs. Nothing else on this SoC reads
+ * the property -- the drivers that do are all for other vendors' parts.
+ * Check it took: `grep CONFIG_DELAY_T build/zephyr/.config`.
+ */
+&{/cpus/cpu@0} {
+	/* Path syntax, not a label: nrf52840.dtsi gives the node none. */
+	clock-frequency = <64000000>;
 };
 
 / {
@@ -380,7 +414,7 @@ through the `input` subsystem with no debounce code and no polling loop of our o
 
 | Thread | Prio | Woken by | Rate | Does |
 |---|---|---|---|---|
-| imu | 5 | FIFO watermark IRQ, else `k_timer` | 208 Hz | drain N records → one batch → both tx queues |
+| imu | 5 | FIFO watermark IRQ on `P1.11` | 208 Hz | drain N records → one batch → both tx queues |
 | magn | 6 | DRDY trigger, else `k_timer` | 20 Hz | fetch → convert → batch |
 | tx ble | 7 | `k_msgq` | per connection interval | `bt_gatt_notify` per stream |
 | tx usb | 7 | `k_msgq` | as drained | COBS-encode → write to `cdc_acm_data` |
@@ -458,6 +492,80 @@ counts, so there is resolution to spare and no risk of the wire clipping before 
 — which was the reason for the change. And a sensor that saturates is not necessarily a
 sensor that is broken: the cheapest way to tell the two apart is to move the range and see
 whether the reading moves with it.
+
+### the imu's INT1 line
+
+**`P1.11`, found by sweep rather than from a schematic.** Nothing describes this pin.
+Zephyr's board files do not mention the IMU at all, Adafruit's pinout diagram covers the
+header and not the internal bus, and the CircuitPython port never used an interrupt, so it
+left the question open too. This document listed it as unverified for exactly that reason,
+and suggested "arm the watermark interrupt and sweep the candidate GPIOs".
+
+Taken literally that does not work. A watermark interrupt *pulses*, twenty times a second,
+and a shell command that reads one pin at a time will essentially never catch a pulse. The
+sweep needs INT1 held **statically** high, and the LSM6DS33 offers exactly that if the
+source is chosen carefully: `XLDA` is set when a new accelerometer sample is ready and
+cleared only by reading `OUTX_L_XL` — registers **this firmware never touches**, because it
+reads the FIFO instead. So `INT1_CTRL = 0x01` (`INT1_DRDY_XL`) raises INT1 and leaves it
+raised.
+
+The reading side is `CONFIG_DEVMEM_SHELL`, which was already on. Writing `0x4` to a pin's
+`PIN_CNF` makes it an input **with a pull-down**, so a floating header pin reads 0 and only
+a pin something is actively driving reads 1; `P0.IN` (`0x50000510`) and `P1.IN`
+(`0x50000810`) then hand back all 32 lines of a port per read. Sweeping the 27 pins the
+board, this overlay and the SoC do not already own:
+
+| `INT1_CTRL` | routed source | `P1.IN` | high among the candidates |
+|---|---|---|---|
+| `0x00` | nothing | `0x00000004` | none |
+| `0x01` | accelerometer data-ready | `0x00000804` | **`P1.11`** |
+| `0x00` | nothing | `0x00000004` | none |
+| `0x02` | gyroscope data-ready | `0x00000804` | **`P1.11`** |
+
+One pin, following two independent sources, going low again each time the routing is
+removed. (The `0x4` present in every row is `P1.02`, the user button, idling high on its
+pull-up; it is not a candidate.) The same sweep against `INT2_CTRL` found nothing, so INT2
+is not routed — which is why the binding has one `irq-gpios` entry and not two.
+
+**Turning it on takes two changes, not one.** `irq-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>` in
+`app.overlay` only makes the trigger *available*: the driver's Kconfig choice defaults to
+`LSM6DS3TRC_TRIGGER_NONE`, so `prj.conf` has to select
+`CONFIG_LSM6DS3TRC_TRIGGER_GLOBAL_THREAD=y` as well. With one and not the other the board
+boots and logs `INT1 trigger refused; falling back to the timer` — `sensor_trigger_set()`
+answers `-ENOSYS`, because the driver's `.trigger_set` is then NULL — which is
+`src/imu.cpp`'s fallback branch exercised for free. `draining the FIFO on the INT1
+watermark` at boot is the line that says it took.
+
+#### what the trigger actually bought
+
+Less than "interrupts beat polling" would suggest, and the honest number is the point of
+measuring. The timer period was already the watermark's cadence, so the win is not
+throughput and it is barely latency; it is **determinism**. Both builds, sixty seconds
+each, all five streams running:
+
+| | `k_timer`, 49 ms | INT1 watermark |
+|---|---|---|
+| IMU batches in 60 s | 1224 | 1251 |
+| … carrying 10 samples | 958 | **1251** |
+| … carrying 11 | 266 — **21.7 %** | **0** |
+| device-side batch interval, min/median/max | 47.2 / 49.0 / 50.8 ms | 46 / 48 / 49 ms |
+| IMU rate from device timestamps | 208.5/s | 208.5/s |
+| host-side decode errors and `seq` gaps | 0 | 0 |
+
+That 21.7 % is not noise, it is a beat, and it was predictable: a 49 ms timer against a
+watermark that fills in 10 / 208.5 s = 47.96 ms runs 1.04 ms slow per drain, so
+(49 − 47.96) / 4.796 = **21.7 %** of drains should find an extra sample waiting. The
+measurement lands on the arithmetic exactly. Nothing was ever *wrong* with that — the drain
+loop empties the FIFO however deep it finds it, and neither build lost a sample — but the
+batch boundary wandered against the sensor's clock, and now it does not. On the interrupt
+build `fs imu` reports 20 420 samples in 2042 batches with **0 overruns and 0 stall
+flushes**.
+
+Two consequences worth recording. The largest BLE notification is now a fixed 130 bytes
+(10 samples × 12, plus the 10-byte header) rather than an occasional 142, which lowers the
+observed-MTU floor in the [status](#status) table without saying anything worse about the
+link — the board's own negotiated 247 is unchanged. And the trigger's work item runs on
+`sysworkq`, which reports 376/1024 bytes. The whole thing costs 984 bytes of flash.
 
 ### the status led's bit-bang timing
 
@@ -637,7 +745,7 @@ errors in every run so far.
 
 | id | stream | source | rate | batched |
 |---|---|---|---|---|
-| 1 | imu (accel + gyro) | FIFO watermark IRQ if INT1 is routed, else timer — **currently the timer** | 208 Hz | yes, up to 19 |
+| 1 | imu (accel + gyro) | the chip's FIFO watermark IRQ, on `P1.11` | 208 Hz | yes, exactly 10 |
 | 2 | magn | DRDY trigger if routed, else timer — **currently the timer** | 20 Hz | yes, 2 |
 | 3 | env (temperature, humidity, light) | timer | 1 Hz | no |
 | 4 | battery | timer; emitted only on a ≥1 % change | ≤1 Hz | no |
@@ -662,11 +770,15 @@ batching buys throughput this link does not need; what it costs is latency, and 
 design's budget is well under 100 ms. Two samples is exactly 100 ms and halves the
 notification count; four would spend 200 ms to save nothing.
 
-The IMU's timer drains at the FIFO watermark's cadence —
-`CONFIG_LSM6DS3TRC_FIFO_WATERMARK_SAMPLES` (10) over 208 Hz, so every 48 ms — and then
-loops until the FIFO is empty, because one wake may cover several batches if a
-lower-priority thread held the CPU. A backlog past 96 samples is treated as a stall: the
-FIFO is flushed rather than drained, because catching up would put stale samples on the
+The IMU drains on the chip's own watermark interrupt, so a batch is
+`CONFIG_LSM6DS3TRC_FIFO_WATERMARK_SAMPLES` (10) samples — about 48 ms — every time. The
+drain still loops until the FIFO is empty, because one wake may cover several batches if a
+lower-priority thread held the CPU, and because that same loop is what carries the timer
+fallback if the trigger is ever unavailable. See [the imu's INT1
+line](#the-imus-int1-line) for how the pin was found and what the interrupt measurably
+bought over the 49 ms timer it replaced.
+
+A backlog past 96 samples is treated as a stall: the FIFO is flushed rather than drained, because catching up would put stale samples on the
 wire carrying plausible-looking back-dated timestamps, and a `seq` gap is the honest
 report. That is the CircuitPython port's schedule-from-the-deadline rule applied to a
 hardware queue.
@@ -1163,6 +1275,15 @@ with a shell.
   but it cannot be *asserted* in `prj.conf`, which was the third promptless-symbol trap
   after `USE_STDC_LSM6DS3TR_C` (and, unlike that one, `I2C_NRFX_TWIM` is set purely by the
   overlay). `grep CONFIG_I2C_NRFX_TWIM build/zephyr/.config` is the check.
+- **The IMU's INT1 is routed, to `P1.11`, and the FIFO is drained on it.** Nothing
+  documented that pin — this document had it as an open question and proposed a check that
+  would not have worked. Driving INT1 statically high instead, and reading every free GPIO
+  with the `devmem` shell, found it in one pass; INT2 is not routed. The trigger path in
+  `drivers/lsm6ds3trc/lsm6ds3trc_trigger.c` is now compiled in and running, and what it
+  bought is measured rather than assumed: every batch is exactly the watermark, where the
+  49 ms timer it replaced delivered an eleventh sample 21.7 % of the time. See [the imu's
+  INT1 line](#the-imus-int1-line).
+
 - **The LIS3MDL and APDS9960 fallbacks resolve on their own.** With no `irq-gpios` and no
   `int-gpios`, Kconfig picks `CONFIG_LIS3MDL_TRIGGER_NONE=y` and
   `CONFIG_APDS9960_FETCH_MODE_POLL=y` with no help, and both sensors read correctly that
@@ -1249,19 +1370,12 @@ with a shell.
 
 ### still unverified
 
-- **Whether the IMU's INT1 is routed to a GPIO at all.** The Zephyr board files say nothing
-  because they do not describe the IMU, and the CircuitPython port left it open too. The
-  shipping configuration therefore has no `irq-gpios` and drains the FIFO on a `k_timer`,
-  and the driver's trigger path (`drivers/lsm6ds3trc/lsm6ds3trc_trigger.c`) is **compiled
-  out and untested**. This matters less than it sounds: the sample *spacing* still comes
-  from the chip's own clock either way — which the measured 208.4/s confirms — so
-  `period_us` and the simultaneity argument both hold. What is lost is wake latency and a
-  little CPU. Requirement 2 says "wherever possible", and if it is not possible this is why.
-  **Check:** the Adafruit schematic, or arm the watermark interrupt and sweep the candidate
-  GPIOs with `gpio get`.
-- **Whether the LIS3MDL's DRDY and the APDS9960's INT are routed.** Same shape, and the
-  fallbacks are automatic and confirmed working, so this is a performance question rather
-  than a correctness one.
+- **Whether the LIS3MDL's DRDY and the APDS9960's INT are routed.** Undocumented in the same
+  way INT1 was, and now answerable in the same way — see [the imu's INT1
+  line](#the-imus-int1-line) for the method. Both fallbacks are automatic and confirmed
+  working, so this is a performance question rather than a correctness one, and neither
+  sensor is fast enough for the answer to change much: the other 26 candidate pins were all
+  quiet during that sweep, so whichever they are, nothing was driving them.
 - **Nothing has run for longer than a minute.** The `seq` wrap at 16 bits, the `t_ms` wrap
   at 32 bits (49.7 days), queue behaviour under a host that stops reading, and the stall
   clamp in `src/imu.cpp` (which needs a 96-sample backlog to fire) are all untested by

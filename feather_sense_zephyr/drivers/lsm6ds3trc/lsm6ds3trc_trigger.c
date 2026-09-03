@@ -4,12 +4,15 @@
  * Copyright (c) 2026 Bob DiMaiolo
  * SPDX-License-Identifier: Apache-2.0
  *
- * Compiled only when the devicetree node carries `irq-gpios`. Whether INT1 is
- * routed to a GPIO on the Feather Sense is unverified, so the shipping
- * configuration has no such property and the application drains the FIFO on a
- * k_timer instead. What a trigger buys is wake latency and a little CPU; the
- * sample *spacing* comes from the chip's own clock either way, so `period_us`
- * and the simultaneity argument hold with or without it.
+ * Compiled only when the devicetree node carries `irq-gpios` *and* the Kconfig
+ * trigger-mode choice is not NONE; the Feather Sense sets both, with INT1 on
+ * P1.11. Without them the application drains the FIFO on a k_timer instead,
+ * which still works -- the sample *spacing* comes from the chip's own clock
+ * either way, so `period_us` and the simultaneity argument hold with or without
+ * this file. What the interrupt buys is a batch boundary that cannot drift
+ * against the sensor: a free-running timer beats against a FIFO filling at a
+ * slightly different rate and delivers an extra sample about a fifth of the
+ * time. See README.md, "the imu's INT1 line", for the measurement.
  */
 
 #include "lsm6ds3trc.h"
