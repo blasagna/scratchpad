@@ -1206,6 +1206,45 @@ Two modules qualify, and only two — the rest of this firmware is hardware:
   and still gets stuck, and is the defect the CircuitPython port's README records shipping
   as an LED that displayed a constant amber.
 
+### the host side of the wire format
+
+The `native_sim` suite covers the *device's* definition of the wire format. The host has a
+second hand-written definition in `host/feather_protocol.py`, and for a while nothing
+tested it at all — which left the repo's usual cross-port parity property (as in
+`text_analyzer/` and `tiny_http_server/`) asserted by review rather than by a test.
+
+```sh
+cd host
+pixi run test        # 39 cases: cross-language parity, then the host's own behaviour
+```
+
+It is deliberately two suites, because they can reach different things:
+
+- `tests/test_cpp_parity.py` compiles **`src/codec.cpp` itself** with the host compiler —
+  which it supports, being free of Zephyr headers so that `native_sim` can build it — links
+  it against `tests/gen_vectors.cpp`, and requires `feather_protocol.py` to produce the same
+  bytes and decode them back. 359 vectors: COBS at every length to 300 and at the block
+  boundary, batches for all five streams at the sizes the firmware really emits, the scale
+  rows, and every shared constant. Nothing here is checked against a transcription of the
+  other side, which is the same reason `tests/codec/src/main.cpp` pins literals rather than
+  round-tripping. Skipped, not failed, where there is no C++ compiler.
+- `tests/test_feather_protocol.py` covers what parity cannot: behaviour the device has no
+  opinion about (malformed-frame counting and resynchronisation, truncated batches, the rate
+  arithmetic) and **per-stream field signedness**.
+
+That last item is a real gap in the parity test rather than a division of labour, and it is
+worth stating plainly. `sample_bytes()` lives in `codec.cpp` and is checked across the
+languages; the `Sample` structs that say which fields are *signed* live in `src/env.cpp` and
+its siblings, behind Zephyr headers the standalone build cannot compile. So flipping the env
+format from `"<hHH"` to `"<hhH"` passes the parity suite — verified by mutation, not
+assumed — and only `test_feather_protocol.py` objects. It matters most for `light`, a raw
+clear-channel count that genuinely exceeds 32767. Closing it properly means moving those
+structs into `codec.hpp`, which is a firmware change and not done here.
+
+Every check above was mutation-tested: six edits to `feather_protocol.py` — the COBS block
+size, a channel constant, the env signedness, the header format, the sequence mask — each
+fail at least one suite, and an unmodified control passes both.
+
 ## host side
 
 Four programs in one nested pixi environment at `host/`, separate for the same reason
@@ -1219,6 +1258,7 @@ than a second copy.
 | `read_serial.py` | USB CDC, pyserial | owns the serial link; measures it |
 | `read_ble.py` | BLE, bleak | owns the BLE link; measures it |
 | `feather_rerun.py` | either, by flag | plots what the other two decode |
+| `tests/` | neither | holds `feather_protocol.py` to the firmware's own encoder, and to itself |
 
 `feather_protocol.py` is the **only** host-side definition of the wire format. Every
 constant in it carries a `# Must match ../src/<file>: <SYMBOL>` comment naming the firmware
@@ -1236,6 +1276,7 @@ cd host
 pixi run serial --seconds 20
 pixi run ble --seconds 20
 pixi run viz --transport ble --window 10
+pixi run test
 pixi run type
 ```
 

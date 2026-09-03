@@ -15,6 +15,15 @@ serial = "python read_serial.py"
 ble = "python read_ble.py"
 # `pixi run viz --transport ble --window 10`.
 viz = "python feather_rerun.py"
+# The wire format has two hand-written definitions -- ../src/codec.cpp and
+# feather_protocol.py -- and until this task existed only the C++ one was
+# tested, by ../tests/codec/ under native_sim. `tests/test_cpp_parity.py`
+# compiles that same codec.cpp with the host compiler and requires the Python
+# to agree with the bytes it produces; skipped, not failed, where there is no
+# C++ compiler. Run from here, so `-m` puts this directory on sys.path and
+# `import feather_protocol` resolves -- the arrangement dfg/python uses.
+test = "python -m unittest discover -s tests -v"
+
 # Checked here rather than by the root `type-py` task, whose environment has
 # neither bleak nor rerun and would report nothing but missing imports.
 # microbit_v2_zephyr/host, dfg/python and rust_python_bindings set the same

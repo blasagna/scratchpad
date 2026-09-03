@@ -217,6 +217,19 @@ established on a real board.
   `# Must match ../src/<file>: <SYMBOL>` comment. The readers own their
   transports; `feather_rerun.py` imports `SerialLink`/`BleLink` from them.
 
+- **`pixi run test` in `host/` checks that definition against the firmware's
+  own encoder, not against a transcription of it.** `tests/test_cpp_parity.py`
+  compiles `src/codec.cpp` with the host compiler — it is Zephyr-header-free so
+  that `native_sim` can build it, and that property is reused here — and
+  requires the Python to reproduce its bytes. **Its blind spot is field
+  signedness**: `sample_bytes()` is in `codec.cpp` and is covered, but the
+  `Sample` structs that say which fields are signed are in `src/env.cpp` and its
+  siblings, behind Zephyr headers the standalone build cannot compile. Flipping
+  env's `"<hHH"` to `"<hhH"` passes parity *(verified by mutation)* and is caught
+  only by `tests/test_feather_protocol.py`. Do not treat a green parity run as
+  covering the sample layouts; moving those structs into `codec.hpp` is what
+  would actually close it.
+
 - **Quote the device-timestamp rate, not the host arrival rate.** `dev` is
   `(count - 1) × 1000 / (last_ts - first_ts)` and needs no clock sync; `host`
   only says the link kept up. Divide by *measured* elapsed, never the nominal
@@ -350,6 +363,12 @@ established on a real board.
   the decoders, the scale table, the RPC frames, and the rate arithmetic. No I/O.
 - `host/read_serial.py`, `host/read_ble.py` — the transports and the two rate CLIs.
 - `host/feather_rerun.py` — the rerun viewer, either transport by flag.
+- `host/tests/` — `gen_vectors.cpp` (emits vectors through the firmware's own
+  encoder), `test_cpp_parity.py` and `test_feather_protocol.py`. Run from
+  `host/` with `python -m unittest discover -s tests`, so `-m` puts that
+  directory on `sys.path` — the arrangement `dfg/python` uses. `gen_vectors.cpp`
+  is built by a plain hosted `g++`, never by Zephyr, so unlike everything under
+  `src/` and `tests/` it may use the full standard library.
 - `host/pixi.toml` — the environment for all four (`pixi run serial`,
-  `pixi run ble`, `pixi run viz`, `pixi run type`).
+  `pixi run ble`, `pixi run viz`, `pixi run test`, `pixi run type`).
 - `.clang-format` — Zephyr's, scoping this area's style away from the repo default.
