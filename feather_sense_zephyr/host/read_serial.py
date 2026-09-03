@@ -14,6 +14,11 @@ its own port, the same way ``microbit_v2_zephyr/host/ble_rerun.py`` imports
 ``ble_stream``.
 
     pixi run serial --seconds 20
+    pixi run serial --seconds 5400 --window 60   # a soak; see "a long run" in ../README.md
+
+Every windowed figure is also accumulated over the run and printed as a total
+when the run ends, including on a Ctrl-C. The windowed lines say whether the
+link is healthy now; only the totals say whether it stayed healthy.
 """
 
 from __future__ import annotations
@@ -154,10 +159,30 @@ class SerialLink:
         )
 
 
+def summarize(
+    stats: dict[int, fp.StreamStats], link: SerialLink, elapsed_s: float
+) -> None:
+    """Print the run totals. Divided by *measured* elapsed, as always."""
+    print()
+    print(f"=== run total over {elapsed_s:.1f}s, decode errors {link.errors} ===")
+    for stat in stats.values():
+        if stat.total_samples:
+            print(stat.total_line(elapsed_s))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--seconds", type=float, default=20.0, help="how long to measure"
+    )
+    # A soak wants totals, not 5400 windowed lines. The window is still measured
+    # rather than assumed, so widening it changes what is printed and not how
+    # any rate is computed.
+    parser.add_argument(
+        "--window",
+        type=float,
+        default=1.0,
+        help="seconds between windowed reports (default 1)",
     )
     parser.add_argument("--port", help="override the resolved data port")
     args = parser.parse_args()
@@ -177,22 +202,30 @@ def main() -> int:
         started = time.monotonic()
         window_start = started
 
-        while time.monotonic() - started < args.seconds:
-            for batch in link.read_batches():
-                stats[batch.stream_id].add(batch)
+        # A soak is most likely to end with a Ctrl-C, and a run that throws away
+        # its totals on the way out has measured nothing.
+        try:
+            while time.monotonic() - started < args.seconds:
+                for batch in link.read_batches():
+                    stats[batch.stream_id].add(batch)
 
-            now = time.monotonic()
-            elapsed = now - window_start
-            if elapsed < 1.0:
-                continue
+                now = time.monotonic()
+                elapsed = now - window_start
+                if elapsed < args.window:
+                    continue
 
-            # Divided by *measured* elapsed, never by the nominal window.
-            print(f"[{now - started:5.1f}s] errors {link.errors}")
-            for stat in stats.values():
-                if stat.samples:
-                    print(stat.line(elapsed))
-                stat.reset()
-            window_start = now
+                # Divided by *measured* elapsed, never by the nominal window.
+                print(f"[{now - started:7.1f}s] errors {link.errors}", flush=True)
+                for stat in stats.values():
+                    if stat.samples:
+                        print(stat.line(elapsed))
+                    stat.reset()
+                window_start = now
+        except KeyboardInterrupt:
+            print()
+            print("interrupted", flush=True)
+
+        summarize(stats, link, time.monotonic() - started)
 
     return 0
 

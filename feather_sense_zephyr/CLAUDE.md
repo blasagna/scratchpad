@@ -269,9 +269,23 @@ established on a real board.
   lists — settled by running it, live limitations, still unverified — and that
   separation is the document's main value. All three interrupt-routing
   questions are now settled (INT1 is `P1.11`, the APDS9960's INT is `P1.00`, the
-  LIS3MDL's DRDY and INT go nowhere). Still on the unverified side: the battery
-  over a real discharge (so the LED has never been seen to *change* band), and
-  anything about behaviour over a long run — the 16-bit `seq` wrap has never been reached.
+  LIS3MDL's DRDY and INT go nowhere), and so is the 16-bit `seq` wrap. Still on
+  the unverified side: the battery over a real discharge (so the LED has never
+  been seen to *change* band), the `t_ms` wrap 49.7 days in, and the stall clamp.
+
+- **A 90-minute run settled the `seq` wrap** *(measured)*: 1 125 800 IMU samples,
+  112 580 batches, 0 decode errors and 0 `seq` gaps, with `seq wraps 1`.
+  `pixi run serial --seconds 5400 --window 60` reproduces it, and the numbers are
+  in README, "a long run". Two things about reading that result. **A reboot also
+  sends `seq` backwards**, so a lone wrap count proves nothing by itself; what
+  makes it a measurement is that the IMU was the only stream whose batch count
+  passed 65 536 and the only one reporting a wrap, where a reboot would have
+  restarted all four at once. `StreamStats` now separates the two by watching
+  `t_ms`, which a wrap leaves running. And **1 125 800 / 112 580 is exactly
+  10.0**, so the INT1 watermark held for every batch over 90 minutes, not just
+  the 1251 batches that first established it. What the run did *not* settle:
+  `t_ms` at 49.7 days, and the stall clamp, which needs a 96-sample backlog that
+  a 6.7 ms worst-case gap never approaches.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries

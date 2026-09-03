@@ -137,7 +137,21 @@ class BleLink:
         return self._largest_notification
 
 
-async def run(address: str | None, seconds: float) -> int:
+def summarize(
+    stats: dict[int, fp.StreamStats], link: BleLink, elapsed_s: float
+) -> None:
+    """Print the run totals. Divided by *measured* elapsed, as always."""
+    print()
+    print(
+        f"=== run total over {elapsed_s:.1f}s, decode errors {link.errors}, "
+        f"largest notification {link.largest_notification} B ==="
+    )
+    for stat in stats.values():
+        if stat.total_samples:
+            print(stat.total_line(elapsed_s))
+
+
+async def run(address: str | None, seconds: float, window: float) -> int:
     address = address or await BleLink.find()
     print(f"connecting to {address}")
 
@@ -163,27 +177,36 @@ async def run(address: str | None, seconds: float) -> int:
 
         started = time.monotonic()
         window_start = started
-        while time.monotonic() - started < seconds:
-            await asyncio.sleep(0.2)
-            now = time.monotonic()
-            elapsed = now - window_start
-            if elapsed < 1.0:
-                continue
+        # A soak is most likely to end with a Ctrl-C, and a run that throws away
+        # its totals on the way out has measured nothing.
+        try:
+            while time.monotonic() - started < seconds:
+                await asyncio.sleep(0.2)
+                now = time.monotonic()
+                elapsed = now - window_start
+                if elapsed < window:
+                    continue
 
-            # The MTU governs how many IMU samples the board puts in one
-            # notification -- (mtu - 3 - 10) / 12, which is 19 at 247 -- and the
-            # largest notification seen is the only view of that this side of
-            # the link has. See BleLink.largest_notification.
-            print(
-                f"[{now - started:5.1f}s] errors {link.errors}  "
-                f"largest notification {link.largest_notification} B "
-                f"(ATT MTU >= {link.largest_notification + 3})"
-            )
-            for stat in stats.values():
-                if stat.samples:
-                    print(stat.line(elapsed))
-                stat.reset()
-            window_start = now
+                # The MTU governs how many IMU samples the board puts in one
+                # notification -- (mtu - 3 - 10) / 12, which is 19 at 247 -- and
+                # the largest notification seen is the only view of that this
+                # side of the link has. See BleLink.largest_notification.
+                print(
+                    f"[{now - started:7.1f}s] errors {link.errors}  "
+                    f"largest notification {link.largest_notification} B "
+                    f"(ATT MTU >= {link.largest_notification + 3})",
+                    flush=True,
+                )
+                for stat in stats.values():
+                    if stat.samples:
+                        print(stat.line(elapsed))
+                    stat.reset()
+                window_start = now
+        except KeyboardInterrupt:
+            print()
+            print("interrupted", flush=True)
+
+        summarize(stats, link, time.monotonic() - started)
 
     return 0
 
@@ -193,10 +216,16 @@ def main() -> int:
     parser.add_argument(
         "--seconds", type=float, default=20.0, help="how long to measure"
     )
+    parser.add_argument(
+        "--window",
+        type=float,
+        default=1.0,
+        help="seconds between windowed reports (default 1)",
+    )
     parser.add_argument("--address", help="skip the scan and connect to this address")
     args = parser.parse_args()
 
-    return asyncio.run(run(args.address, args.seconds))
+    return asyncio.run(run(args.address, args.seconds, args.window))
 
 
 if __name__ == "__main__":

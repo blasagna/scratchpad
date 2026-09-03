@@ -411,6 +411,12 @@ class StreamStats:
     - ``seq gaps`` -- what separates a device-side drop from a link-side one.
       On the CircuitPython port this could only be inferred from the shape of
       the timestamp spacing.
+
+    Every one of those is also accumulated across windows, under a ``total_``
+    name, and :meth:`reset` leaves those alone. ``seq wraps`` exists only in the
+    run totals: at ~20.8 IMU batches/s the 16-bit counter takes about 52 minutes
+    to roll over, so it is an event no reporting window is long enough to
+    contain and no run before this one was long enough to reach.
     """
 
     def __init__(self, name: str) -> None:
@@ -423,24 +429,74 @@ class StreamStats:
         self.seq_gaps = 0
         self._prev_seq: int | None = None
         self._prev_ts: float | None = None
+        self._prev_batch_t_ms: int | None = None
+
+        # Run totals, which `reset()` deliberately leaves alone. A soak needs
+        # the whole run's figures and the windowed ones are gone by the time it
+        # ends -- printing 5400 windowed lines and no total is the shape of
+        # report that answers "was it fine just now" and never "was it fine".
+        self.total_samples = 0
+        self.total_batches = 0
+        self.total_seq_gaps = 0
+        self.total_max_gap_ms = 0.0
+        self.seq_wraps = 0
+        self.restarts = 0
+        self.run_first_ts: float | None = None
+        self.run_last_ts: float | None = None
+        self._run_prev_ts: float | None = None
 
     def add(self, batch: Batch) -> None:
-        if self._prev_seq is not None:
+        # A device reboot restarts `seq` and `t_ms` together, and would read as
+        # a 16-bit wrap plus an enormous gap -- which would make "seq wraps 1"
+        # unfalsifiable, since the one thing a long run is trying to establish
+        # would also be what a reboot printed. `t_ms` going backwards is what
+        # separates them: a real wrap leaves the uptime clock running.
+        restarted = (
+            self._prev_batch_t_ms is not None
+            and batch.header.t_ms < self._prev_batch_t_ms
+        )
+        if restarted:
+            self.restarts += 1
+
+        if self._prev_seq is not None and not restarted:
             expected = (self._prev_seq + 1) & 0xFFFF
             if batch.header.seq != expected:
-                self.seq_gaps += (batch.header.seq - expected) & 0xFFFF
+                gap = (batch.header.seq - expected) & 0xFFFF
+                self.seq_gaps += gap
+                self.total_seq_gaps += gap
+            # A wrap is the one case where `seq` legitimately goes backwards.
+            # Counting it lets a long run *report* that 16 bits rolled over,
+            # rather than resting on the masked arithmetic above being right
+            # about an event nothing has ever seen happen.
+            if batch.header.seq < self._prev_seq:
+                self.seq_wraps += 1
         self._prev_seq = batch.header.seq
+        self._prev_batch_t_ms = batch.header.t_ms
 
         for ts in batch.timestamps_ms():
             if self.first_ts is None:
                 self.first_ts = ts
+            if self.run_first_ts is None:
+                self.run_first_ts = ts
             if self._prev_ts is not None:
                 self.max_gap_ms = max(self.max_gap_ms, ts - self._prev_ts)
+            # Tracked from its own predecessor because `reset()` clears
+            # `_prev_ts`: the windowed figure cannot see an interval that
+            # straddles a window boundary, and a stall is not less real for
+            # having started just before the second ticked over.
+            if self._run_prev_ts is not None:
+                self.total_max_gap_ms = max(
+                    self.total_max_gap_ms, ts - self._run_prev_ts
+                )
             self._prev_ts = ts
+            self._run_prev_ts = ts
             self.last_ts = ts
+            self.run_last_ts = ts
             self.samples += 1
+            self.total_samples += 1
 
         self.batches += 1
+        self.total_batches += 1
 
     @property
     def device_rate(self) -> float:
@@ -455,8 +511,16 @@ class StreamStats:
     def host_rate(self, elapsed_s: float) -> float:
         return self.samples / elapsed_s if elapsed_s > 0 else 0.0
 
+    def total_host_rate(self, elapsed_s: float) -> float:
+        """Arrival rate over the whole run, against *measured* run elapsed."""
+        return self.total_samples / elapsed_s if elapsed_s > 0 else 0.0
+
     def reset(self) -> None:
-        """Start a new reporting window, keeping the sequence continuity."""
+        """Start a new reporting window.
+
+        Keeps the sequence continuity and every ``total_`` field: a window is a
+        reporting boundary, not a run boundary.
+        """
         self.samples = 0
         self.batches = 0
         self.first_ts = None
@@ -472,4 +536,38 @@ class StreamStats:
             f"batches {self.batches:5d}  "
             f"gap max {self.max_gap_ms:7.1f} ms  "
             f"seq gaps {self.seq_gaps}"
+        )
+
+    @property
+    def total_device_rate(self) -> float:
+        """Device-timestamp rate over the whole run. 0.0 until two arrive.
+
+        The same ``(count - 1) / span`` rule as :attr:`device_rate`, over the
+        run's first and last timestamps instead of the window's. Note that
+        ``t_ms`` wraps at 32 bits (49.7 days); a run long enough to see that
+        would report a negative span here and is not what this is for.
+
+        A device restart mid-run spans the discontinuity and makes this figure
+        meaningless, which is why :attr:`restarts` is printed beside it rather
+        than quietly absorbed.
+        """
+        if self.run_first_ts is None or self.run_last_ts is None:
+            return 0.0
+        if self.total_samples < 2:
+            return 0.0
+        span_ms = self.run_last_ts - self.run_first_ts
+        if span_ms <= 0:
+            return 0.0
+        return (self.total_samples - 1) * 1000.0 / span_ms
+
+    def total_line(self, elapsed_s: float) -> str:
+        return (
+            f"  {self.name:<8} dev {self.total_device_rate:7.2f}/s  "
+            f"host {self.total_host_rate(elapsed_s):7.2f}/s  "
+            f"samples {self.total_samples:9d}  "
+            f"batches {self.total_batches:8d}  "
+            f"gap max {self.total_max_gap_ms:7.1f} ms  "
+            f"seq gaps {self.total_seq_gaps}  "
+            f"seq wraps {self.seq_wraps}  "
+            f"restarts {self.restarts}"
         )

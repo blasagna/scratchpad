@@ -43,6 +43,7 @@ a 1 Hz environmental stream all running at once:
 | Status LED | green at a `high` band, on `P0.16` — **confirmed**, once the bit-bang timing was fixed |
 | IMU drain | the chip's own FIFO-watermark interrupt, on **`P1.11`** — every batch exactly 10 samples, 1251 of 1251 |
 | Flash / RAM | 238 164 B (29 %) / 79 096 B (30 %) |
+| Longest run | **90 minutes**, 1 125 800 IMU samples, 0 errors, 0 seq gaps - and the 16-bit `seq` counter wrapped, see [a long run](#a-long-run) |
 
 The same, over BLE, with all four notify characteristics subscribed:
 
@@ -1264,6 +1265,22 @@ from the CircuitPython port because getting it wrong there over-reported by ~10 
 Each reader fetches the scale table over RPC at connect and prints it before streaming,
 since decoding depends on it.
 
+Every one of those figures is also accumulated across windows and printed as a run total
+when the reader exits, including on a Ctrl-C. The distinction matters more than it looks:
+a windowed line says whether the link is healthy *now*, and only the total says whether it
+stayed healthy — a reader that printed 5400 windowed lines and no total would answer the
+first question 5400 times and the second not at all. Two of the totals are not just sums:
+
+- **`gap max`** is tracked from its own predecessor, because starting a new window clears
+  the previous timestamp and a stall that straddles a window boundary is otherwise
+  invisible to every line printed. It shows up immediately in practice — the battery
+  stream reports `gap max 1000.0 ms` in each of its windows and `4000.0 ms` over the run.
+- **`seq wraps`** counts the 16-bit rollover, which no reporting window is long enough to
+  contain. See [a long run](#a-long-run).
+
+`--window` sets the reporting interval, which changes only what is printed: every rate is
+still divided by *measured* elapsed and not by the nominal window.
+
 What that produces on this board, over USB, with everything running:
 
 ```
@@ -1300,6 +1317,52 @@ plus jitter, as expected for two samples per batch at 20 Hz. The IMU's 6.7 ms is
 jitter at batch boundaries described under [wire format](#wire-format); within a batch the
 spacing is exactly `period_us`. `host` oscillating between 203 and 214 is window
 quantisation — 20 versus 21 batches — and is why `dev` is the number to quote.
+
+### a long run
+
+Everything above was measured in windows of tens of seconds. The first run longer than a
+minute was 90 minutes over USB, with the IMU, magnetometer, environmental and battery
+streams all going:
+
+```
+=== run total over 5400.0s, decode errors 0 ===
+  imu      dev  208.49/s  host  208.48/s  samples   1125800  batches   112580  gap max     6.7 ms  seq gaps 0  seq wraps 1
+  magn     dev   19.99/s  host   19.99/s  samples    107958  batches    53979  gap max    54.0 ms  seq gaps 0  seq wraps 0
+  env      dev    1.00/s  host    1.00/s  samples      5400  batches     5400  gap max  1005.0 ms  seq gaps 0  seq wraps 0
+  battery  dev    0.58/s  host    0.58/s  samples      3110  batches     3110  gap max 12000.0 ms  seq gaps 0  seq wraps 0
+```
+
+Reproduce with `pixi run serial --seconds 5400 --window 60`.
+
+**The 16-bit `seq` wrap was reached**, which is what the run was for. The masked arithmetic
+in `StreamStats.add` had always been written for it and nothing had ever exercised it; it
+now has, and it produced no spurious gap. Three things make that reading a measurement
+rather than a hopeful interpretation of one number:
+
+- **Only the IMU wrapped, and only the IMU could have.** 112 580 batches is 65 536 plus
+  47 044; the other three streams ran 53 979, 5400 and 3110 batches and correctly report
+  0 wraps. A **reboot** would have restarted every stream's counter at once, so "one stream
+  wrapped, three did not" is a shape a crashed board cannot produce. `StreamStats` now makes
+  that check automatic, by watching for `t_ms` going backwards and reporting a `restarts`
+  column beside `seq wraps`; it was added in response to this run, which is why the
+  transcript above does not carry it.
+- `seq gaps` stayed 0 across the wrap, so the rollover was not counted as 65 535 lost
+  batches — the failure mode the mask exists to prevent.
+- `errors` was 0 in all 89 windows and in the total.
+
+Two other things fell out of it, neither of which the run was looking for:
+
+- **1 125 800 samples in 112 580 batches is exactly 10.0**, sustained for 90 minutes. Every
+  batch was the FIFO watermark, so the INT1 trigger described in [the imu's INT1
+  line](#the-imus-int1-line) held for 112 580 consecutive batches and not just the 1251 that
+  first established it.
+- **The battery stream emits 0.58/s, not the ~1/s** this document estimated from the ADC
+  dither, with gaps as long as 12 s. See [known limitations](#live-limitations); the
+  estimate was in the right place and the wrong size.
+
+What this run does **not** settle, because 90 minutes is not long enough: the `t_ms` wrap at
+32 bits is 49.7 days away, and the stall clamp in `src/imu.cpp` needs a 96-sample backlog
+that a `gap max` of 6.7 ms never came close to producing.
 
 ### visualizing the streams
 
@@ -1481,9 +1544,11 @@ with a shell.
 - **The battery's "≥1 % change" rule throttles nothing in practice.** Requirement 1.7 is
   implemented literally and the percent is an integer, so any change is at least one point
   — but the ADC reading dithers by about 10 mV, which *is* one point on the 3.2–4.2 V
-  linear curve, so the stream emits roughly every second rather than rarely. It is 4 bytes
-  a second and harmless, and the requirement is met as written, but it is not doing the job
-  it was put there to do. The fix is to filter the millivolts before converting — the
+  linear curve, so the stream emits often rather than rarely. Measured over 90 minutes it is
+  **0.58/s**, with gaps as long as 12 s - so the throttle does something, just not much, and
+  the "roughly every second" this document used to estimate was a shade pessimistic. It is
+  2.3 bytes a second and harmless, and the requirement is met as written, but it is not
+  doing the job it was put there to do. The fix is to filter the millivolts before converting — the
   SAADC's own `zephyr,oversampling` property is the cheapest version, and a longer average
   is the better one. Neither has been done, because the right time constant should be
   chosen against a discharge curve and nobody has measured one; an invented one would be
@@ -1496,10 +1561,13 @@ with a shell.
 
 ### still unverified
 
-- **Nothing has run for longer than a minute.** The `seq` wrap at 16 bits, the `t_ms` wrap
-  at 32 bits (49.7 days), queue behaviour under a host that stops reading, and the stall
-  clamp in `src/imu.cpp` (which needs a 96-sample backlog to fire) are all untested by
-  elapsed time.
+- **The `t_ms` wrap at 32 bits, and the stall clamp.** A 90-minute run has now happened and
+  is reported under [a long run](#a-long-run) - it settled the 16-bit `seq` wrap, which this
+  entry used to list, and the queue behaviour it also listed had already been measured under
+  a 6 s reader stall. What that run could not reach is still here: `t_ms` wraps 49.7 days in,
+  and the stall clamp in `src/imu.cpp` needs a 96-sample backlog that a 6.7 ms worst-case gap
+  never approaches. Neither is reachable by running longer at these rates; both would need
+  the condition manufactured.
 - **Pressure and the microphone are deliberately out of scope.** The BMP280 answers at
   `0x77` on the bus scan and Zephyr's `bosch,bme280` driver accepts its chip id `0x58` at
   `drivers/sensor/bosch/bme280/bme280.c:358`; the nRF52840's PDM peripheral has a driver and
