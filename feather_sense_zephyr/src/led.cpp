@@ -24,10 +24,14 @@ const device *const strip = DEVICE_DT_GET(DT_NODELABEL(neopixel));
 
 battery::Band painted = battery::Band::kUnknown;
 
-/* The CircuitPython port's colors, unchanged -- it was already right. */
-constexpr led_rgb kRed = {.r = 255, .g = 0, .b = 0};
-constexpr led_rgb kYellow = {.r = 255, .g = 160, .b = 0};
-constexpr led_rgb kGreen = {.r = 0, .g = 255, .b = 0};
+/* The CircuitPython port's hues, scaled to ~10% brightness: at full scale the
+ * pixel is a glare on a desk, and the band is legible long before that. The
+ * channel ratios are kept, so yellow stays yellow. `set()` below is deliberately
+ * not scaled -- the diagnostic path must be able to ask for full brightness.
+ */
+constexpr led_rgb kRed = {.r = 24, .g = 0, .b = 0};
+constexpr led_rgb kYellow = {.r = 24, .g = 15, .b = 0};
+constexpr led_rgb kGreen = {.r = 0, .g = 24, .b = 0};
 constexpr led_rgb kOff = {.r = 0, .g = 0, .b = 0};
 
 } /* namespace */

@@ -1016,11 +1016,18 @@ plain LEDs (red on `P1.09`, blue on `P1.10`) cannot make green and so cannot exp
 bands; the NeoPixel is the only part on the board that can satisfy requirement 6. Bands and
 hysteresis are ported directly:
 
-| band | color | enter | leave |
-|---|---|---|---|
-| low | red | < 25 % | ≥ 28 % |
-| medium | yellow | 25–60 % | < 22 % or ≥ 63 % |
-| high | green | > 60 % | < 57 % |
+| band | color | pixel `r,g,b` | enter | leave |
+|---|---|---|---|---|
+| low | red | 24, 0, 0 | < 25 % | ≥ 28 % |
+| medium | yellow | 24, 15, 0 | 25–60 % | < 22 % or ≥ 63 % |
+| high | green | 0, 24, 0 | > 60 % | < 57 % |
+
+The hues are the CircuitPython port's, scaled to **≈10 % brightness** (255 → 24, keeping
+each colour's channel ratios). At full scale the pixel is a glare on a board that sits on a
+desk, and the band is readable long before that — a WS2812 at 24/255 is still
+unambiguously red, yellow or green in a lit room. Dimming is done in the colour constants,
+not by a global scale applied on the way out, so `fs led <r> <g> <b>` still drives the raw
+byte values it is given: the diagnostic path has to be able to ask for full brightness.
 
 The pixel is repainted **only on a band change**. `ws2812_gpio` bit-bangs the line with
 inline assembly and interrupts locked for the duration of the transfer — roughly 30 µs for
@@ -1329,7 +1336,7 @@ timeline the rate numbers are computed on.
 | Environmental | removed entirely (blocked ~152 ms/s) | kept, on the lowest-priority thread | Requirements 1.4–1.6 ask for them — and Zephyr's driver runs the SHT30 in periodic mode, so the read this port deleted over is not the read Zephyr does |
 | Derived motion | gravity / linear accel computed on the host | not computed at all | Out of scope; belongs to the future `dfg` graph |
 | RPC | none — everything was a reflash | five opcodes | Requirement 5 |
-| Status LED | NeoPixel, bands + hysteresis | same, unchanged | It was already right |
+| Status LED | NeoPixel, bands + hysteresis | same bands and hysteresis, at ≈10 % brightness | The logic was already right; full-scale brightness was a glare |
 
 One class of lesson does **not** carry over. The CircuitPython port's whole cost table —
 `encode` at 1.275 ms per frame, COBS at 0.708 ms, the +33 % from fusing a `struct.pack` —
