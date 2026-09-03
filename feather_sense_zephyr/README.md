@@ -567,6 +567,52 @@ observed-MTU floor in the [status](#status) table without saying anything worse 
 link — the board's own negotiated 247 is unchanged. And the trigger's work item runs on
 `sysworkq`, which reports 376/1024 bytes. The whole thing costs 984 bytes of flash.
 
+#### the same sweep on the magnetometer
+
+**Neither the LIS3MDL's DRDY nor its INT is connected to the SoC.** The sweep answers a
+negative as readily as a positive, provided the controls are run in the same session — a
+null result from a rig that has quietly stopped working looks identical to a null result
+from a board that has nothing there.
+
+Holding DRDY high needs no register write at all, which is the neat part. `ZYXDA` is set on
+each conversion and cleared by reading the output registers, and `fs stream 2 0` stops those
+reads outright, because [`src/magn.cpp`](src/magn.cpp) tests `streams::enabled()` *before*
+it fetches. `STATUS_REG` goes `0x00` → `0xff` on cue. INT is separate silicon on this part,
+driven by the threshold comparator rather than by data-ready, so it needs `INT_THS = 0` and
+`IEN` — after which `INT_SRC` reads `0x1d`, the comparator confirming it is firing.
+
+Four controls, all of which held:
+
+| control | result |
+|---|---|
+| the method still works | `INT1_CTRL = 0x01` re-found **`P1.11`** in the same run |
+| DRDY was actually asserted | `STATUS_REG` `0x00` → **`0xff`** |
+| INT was actually asserted | `INT_SRC` `0x00` → **`0x1d`** |
+| a driven line beats an internal pull | under pull-ups, `P1.11` reads **0** while all 30 unconnected candidates read 1 |
+
+Then 32 pins — every one without a known owner, `P0.00`/`P0.01` included, since this board's
+LFCLK is the RC oscillator and those two need not be a crystal — swept twice, once with
+pull-downs and once with pull-ups, and INT tried in **both polarities** (`IEA` clear and
+set), because a pull-down cannot distinguish an active-low line from an absent one. Nothing
+moved, in any combination.
+
+That the part needs no arming for DRDY is not an assumption: Zephyr's own
+`lis3mdl_trigger.c` writes **zero chip registers** and only configures a GPIO interrupt, so
+there was no enable bit left unset for the test to have missed.
+
+**Reboot afterwards.** The first control writes `INT1_CTRL = 0x00`, and that byte also holds
+`INT1_FTH` — the bit the IMU driver set to arm its own watermark. Clearing it leaves the
+trigger wired up and never firing, so the drain falls back to `k_sem_take`'s 4× timeout and
+the stream degrades to 12 batches a second with a 117 ms `gap max`. It still reports 0
+decode errors and 0 `seq` gaps, which is exactly why it is easy to miss: the honest signal
+is the *rate*, not the error counters. `kernel reboot cold` re-arms it, and `INT1_CTRL`
+reading back `0x08` is the check.
+
+One incidental oddity worth writing down rather than explaining away: `P0.00` reads 0
+against an internal pull-up, so something ties it low. It is not a sensor line — it did not
+move for either signal — and the board files claim `k32src = "rc"`, so what is on it is
+unexplained.
+
 ### the status led's bit-bang timing
 
 **The pixel lit in the wrong colour, and the cause was neither the pin nor the colour
@@ -1284,6 +1330,12 @@ with a shell.
   49 ms timer it replaced delivered an eleventh sample 21.7 % of the time. See [the imu's
   INT1 line](#the-imus-int1-line).
 
+- **The LIS3MDL's DRDY and INT pins are not connected to the SoC** — so its timer fallback
+  is not a fallback, it is the only option. Both signals were asserted inside the chip and
+  neither reached any of the 32 candidate GPIOs, under pull-downs and pull-ups and in both
+  INT polarities, with the IMU's `P1.11` re-found in the same session to prove the rig. See
+  [the same sweep on the magnetometer](#the-same-sweep-on-the-magnetometer).
+
 - **The LIS3MDL and APDS9960 fallbacks resolve on their own.** With no `irq-gpios` and no
   `int-gpios`, Kconfig picks `CONFIG_LIS3MDL_TRIGGER_NONE=y` and
   `CONFIG_APDS9960_FETCH_MODE_POLL=y` with no help, and both sensors read correctly that
@@ -1352,6 +1404,22 @@ with a shell.
   configured and the divider ratio comes from devicetree, but every reading so far was
   taken with no cell attached. Percent, the band hysteresis and the `flags` USB bit are
   covered by host tests and by construction, not by a discharge curve.
+- **The magnetometer fetch has no data-ready gate, and now cannot be given one from a
+  pin.** [`src/magn.cpp`](src/magn.cpp) fetches on every `k_timer` tick, and Zephyr's
+  `lis3mdl_sample_fetch` burst-reads the output registers without consulting `STATUS_REG` —
+  `ZYXDA` appears nowhere in that driver. Unlike the IMU there is no FIFO to absorb the beat
+  between the SoC's timer and the chip's own oscillator, so a relative error ε silently
+  duplicates or skips one sample every 1/ε; at 20 Hz, 0.1 % is one every 50 s. Nothing
+  detects it: the batch is emitted either way, so `seq` never gaps. It also means the
+  reported `magn dev 20.00/s` is not a measurement of the sensor at all — the sample count
+  and the elapsed time are both SoC-derived, so that figure is 20.00 by construction, where
+  the IMU's 208.5/s is real because the FIFO supplies the count. Block data update *is*
+  enabled (`lis3mdl.c:147`), so a burst cannot mix halves of two conversions; the exposure
+  is whole duplicated or missing samples, not torn ones. With DRDY unrouted the only fix is
+  to poll `ZYXDA` over I²C before accepting a sample, which the in-tree driver does not
+  expose. Not done: at 20 Hz into a viewer the stake is small, and the honest cost is an
+  out-of-tree driver or a raw register read alongside the sensor API.
+
 - **The battery's "≥1 % change" rule throttles nothing in practice.** Requirement 1.7 is
   implemented literally and the percent is an integer, so any change is at least one point
   — but the ADC reading dithers by about 10 mV, which *is* one point on the 3.2–4.2 V
@@ -1370,12 +1438,11 @@ with a shell.
 
 ### still unverified
 
-- **Whether the LIS3MDL's DRDY and the APDS9960's INT are routed.** Undocumented in the same
-  way INT1 was, and now answerable in the same way — see [the imu's INT1
-  line](#the-imus-int1-line) for the method. Both fallbacks are automatic and confirmed
-  working, so this is a performance question rather than a correctness one, and neither
-  sensor is fast enough for the answer to change much: the other 26 candidate pins were all
-  quiet during that sweep, so whichever they are, nothing was driving them.
+- **Whether the APDS9960's INT is routed.** The last of the three, and answerable by the
+  same sweep — see [the same sweep on the
+  magnetometer](#the-same-sweep-on-the-magnetometer) for the shape of it. The light sensor
+  is read once a second inside the environmental stream, so the answer changes very little
+  either way. The magnetometer half of this question is now settled, and the answer was no.
 - **Nothing has run for longer than a minute.** The `seq` wrap at 16 bits, the `t_ms` wrap
   at 32 bits (49.7 days), queue behaviour under a host that stops reading, and the stall
   clamp in `src/imu.cpp` (which needs a 96-sample backlog to fire) are all untested by

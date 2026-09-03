@@ -142,6 +142,24 @@ established on a real board.
   describe the gain as latency or CPU — it is neither, and the numbers are in
   README, "the imu's INT1 line".
 
+- **The LIS3MDL's DRDY and INT pins go nowhere** *(measured)*. The same sweep that
+  found INT1 was run against both, in both polarities and with both pull
+  directions, over all 32 pins with no known owner. Both signals were asserted
+  inside the chip at the time (`STATUS_REG` `0x00`→`0xff`, `INT_SRC` `0x00`→`0x1d`)
+  and the IMU's `P1.11` was re-found in the same session, so the null result is a
+  measurement rather than a broken rig — **run those controls before believing any
+  negative from this method.** Holding DRDY high needs no register write, only
+  `fs stream 2 0`, because `src/magn.cpp` checks `streams::enabled()` before it
+  fetches. The consequence is a live limitation, not a shrug: the magnetometer
+  fetch has no `ZYXDA` gate (Zephyr's `lis3mdl_sample_fetch` never reads
+  `STATUS_REG`) and no FIFO to absorb the timer/oscillator beat, so it silently
+  duplicates or skips samples, and `magn dev 20.00/s` is 20.00 by construction
+  rather than a measurement of the part. **Reboot after running that control**:
+  writing `INT1_CTRL = 0x00` also clears `INT1_FTH`, which the IMU driver set, and
+  the stream then degrades to the `k_sem_take` timeout — 12 batches/s, 117 ms
+  `gap max` — while still reporting 0 errors and 0 `seq` gaps. Watch the rate, not
+  the counters; `INT1_CTRL` back at `0x08` is the check.
+
 - **The IMU stream carries raw `int16` register values; the scale-factor RPC
   carries the units.** Do not "helpfully" pre-scale it on the device. That is
   what keeps the 208 Hz path a `memcpy` off the FIFO burst, what stops gyro at
@@ -237,9 +255,9 @@ established on a real board.
 - **Do not restate an unverified hardware fact as known.** README keeps three
   lists — settled by running it, live limitations, still unverified — and that
   separation is the document's main value. Still on the unverified side:
-  whether the LIS3MDL's DRDY and the APDS9960's INT are routed to GPIOs, the
-  battery over a real discharge (so the LED has never been seen to *change*
-  band), and anything about behaviour over a long run — the 16-bit `seq` wrap has never been reached.
+  whether the APDS9960's INT is routed to a GPIO, the battery over a real
+  discharge (so the LED has never been seen to *change* band), and anything about
+  behaviour over a long run — the 16-bit `seq` wrap has never been reached.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries
