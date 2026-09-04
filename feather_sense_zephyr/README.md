@@ -1053,6 +1053,74 @@ without which every reading is 0 mV and nothing says so. The node is reached wit
 CircuitPython port used — no lookup table, no OCV correction, no coulomb counting — and the
 `flags` byte reports USB presence.
 
+#### the reading is averaged over 30 s, and why that number
+
+The ADC is read once a second and `battery::MillivoltAverage` returns the mean of the last
+30 readings; percent, the LED band and the emitted `millivolts` all derive from that mean.
+`flags` is **not** averaged — USB presence is a bit, not a level, and it changes on the
+sample it changes.
+
+The constant is measured rather than chosen. Over 19.4 h of a real discharge (see [the
+discharge curve](#the-discharge-curve)):
+
+| | |
+|---|---|
+| True drift | **12.0 mV/h**, i.e. 1.20 percent points/h — one real point every **50 min** |
+| Reading noise | **σ = 6.7 mV**, about two thirds of a percent point, excursions to ±25 mV |
+| Emission rate under requirement 1.7 | **2008/h**, against 1.20 points/h of actual change |
+
+So the unfiltered stream emitted about **1700× more often than the requirement intends**:
+every emission was a dither crossing rather than a change in charge, and the raw value
+alternated across a whole percent point every couple of seconds. Requirement 1.7 was met to
+the letter and did nothing.
+
+Averaging cuts σ by √N, and the lag is free — 30 s against a 50-minute transit is 1 % of
+the interval being measured. Replaying the logged discharge through each candidate gives
+the emission rate each would have produced:
+
+| variant | emissions/h | vs the 1.20/h that is real |
+|---|---|---|
+| raw, as shipped before this | 2010 | 1712× |
+| 30 s average alone | 53.9 | 46× |
+| 60 s average alone | 26.1 | 22× |
+| 120 s average alone | 13.8 | 12× |
+| **30 s average + 5 mV deadband (what is implemented)** | **1.16** | **1.0×** |
+
+**Averaging alone does not finish the job, and it is worth being exact about why.** 30 s
+cuts the emissions by 37×, which is most of the distance and not the end of it. It cannot
+reach the real rate, because `percent` is an *integer*: when the filtered level rests near
+a boundary, the ±1.2 mV that survives the average still flips it back and forth. Getting
+there by averaging alone would need a window of several minutes, which starts costing real
+lag against a step.
+
+So the second half is a deadband on the reported percent — `battery::PercentHysteresis`
+holds the last value until the reading leaves that value's millivolt span by 5 mV at either
+end. It is the same trick `band_for()` already uses one level up, for the same reason: a
+threshold with no width is a threshold that rings. Together they land at **1.16
+emissions/h against 1.20 percent points/h of real change**, which is requirement 1.7 doing
+exactly what it was written to do.
+
+That last row is not a model. The firmware's own `battery_level.cpp` was compiled with the
+host compiler — it is free of Zephyr headers for the ztests already — and the logged
+discharge replayed through it. The 1.16 is what this code did to real data.
+
+**None of it has been flashed.** The discharge run that produced the numbers is still going
+on the previous image, and reflashing would end the measurement, so on hardware the
+limitation stands until that run completes.
+
+Two consequences of the average worth stating plainly. A **step** in terminal voltage —
+plugging in the charger — now takes ~30 s to appear in `millivolts` and percent, though
+`flags` flips immediately, so the two disagree briefly by design. And **the average is over
+samples, not seconds**: a read that fails is skipped rather than substituted, so a run of
+failures makes the window cover a longer span of time rather than corrupting it with
+invented values.
+
+The alternative, the SAADC's own `zephyr,oversampling`, was not used. It averages
+conversions taken microseconds apart inside one burst, which suppresses noise at conversion
+timescales; the dither measured here is between samples a second apart, and there is no
+evidence it is the same noise. A software average over the samples actually being emitted
+is the thing the measurement above sizes.
+
 The LED is the NeoPixel on `P0.16`, driven by `worldsemi,ws2812-gpio`. The board's two
 plain LEDs (red on `P1.09`, blue on `P1.10`) cannot make green and so cannot express three
 bands; the NeoPixel is the only part on the board that can satisfy requirement 6. Bands and
@@ -1227,7 +1295,7 @@ the host test.
 
 ```sh
 west build -b native_sim -p auto -d build_test tests/codec && ./build_test/zephyr/zephyr.exe
-west twister -p native_sim -T tests        # 52 test cases, 4 configurations
+west twister -p native_sim -T tests        # 126 test cases, 6 configurations
 ```
 
 Two modules qualify, and only two — the rest of this firmware is hardware:
@@ -1245,7 +1313,14 @@ Two modules qualify, and only two — the rest of this firmware is hardware:
   from 100 % down to 0 and back is what catches an implementation that widened one
   threshold without narrowing its opposite — which passes every individual crossing test
   and still gets stuck, and is the defect the CircuitPython port's README records shipping
-  as an LED that displayed a constant amber.
+  as an LED that displayed a constant amber. `MillivoltAverage` is here too, and its
+  interesting test is not the arithmetic but the property it was added for: ±25 mV of
+  dither around a percent boundary produces more than 50 raw crossings and at most 2
+  filtered ones, while a real 100 mV drift still arrives, on time and at the right percent.
+  A filter that suppressed both would pass a naive test and be useless.
+  `PercentHysteresis` is tested the same way, plus the two clamped ends, where the span of
+  0 % and of 100 % has only one real edge — testing the edge that does not exist would let
+  a pegged reading re-report itself forever.
 
 ### the host side of the wire format
 
@@ -1456,6 +1531,40 @@ What this run does **not** settle, because 90 minutes is not long enough: the `t
 32 bits is 49.7 days away, and the stall clamp in `src/imu.cpp` needs a 96-sample backlog
 that a `gap max` of 6.7 ms never came close to producing.
 
+### the discharge curve
+
+**In progress at the time of writing** — the pack is still running down and the numbers
+below are the first 19.4 h of it, on battery over BLE with no cable attached. They are
+enough to size the filter in [battery and the status
+led](#the-reading-is-averaged-over-30-s-and-why-that-number) and not enough to close the
+entry under [still unverified](#still-unverified), which stays open until the LED has been
+seen to change band.
+
+| | |
+|---|---|
+| Start | 4158 mV, 95 %, `flags` USB bit **0** — the first run ever taken off the pack |
+| After 19.4 h | 3924 mV, 72 % |
+| Drift | **12.0 mV/h**, near-linear so far, which is the LiPo plateau |
+| Reading noise | σ **6.7 mV** about a 60-sample rolling mean, excursions to ±25 mV |
+| Emissions | **2008/h**, against 1.20 real percent points/h |
+| Link | 39 043 samples, **0 reconnects** over 19.4 h of BLE |
+
+Two things came out of it beyond the filter constant. The `flags` USB bit has now been
+observed **clear** — every previous reading on this board was taken on the charger, so the
+bit had only ever been seen set, and "it reports USB presence" was half-tested by
+construction. And a 19.4 h BLE link with no reconnection is far longer than anything under
+[a long run](#a-long-run), which was 90 minutes over USB.
+
+The log is a CSV, and replaying it is how the filter variants above were compared without
+touching the board. That replay also plots into rerun on the device's own uptime timeline,
+raw and filtered on the same axes, which is the only way to see a 19-hour curve — a live
+view of this stream is a handful of points a minute.
+
+At the observed rate the first band change, `high → medium` at 57 % / 3770 mV, is roughly
+13 h further on. Treat that as an upper bound on the *voltage* and a lower bound on
+nothing: the extrapolation is linear and a LiPo steepens past the knee near 3.7 V, so the
+later `medium → low` crossing at 22 % will arrive sooner than a straight line predicts.
+
 ### visualizing the streams
 
 `feather_rerun.py` follows `microbit_v2_zephyr/host/ble_rerun.py`: `rr.init` then
@@ -1633,18 +1742,24 @@ with a shell.
   expose. Not done: at 20 Hz into a viewer the stake is small, and the honest cost is an
   out-of-tree driver or a raw register read alongside the sensor API.
 
-- **The battery's "≥1 % change" rule throttles nothing in practice.** Requirement 1.7 is
+- **The battery's "≥1 % change" rule throttled nothing until the reading was filtered, and
+  the fix is not yet on hardware.** Requirement 1.7 is
   implemented literally and the percent is an integer, so any change is at least one point
   — but the ADC reading dithers by about 10 mV, which *is* one point on the 3.2–4.2 V
   linear curve, so the stream emits often rather than rarely. Measured over 90 minutes it is
   **0.58/s**, with gaps as long as 12 s - so the throttle does something, just not much, and
   the "roughly every second" this document used to estimate was a shade pessimistic. It is
   2.3 bytes a second and harmless, and the requirement is met as written, but it is not
-  doing the job it was put there to do. The fix is to filter the millivolts before converting — the
-  SAADC's own `zephyr,oversampling` property is the cheapest version, and a longer average
-  is the better one. Neither has been done, because the right time constant should be
-  chosen against a discharge curve and nobody has measured one; an invented one would be
-  the same mistake this document keeps warning about, in a smaller costume.
+  doing the job it was put there to do. **A discharge curve has now been measured and the
+  time constant chosen from it** — a 30 s moving average, sized in [battery and the status
+  led](#the-reading-is-averaged-over-30-s-and-why-that-number) against a measured 6.7 mV of
+  noise and 12.0 mV/h of real drift, rather than invented, plus a 5 mV deadband on the
+  reported percent without which averaging alone still emits 46× too often.
+  `battery::MillivoltAverage` and `battery::PercentHysteresis` implement them and
+  `tests/battery_level/` covers both. Replaying the logged discharge through that compiled
+  code gives 1.16 emissions/h against 1.20 real points/h. **It has not been flashed**: the
+  discharge run that justifies it is still going on the previous image, and reflashing would
+  end the measurement. So the limitation stands on hardware until that run completes.
 
 - **`period_us` is a `uint16`**, so a batched stream slower than about 15 Hz cannot express
   its spacing. Nothing batched here is (the magnetometer is 50 000 µs), and the unbatched

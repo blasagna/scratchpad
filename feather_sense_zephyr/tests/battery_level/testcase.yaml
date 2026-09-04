@@ -1,4 +1,14 @@
 tests:
+  battery_level.average:
+    platform_allow:
+      - native_sim
+    tags:
+      - battery_level
+  battery_level.deadband:
+    platform_allow:
+      - native_sim
+    tags:
+      - battery_level
   battery_level.percent:
     platform_allow:
       - native_sim

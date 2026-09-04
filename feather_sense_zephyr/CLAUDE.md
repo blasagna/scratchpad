@@ -27,7 +27,7 @@ Host tests run on `native_sim`, not on the target:
 
 ```sh
 west build -b native_sim -p auto -d build_test tests/codec && ./build_test/zephyr/zephyr.exe
-west twister -p native_sim -T tests        # 52 cases, 4 configurations
+west twister -p native_sim -T tests        # 126 cases, 6 configurations
 ```
 
 ## Must-knows

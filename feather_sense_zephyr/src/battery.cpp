@@ -50,6 +50,12 @@ Reading current;
 Band band = Band::kUnknown;
 bool have_reading;
 
+/* Percent, the band and the emitted millivolts all derive from this rather than
+ * from the instantaneous read. See README, "the reading is averaged over 30 s".
+ */
+MillivoltAverage average;
+PercentHysteresis percent_held;
+
 int read_millivolts(uint16_t &millivolts)
 {
 	int16_t raw = 0;
@@ -100,16 +106,30 @@ void entry(void *, void *, void *)
 
 		if (read_millivolts(millivolts) < 0) {
 			LOG_WRN("battery read failed");
+			/* Not fed to the average: the window is over readings,
+			 * not over wall-clock, so a failure widens the span it
+			 * covers rather than corrupting it.
+			 */
 			continue;
 		}
 
+		/* The filtered value is what goes on the wire, not just what
+		 * the threshold is tested against -- a host plotting the raw
+		 * reading would otherwise see the dither this exists to remove
+		 * and disagree with the percent beside it.
+		 */
+		const uint16_t smoothed = average.add(millivolts);
+
 		const Reading reading = {
-			.millivolts = millivolts,
-			.percent = percent_from_millivolts(millivolts),
+			.millivolts = smoothed,
+			.percent = percent_held.update(smoothed),
 			/* USB presence, read straight off the SoC's USB
 			 * regulator rather than inferred from whether a host
-			 * has opened a port. No charging-state correction is
-			 * applied to the reading: the divider reads the pack's
+			 * has opened a port. Deliberately NOT averaged: this is
+			 * a bit, not a level, and it changes on the sample it
+			 * changes -- so on a charger connect it flips ~30 s
+			 * before the millivolts beside it finish catching up. No charging-state
+			 * correction is applied to the reading: the divider reads the pack's
 			 * terminal, and charging elevates that somewhat, but no
 			 * offset has been measured on this board and an
 			 * uncalibrated one would be guesswork dressed as
