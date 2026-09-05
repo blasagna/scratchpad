@@ -296,8 +296,9 @@ established on a real board.
   separation is the document's main value. All three interrupt-routing
   questions are now settled (INT1 is `P1.11`, the APDS9960's INT is `P1.00`, the
   LIS3MDL's DRDY and INT go nowhere), and so is the 16-bit `seq` wrap. Still on
-  the unverified side: the battery over a real discharge (so the LED has never
-  been seen to *change* band), the `t_ms` wrap 49.7 days in, and the stall clamp.
+  the unverified side: the `t_ms` wrap 49.7 days in, and the stall clamp. The
+  battery has now been run down over 37 h and the LED *has* been seen to change
+  band, both directions.
 
 - **A 90-minute run settled the `seq` wrap** *(measured)*: 1 125 800 IMU samples,
   112 580 batches, 0 decode errors and 0 `seq` gaps, with `seq wraps 1`.
@@ -312,6 +313,26 @@ established on a real board.
   the 1251 batches that first established it. What the run did *not* settle:
   `t_ms` at 49.7 days, and the stall clamp, which needs a 96-sample backlog that
   a 6.7 ms worst-case gap never approaches.
+
+- **The battery reading is filtered twice, and both halves are load-bearing**
+  *(measured)*. Requirement 1.7 emits "on a change of at least 1 %"; unfiltered
+  that fired 2010/h against ~1.1 real percent points/h, because the ADC dithers
+  6.7 mV RMS and `percent` is an integer. `battery::MillivoltAverage` (30 s) gets
+  it to 46× too often and **no further** — a filtered level resting on a boundary
+  is still flipped by the 1.2 mV that survives — so `battery::PercentHysteresis`
+  adds a 5 mV deadband, the same trick `band_for()` already used one level up.
+  On hardware the pair emits **1.03-1.09 times per real percent point** across
+  regimes 11× apart in speed. **Do not quote a fixed emissions/h for this**: the
+  rate depends on how fast the charge is moving, and predicting one is what made
+  the replay figure the wrong quantity. `flags` is deliberately unfiltered, so an
+  unplug emits immediately. Numbers in README, "the discharge curve".
+
+- **The LED band changed at 56 % down and 63 % up** *(measured, and confirmed by
+  eye)*, with exactly two transitions in 74 586 samples and no chatter. The band
+  never flickered even while the raw percent did, because `band_for()`'s 6-point
+  gap already swallowed the ±2 points of dither — which is precisely the
+  protection the emitted percent lacked. Not yet re-observed on the filtered
+  image; `band_for()` is untouched but its input is not.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries

@@ -44,6 +44,8 @@ a 1 Hz environmental stream all running at once:
 | IMU drain | the chip's own FIFO-watermark interrupt, on **`P1.11`** — every batch exactly 10 samples, 1251 of 1251 |
 | Flash / RAM | 238 152 B (29 %) / 79 096 B (30 %) — from a clean tree; see the note below |
 | Longest run | **90 minutes**, 1 125 800 IMU samples, 0 errors, 0 seq gaps - and the 16-bit `seq` counter wrapped, see [a long run](#a-long-run) |
+| Longest link | **37.1 h** of BLE with 0 reconnects, off the battery pack, see [the discharge curve](#the-discharge-curve) |
+| Status LED | seen changing band **in both directions** on hardware - yellow at 56 %, green again at 63 % |
 
 The flash figure moves by a few bytes with the commit it was built at, and not because
 anything got bigger. `get build id` reports `git describe`, which CMake resolves at
@@ -1104,9 +1106,13 @@ That last row is not a model. The firmware's own `battery_level.cpp` was compile
 host compiler — it is free of Zephyr headers for the ztests already — and the logged
 discharge replayed through it. The 1.16 is what this code did to real data.
 
-**None of it has been flashed.** The discharge run that produced the numbers is still going
-on the previous image, and reflashing would end the measurement, so on hardware the
-limitation stands until that run completes.
+**It is now flashed, and the device beat the prediction by making it the wrong question.**
+Replay predicted a rate; the board delivers a *ratio*. Measured on the filtered image, the
+firmware emits **1.03 times per real percent point while charging at 29.3 points/h, and
+1.09 times per point while discharging at 2.6** — the same coupling across regimes 11×
+apart in speed, where the unfiltered image emitted 2010/h in both. Predicting "1.16/h" was
+predicting a number that depends on how fast the battery happens to be moving. See [the
+discharge curve](#the-discharge-curve).
 
 Two consequences of the average worth stating plainly. A **step** in terminal voltage —
 plugging in the charger — now takes ~30 s to appear in `millivolts` and percent, though
@@ -1533,37 +1539,71 @@ that a `gap max` of 6.7 ms never came close to producing.
 
 ### the discharge curve
 
-**In progress at the time of writing** — the pack is still running down and the numbers
-below are the first 19.4 h of it, on battery over BLE with no cable attached. They are
-enough to size the filter in [battery and the status
-led](#the-reading-is-averaged-over-30-s-and-why-that-number) and not enough to close the
-entry under [still unverified](#still-unverified), which stays open until the LED has been
-seen to change band.
+The board had never been run off its pack, so `percent`, the LED band hysteresis and the
+`flags` USB bit were covered by host tests and by construction and never by a discharge.
+Two runs now cover them, logged over BLE with no cable attached, on either side of the
+filter landing.
+
+**Phase 1, on the unfiltered image** — 74 586 samples over 37.1 h, **0 reconnects**:
 
 | | |
 |---|---|
-| Start | 4158 mV, 95 %, `flags` USB bit **0** — the first run ever taken off the pack |
-| After 19.4 h | 3924 mV, 72 % |
-| Drift | **12.0 mV/h**, near-linear so far, which is the LiPo plateau |
-| Reading noise | σ **6.7 mV** about a 60-sample rolling mean, excursions to ±25 mV |
-| Emissions | **2008/h**, against 1.20 real percent points/h |
-| Link | 39 043 samples, **0 reconnects** over 19.4 h of BLE |
+| Discharge | 4158 mV, 95 % → 3740 mV, 54 % |
+| Drift | **11.3 mV/h**, near-linear, which is the LiPo plateau |
+| Reading noise | σ **6.73 mV**, excursions to ±25 mV |
+| Emissions | **2010/h**, against ~1.1 real percent points/h |
+| `flags` USB bit | observed **clear** for the first time |
 
-Two things came out of it beyond the filter constant. The `flags` USB bit has now been
-observed **clear** — every previous reading on this board was taken on the charger, so the
-bit had only ever been seen set, and "it reports USB presence" was half-tested by
-construction. And a 19.4 h BLE link with no reconnection is far longer than anything under
-[a long run](#a-long-run), which was 90 minutes over USB.
+**Phase 2, on the filtered image**, is the one that matters, because it measures the fix on
+the device instead of in replay. The pack was charged to 98 % and unplugged mid-run, which
+gave two regimes 11× apart in speed for free:
 
-The log is a CSV, and replaying it is how the filter variants above were compared without
-touching the board. That replay also plots into rerun on the device's own uptime timeline,
-raw and filtered on the same axes, which is the only way to see a 19-hour curve — a live
-view of this stream is a handful of points a minute.
+| regime | real change | emissions | per real point |
+|---|---|---|---|
+| charging, 68 → 98 % over 1.0 h | 29.3 pts/h | 30.3/h | **1.03** |
+| discharging, 98 → 87 % over 4.2 h | 2.6 pts/h | 2.85/h | **1.09** |
 
-At the observed rate the first band change, `high → medium` at 57 % / 3770 mV, is roughly
-13 h further on. Treat that as an upper bound on the *voltage* and a lower bound on
-nothing: the extrapolation is linear and a LiPo steepens past the knee near 3.7 V, so the
-later `medium → low` crossing at 22 % will arrive sooner than a straight line predicts.
+**The invariant is one emission per real percent point, not a fixed rate.** That is worth
+stating carefully, because the replay in [battery and the status
+led](#the-reading-is-averaged-over-30-s-and-why-that-number) predicted "1.16/h" and the
+device produced 2.85/h while discharging — not a miss, but the wrong quantity to have
+predicted. The absolute rate depends on how fast charge is actually moving; what the filter
+fixes is the *coupling*, and the same firmware tracking 29.3 points/h at 30.3/h and 2.6
+points/h at 2.85/h is that coupling working. The unfiltered image emitted 2010/h in both
+regimes, because it was reporting dither and dither does not care what the charge is doing.
+
+The unplug itself appears as a single emission the moment `flags` went 1 → 0, ahead of any
+percent crossing: a `flags` change forces an emit independently of the deadband. A filter
+that swallowed the USB transition would have been a regression, and it does not.
+
+Phase 2's drift is 25.9 mV/h against phase 1's 11.3, which is not a discrepancy — it is the
+top of the LiPo curve dropping faster off a full charge, where phase 1 spent most of its
+time on the plateau.
+
+#### the LED band, finally observed changing
+
+Requirement 6 has been implemented and asserted since the beginning, and until phase 1 the
+pixel had only ever been *seen* green. It has now changed in both directions on hardware:
+
+| | | |
+|---|---|---|
+| 34.2 h | 3766 mV, 56 % | `high → medium`, discharging — confirmed yellow by eye |
+| 37.1 h | 3834 mV, 63 % | `medium → high`, charging |
+
+Those are exactly the hysteretic thresholds: leaving `high` needs below 57 %, and returning
+needs 63 %. **Exactly two transitions in 74 586 samples, with no chatter** — one sample
+after the downward crossing the reading was back at 57 %, and the band held, because
+returning requires 63 %.
+
+That is the same defect this whole battery thread is about, seen at a different level. The
+percent stream flickered ±2 points on ADC noise and emitted 1700× too often; the LED did
+not flicker with it *only because* `band_for()` already had a 6-point gap wide enough to
+swallow the dither. The band had the protection the emitted percent lacked. The filter
+gives the percent the same thing.
+
+**Still to observe:** a band crossing on the *filtered* image. `band_for()` is untouched by
+that change, but what feeds it is not, so the crossing is worth seeing once before this is
+called closed. At phase 2's rate it is about 12 h out.
 
 ### visualizing the streams
 
@@ -1756,10 +1796,11 @@ with a shell.
   noise and 12.0 mV/h of real drift, rather than invented, plus a 5 mV deadband on the
   reported percent without which averaging alone still emits 46× too often.
   `battery::MillivoltAverage` and `battery::PercentHysteresis` implement them and
-  `tests/battery_level/` covers both. Replaying the logged discharge through that compiled
-  code gives 1.16 emissions/h against 1.20 real points/h. **It has not been flashed**: the
-  discharge run that justifies it is still going on the previous image, and reflashing would
-  end the measurement. So the limitation stands on hardware until that run completes.
+  `tests/battery_level/` covers both. **This is fixed and on the board.** Measured on the
+  flashed image, the stream emits 1.03-1.09 times per real percent point across regimes 11×
+  apart in speed, against 2010/h regardless of real change before. The entry stays here
+  rather than moving to "settled" for one reason: see the note about band crossings on the
+  filtered image under [the discharge curve](#the-discharge-curve).
 
 - **`period_us` is a `uint16`**, so a batched stream slower than about 15 Hz cannot express
   its spacing. Nothing batched here is (the magnetometer is 50 000 µs), and the unbatched
