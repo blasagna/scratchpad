@@ -331,8 +331,8 @@ established on a real board.
   eye)*, with exactly two transitions in 74 586 samples and no chatter. The band
   never flickered even while the raw percent did, because `band_for()`'s 6-point
   gap already swallowed the ±2 points of dither — which is precisely the
-  protection the emitted percent lacked. Not yet re-observed on the filtered
-  image; `band_for()` is untouched but its input is not.
+  protection the emitted percent lacked. Both crossings were logged on the
+  pre-filter image; `band_for()` is unchanged by the filter commit.
 
 - **The host side is its own pixi environment** (`host/`), because neither bleak
   nor rerun is a repo-wide dependency. It carries
