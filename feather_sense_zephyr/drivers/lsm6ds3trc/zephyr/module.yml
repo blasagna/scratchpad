@@ -1,0 +1,10 @@
+# An application-local Zephyr module holding one out-of-tree sensor driver.
+# CMakeLists.txt adds this directory to ZEPHYR_EXTRA_MODULES *before*
+# find_package(Zephyr), which is what puts the Kconfig and the binding below in
+# front of the build.
+name: lsm6ds3trc
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    dts_root: .
