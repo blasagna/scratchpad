@@ -92,12 +92,33 @@ int start()
 		return -ENODEV;
 	}
 
-	/* A ws2812-gpio write to a wrong-but-valid pin fails silently, so a
-	 * dark pixel here is the first thing to doubt. The pin (P0.16) comes
-	 * from the Adafruit pinout, not from Zephyr's board files -- nothing in
-	 * them describes it.
+	/*
+	 * Blank the pixel, unconditionally.
+	 *
+	 * Not via show(kUnknown): `painted` starts at kUnknown, so that call
+	 * matches its own early return and never reaches the strip at all -- the
+	 * write below used to happen only by accident of never happening. It has
+	 * to happen. The WS2812 latches its colour and this board is reset
+	 * without being power-cycled (`fs bootloader`), so a warm start would
+	 * otherwise keep the previous image's band lit until the battery thread
+	 * repainted it a second later.
+	 *
+	 * It is also the only proof the strip is driveable at all: a ws2812-gpio
+	 * write to a wrong-but-valid pin fails silently, so a dark pixel here is
+	 * the first thing to doubt. The pin (P0.16) comes from the Adafruit
+	 * pinout, not from Zephyr's board files -- nothing in them describes it.
 	 */
-	show(battery::Band::kUnknown);
+	/* A copy, not &kOff: the API takes a non-const pointer and its own
+	 * documentation warns that it may overwrite the pixels it is handed.
+	 * show() takes the same precaution.
+	 */
+	led_rgb pixel = kOff;
+
+	const int ret = led_strip_update_rgb(strip, &pixel, 1);
+	if (ret != 0) {
+		LOG_ERR("could not blank the pixel (%d)", ret);
+		return ret;
+	}
 
 	return 0;
 }

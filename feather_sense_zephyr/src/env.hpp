@@ -22,6 +22,18 @@ int start();
 uint32_t last_fetch_us();
 uint32_t fetch_failures();
 
+/*
+ * Samples that were built but never sent, because one of the three fields could
+ * not be read.
+ *
+ * The sample carries no per-field validity and no sentinel -- 0 degC and 0 %RH
+ * are ordinary readings -- so a partial sample would put numbers on the wire
+ * that look measured and are not. The stream drops the whole sample instead,
+ * which the host sees as a gap in `seq`. This is the device-side count of that,
+ * and `fs env` prints it.
+ */
+uint32_t dropped_samples();
+
 } /* namespace env */
 
 #endif /* FEATHER_SENSE_ENV_HPP_ */

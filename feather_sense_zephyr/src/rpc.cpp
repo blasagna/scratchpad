@@ -276,9 +276,18 @@ size_t handle(const uint8_t *request, size_t len, uint8_t *out, size_t out_cap)
 		break;
 	}
 
+	/*
+	 * The status byte is an int8, and Zephyr's errno values do not all fit
+	 * in one: ENOTSUP is 134 (lib/libc/minimal/include/errno.h), so a plain
+	 * cast of -ENOTSUP wraps to +122 and the host prints an errno that does
+	 * not exist. Clamp instead. -128 is not a real errno either, but it is
+	 * unmistakably an error, where 122 reads as a number someone meant.
+	 */
+	const int status = result < 0 ? (result < -128 ? -128 : result) : 0;
+
 	out[0] = seq;
 	out[1] = opcode;
-	out[2] = static_cast<uint8_t>(static_cast<int8_t>(result < 0 ? result : 0));
+	out[2] = static_cast<uint8_t>(static_cast<int8_t>(status));
 
 	LOG_DBG("opcode 0x%02x seq %u -> %d", opcode, seq, result);
 

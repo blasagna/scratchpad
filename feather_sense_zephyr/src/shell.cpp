@@ -86,6 +86,11 @@ int cmd_env(const shell *sh, size_t, char **)
 	 */
 	shell_print(sh, "last SHT30 fetch blocked for %u us, %u failed so far",
 		    env::last_fetch_us(), env::fetch_failures());
+	/* A sample one of whose three fields could not be read is dropped whole
+	 * rather than sent with that field zeroed, so this is the count the host
+	 * sees as gaps in the env stream's `seq`.
+	 */
+	shell_print(sh, "%u samples dropped for an unreadable field", env::dropped_samples());
 
 	return 0;
 }

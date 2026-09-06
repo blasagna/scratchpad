@@ -469,6 +469,13 @@ per-second chip loses the race whenever it drifts ahead, and the driver reports
 `Failed to fetch samples`. `CONFIG_SHT3XD_MPS_2=y` gives the chip twice the reader's rate
 so there is always one waiting. `fs env` counts the failures, and it should read 0.
 
+It matters what happens on the cycle where it does not. Until a review found it, a failed
+fetch still emitted the sample — with temperature and humidity left at the zero they were
+initialised to — so the host recorded 0.00 °C and 0.00 %RH as measurements, with a valid
+`seq` and no gap to hint otherwise. The stream now drops the whole sample instead; see [a
+sample that could not be read is not
+sent](#a-sample-that-could-not-be-read-is-not-sent).
+
 ### the magnetometer
 
 **The first readings were saturated on all three axes at once, and that was the bench, not
@@ -916,6 +923,28 @@ wire carrying plausible-looking back-dated timestamps, and a `seq` gap is the ho
 report. That is the CircuitPython port's schedule-from-the-deadline rule applied to a
 hardware queue.
 
+#### a sample that could not be read is not sent
+
+The same rule holds for the two streams that read a sensor per tick rather than a queue,
+and it is worth stating because the tempting alternative is silent:
+
+- **env** carries three fields from two chips, and no per-field validity — 0 °C and
+  0 %RH are ordinary readings, so there is no value that means "not measured". If any of
+  the three reads fails, the whole sample is dropped rather than sent with that field
+  zeroed. The SHT30's periodic-mode NACK makes this a real event and not a theoretical
+  one (see [the environmental read](#the-environmental-read)); `fs env` counts the drops
+  on the device side, and the host sees them as gaps in the env stream's `seq`. The cost
+  is a good light reading discarded on a cycle where the SHT30 failed, which is the right
+  way round.
+- **magn** batches two samples 50 ms apart and says so in `period_us`. A failed fetch
+  between them would make the pair 100 ms apart while the header still claimed 50, so the
+  half-filled batch is discarded instead. Keeping it would back-date the second sample
+  onto an instant it was never taken at — and the host could not detect it, because the
+  timestamps its own gap checks run on would be the fabricated ones.
+
+Both were emitting the partial sample until a review found it; neither had ever been
+observed, because the symptom is data that looks fine.
+
 ### GATT layout
 
 One custom 128-bit vendor primary service. Four notify characteristics, one per rate
@@ -1018,7 +1047,11 @@ response = [ seq:u8 ][ opcode:u8 ][ status:i8 ][ payload ]
 ```
 
 `seq` is echoed so a host can match a reply to its request and time out on one that never
-arrives. `status` is 0 on success and a negative errno otherwise.
+arrives. `status` is 0 on success and a negative errno otherwise, **clamped to −128**:
+Zephyr's `ENOTSUP` is 134, so an unclamped cast into the `int8` field wraps to +122 and a
+host prints an errno that does not exist. −128 is not a real errno either, but it cannot
+be mistaken for one someone meant. Every errno this actually returns other than `ENOTSUP`
+(`EINVAL` 22, `ENOMEM` 12, `ENOENT` 2) fits and is passed through unchanged.
 
 | opcode | name | args | payload |
 |---|---|---|---|
@@ -1267,7 +1300,7 @@ Beyond the built-ins, the application registers an `fs` command group, guarded b
 | `fs stats` | batches emitted, drops per transport, USB frame and rx-error counters, the current IMU batch size, and which streams are enabled |
 | `fs imu` | `WHO_AM_I` and which part it means, samples and batches so far, FIFO overruns and stall flushes |
 | `fs battery` | the last reading — millivolts, percent, and whether USB is present |
-| `fs env` | what the last SHT30 fetch cost, in microseconds, and how many have failed |
+| `fs env` | what the last SHT30 fetch cost, in microseconds, how many have failed, and how many samples were dropped for an unreadable field |
 | `fs stream <id> <0\|1>` | enable or disable one stream, the same thing RPC opcode `0x02` does |
 | `fs led <r> <g> <b>` | drive the pixel to a known colour; restores itself on the battery thread's next tick |
 | `fs bootloader` | reboot into the UF2 bootloader, so a reflash needs no hand on the board |
@@ -1807,6 +1840,16 @@ with a shell.
 
 ### still unverified
 
+- **The two sample-drop paths added after the review.** `src/env.cpp` now drops a whole env
+  sample when any of its three fields could not be read, and `src/magn.cpp` discards a
+  half-filled batch when a fetch fails between its two samples — see [a sample that could
+  not be read is not sent](#a-sample-that-could-not-be-read-is-not-sent). Both build and
+  both are reasoned from the failure they replace, but neither has been *run* on hardware:
+  the board was not attached when the change was made, and reaching either path means
+  manufacturing a sensor read failure (for env, the SHT30 NACK that `CONFIG_SHT3XD_MPS_2=y`
+  exists to prevent). The check when a board is next to hand is `fs env`'s new drop counter
+  reading 0 in normal operation, and the env and magn streams still reporting `dev 1.00/s`
+  and `dev 20.00/s` with 0 `seq` gaps.
 - **The `t_ms` wrap at 32 bits, and the stall clamp.** A 90-minute run has now happened and
   is reported under [a long run](#a-long-run) - it settled the 16-bit `seq` wrap, which this
   entry used to list, and the queue behaviour it also listed had already been measured under

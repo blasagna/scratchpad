@@ -90,7 +90,14 @@ class BleLink:
                     f"get scale for stream {stream_id} failed with status {response.status}"
                 )
             got, scales = fp.parse_scale_payload(response.payload)
-            table.by_stream[got] = scales
+            # Checked, not trusted -- the same check read_serial.py makes.
+            # Filing the reply under the id it *claims* would overwrite one
+            # stream's scales with another's and leave the requested stream
+            # absent, which surfaces much later as "no scales for <name>" or,
+            # worse, as samples plotted through the wrong factors.
+            if got != stream_id:
+                raise RuntimeError(f"asked for stream {stream_id}, got {got}")
+            table.by_stream[stream_id] = scales
         return table
 
     async def identify(self) -> tuple[str, str]:

@@ -101,6 +101,16 @@ void entry(void *, void *, void *)
 		if (sensor_sample_fetch(dev) < 0 ||
 		    sensor_channel_get(dev, SENSOR_CHAN_MAGN_XYZ, values) < 0) {
 			LOG_WRN("magnetometer read failed");
+			/* Discard a half-filled batch rather than closing it with
+			 * the next tick's sample. `period_us` says the two samples
+			 * are kPeriodMs apart, and after a skipped tick they are
+			 * twice that -- so keeping the partial batch would back-date
+			 * the second sample by 50 ms onto an instant it was never
+			 * taken at, and the host cannot see the error because the
+			 * timestamps it checks its gaps against are the fabricated
+			 * ones. Dropping shows up as a gap in `seq` instead.
+			 */
+			filled = 0;
 			continue;
 		}
 

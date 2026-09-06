@@ -47,6 +47,7 @@ constexpr int kPeriodMs = 1000;
 k_timer timer;
 uint32_t fetch_us;
 uint32_t failures;
+uint32_t dropped;
 
 int16_t to_centi(const sensor_value &value)
 {
@@ -89,10 +90,15 @@ void entry(void *, void *, void *)
 			failures++;
 		}
 
-		if (sht_ok && sensor_channel_get(sht, SENSOR_CHAN_AMBIENT_TEMP, &value) == 0) {
+		const bool temperature_ok =
+			sht_ok && sensor_channel_get(sht, SENSOR_CHAN_AMBIENT_TEMP, &value) == 0;
+		if (temperature_ok) {
 			sample.temperature_centi_c = to_centi(value);
 		}
-		if (sht_ok && sensor_channel_get(sht, SENSOR_CHAN_HUMIDITY, &value) == 0) {
+
+		const bool humidity_ok =
+			sht_ok && sensor_channel_get(sht, SENSOR_CHAN_HUMIDITY, &value) == 0;
+		if (humidity_ok) {
 			sample.humidity_centi_pct = static_cast<uint16_t>(to_centi(value));
 		}
 
@@ -102,12 +108,32 @@ void entry(void *, void *, void *)
 		 * therefore reports this field as dimensionless rather than
 		 * claiming a photometric unit the driver does not produce.
 		 */
-		if (sensor_sample_fetch(light) == 0 &&
-		    sensor_channel_get(light, SENSOR_CHAN_LIGHT, &value) == 0) {
+		const bool light_ok = sensor_sample_fetch(light) == 0 &&
+				      sensor_channel_get(light, SENSOR_CHAN_LIGHT, &value) == 0;
+		if (light_ok) {
 			sample.light_level = static_cast<uint16_t>(
 				value.val1 < 0
 					? 0
 					: (value.val1 > UINT16_MAX ? UINT16_MAX : value.val1));
+		}
+
+		/*
+		 * A field that was not read is not a field that measured zero.
+		 *
+		 * The sample has no per-field validity and no sentinel -- 0 degC
+		 * and 0 %RH are both perfectly ordinary readings -- so emitting a
+		 * partial one puts numbers on the wire that look measured and are
+		 * not, and the host cannot tell. The SHT30's periodic-mode NACK
+		 * makes that a real event rather than a theoretical one (see
+		 * README.md, "the environmental read"). Drop the whole sample
+		 * instead: the host sees it as a gap in `seq`, which is what that
+		 * field is for. It is the same rule the IMU's stall clamp follows,
+		 * and it costs a good light reading on a cycle where the SHT30
+		 * failed -- which is the right trade against a silent zero.
+		 */
+		if (!temperature_ok || !humidity_ok || !light_ok) {
+			dropped++;
+			continue;
 		}
 
 		/* period_us is 0 for the unbatched streams: count is 1 and
@@ -127,6 +153,11 @@ uint32_t last_fetch_us()
 uint32_t fetch_failures()
 {
 	return failures;
+}
+
+uint32_t dropped_samples()
+{
+	return dropped;
 }
 
 int start()

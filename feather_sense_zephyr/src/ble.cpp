@@ -50,7 +50,37 @@ enum Characteristic {
 };
 
 bool subscribed_char[kCharCount];
+
+/*
+ * The one connection, and the lock that makes handing it to another thread
+ * safe.
+ *
+ * The transmit thread and the Bluetooth RX thread both touch this: the first
+ * notifies through it, the second replaces it on connect and *releases* it on
+ * disconnect. Without the lock, a null check on the transmit thread can be
+ * followed by disconnected_cb() dropping the last reference -- returning the
+ * object to the connection pool -- before bt_gatt_notify() is reached, and the
+ * pointer that reaches the controller is then a freed one. Nothing forces the
+ * compiler to reload a variable with internal linkage across an intervening
+ * call either, so re-reading it is not a fix.
+ *
+ * claim_conn() takes a reference under the lock, so the object cannot be
+ * recycled while a notify is in flight; the caller unrefs when it is done.
+ */
 bt_conn *current_conn;
+K_MUTEX_DEFINE(conn_lock);
+
+/* A referenced pointer to the current connection, or nullptr. Unref when done. */
+bt_conn *claim_conn()
+{
+	k_mutex_lock(&conn_lock, K_FOREVER);
+
+	bt_conn *const conn = current_conn != nullptr ? bt_conn_ref(current_conn) : nullptr;
+
+	k_mutex_unlock(&conn_lock);
+
+	return conn;
+}
 
 Characteristic characteristic_for(uint8_t stream_id)
 {
@@ -101,7 +131,17 @@ void ccc_changed(Characteristic which, const bt_gatt_attr *attr, uint16_t value)
 	subscribed_char[which] = (value == BT_GATT_CCC_NOTIFY);
 
 	if (which == kCharImu && subscribed_char[which]) {
-		recompute_imu_batch(current_conn);
+		/* Through claim_conn() like every other use, even though this
+		 * runs on the same thread as connected_cb() and so could not
+		 * race with it. One rule for reaching the connection is worth
+		 * more than an exception that has to be re-derived.
+		 */
+		bt_conn *const conn = claim_conn();
+
+		if (conn != nullptr) {
+			recompute_imu_batch(conn);
+			bt_conn_unref(conn);
+		}
 	}
 }
 
@@ -233,7 +273,10 @@ void connected_cb(bt_conn *conn, uint8_t err)
 		return;
 	}
 
+	k_mutex_lock(&conn_lock, K_FOREVER);
 	current_conn = bt_conn_ref(conn);
+	k_mutex_unlock(&conn_lock);
+
 	LOG_INF("connected");
 }
 
@@ -243,9 +286,18 @@ void disconnected_cb(bt_conn *conn, uint8_t reason)
 
 	LOG_INF("disconnected (0x%02x)", reason);
 
-	if (current_conn != nullptr) {
-		bt_conn_unref(current_conn);
-		current_conn = nullptr;
+	k_mutex_lock(&conn_lock, K_FOREVER);
+	bt_conn *const released = current_conn;
+
+	current_conn = nullptr;
+	k_mutex_unlock(&conn_lock);
+
+	/* Outside the lock: this drops *this* module's reference, and any
+	 * notify still in flight holds its own, so the object survives until
+	 * that one is released too.
+	 */
+	if (released != nullptr) {
+		bt_conn_unref(released);
 	}
 
 	for (bool &flag : subscribed_char) {
@@ -269,6 +321,10 @@ void disconnected_cb(bt_conn *conn, uint8_t reason)
  * this; its own documentation calls it "the event to listen for to start a new
  * connection or connectable advertiser". Measured: the error was -12, and the
  * second BLE connection to this board was the one that found it.
+ *
+ * It is also why notify()'s reference is safe to hold across a disconnect: this
+ * fires when the last reference goes, whoever held it, so a notify in flight
+ * delays the restart by its own duration rather than racing it.
  */
 void recycled_cb()
 {
@@ -307,6 +363,16 @@ bt_gatt_cb gatt_callbacks = {
 
 } /* namespace */
 
+/*
+ * Both of these are advisory, and deliberately do not take a reference.
+ *
+ * streams::emit() asks subscribed() only to decide whether queueing a batch is
+ * worth doing at all, and the answer can go stale between the question and the
+ * transmit thread reaching it either way. That is harmless: notify() takes the
+ * reference that matters, and a batch queued for a link that has since gone
+ * away is dropped there rather than sent. What would not be harmless is holding
+ * a reference across a queue, which is why neither does.
+ */
 bool connected()
 {
 	return current_conn != nullptr;
@@ -321,7 +387,7 @@ void notify(const uint8_t *batch, size_t len)
 {
 	codec::BatchHeader header;
 
-	if (current_conn == nullptr || !codec::unpack_batch_header(batch, len, header)) {
+	if (!codec::unpack_batch_header(batch, len, header)) {
 		return;
 	}
 
@@ -330,23 +396,36 @@ void notify(const uint8_t *batch, size_t len)
 		return;
 	}
 
-	const int ret = bt_gatt_notify(current_conn, value_attr(which), batch, len);
+	bt_conn *const conn = claim_conn();
+	if (conn == nullptr) {
+		return;
+	}
+
+	const int ret = bt_gatt_notify(conn, value_attr(which), batch, len);
 	if (ret != 0) {
 		LOG_DBG("notify on stream %u failed (%d)", header.stream_id, ret);
 	}
+
+	bt_conn_unref(conn);
 }
 
 void notify_rpc(const uint8_t *frame, size_t len)
 {
-	if (current_conn == nullptr || !subscribed_char[kCharRpcResponse] ||
-	    value_attr(kCharRpcResponse) == nullptr) {
+	if (!subscribed_char[kCharRpcResponse] || value_attr(kCharRpcResponse) == nullptr) {
 		return;
 	}
 
-	const int ret = bt_gatt_notify(current_conn, value_attr(kCharRpcResponse), frame, len);
+	bt_conn *const conn = claim_conn();
+	if (conn == nullptr) {
+		return;
+	}
+
+	const int ret = bt_gatt_notify(conn, value_attr(kCharRpcResponse), frame, len);
 	if (ret != 0) {
 		LOG_WRN("rpc response notify failed (%d)", ret);
 	}
+
+	bt_conn_unref(conn);
 }
 
 int start()
