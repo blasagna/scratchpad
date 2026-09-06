@@ -85,8 +85,8 @@ def build_blueprint(seconds: float) -> rrb.Blueprint:
     windowing per view class and only the time-series class implements it, so a
     ``VisibleTimeRange`` set on one of these would land in the blueprint and be
     ignored. That costs nothing here -- both show a latest value or a scrolling
-    log rather than a span -- but it is why ``--window`` reaches four views and
-    not six.
+    log rather than a span -- but it is why ``--window`` reaches six of the
+    eight views and not all of them.
     """
     motion = rrb.Grid(
         rrb.TimeSeriesView(

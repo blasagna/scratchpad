@@ -1623,7 +1623,8 @@ carries a bare battery sample body, which is why that method is split out of `de
 
 Neither text view takes a `time_ranges`: rerun 0.36's viewer gates windowing per view class
 and only the time-series class implements it, so a `VisibleTimeRange` set on one lands in
-the blueprint and is ignored. `--window` therefore reaches four views, not six.
+the blueprint and is ignored. `--window` therefore reaches six of the eight views — the
+three motion plots and the three environmental ones — and not all of them.
 
 **Unit conversion happens here, host-side, from the scale table the device reported.**
 There is no hard-coded conversion factor in the viewer — it asks the board what a raw count
