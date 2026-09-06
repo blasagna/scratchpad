@@ -285,18 +285,28 @@ class ScaleTable:
 
     by_stream: dict[int, list[Scale]] = field(default_factory=dict)
 
+    def decode_sample(
+        self, stream_id: int, sample: tuple[int, ...]
+    ) -> dict[str, float]:
+        """Convert one raw sample to SI, by field name in wire order.
+
+        Split out of :meth:`decode` because not every sample arrives inside a
+        batch: `get battery` replies with a bare battery sample body (see
+        :func:`parse_battery_payload`), and it deserves the same scales rather
+        than a second, hand-written conversion beside them.
+        """
+        scales = self.by_stream.get(stream_id)
+        if scales is None:
+            name = STREAM_NAMES.get(stream_id, f"stream{stream_id}")
+            raise ValueError(f"no scales for {name}; fetch them with get_scale first")
+        names = STREAM_FIELDS[stream_id]
+        return {
+            name: scale.to_si(raw) for name, scale, raw in zip(names, scales, sample)
+        }
+
     def decode(self, batch: Batch) -> list[dict[str, float]]:
         """Convert a batch's raw samples to SI, one dict per sample."""
-        scales = self.by_stream.get(batch.stream_id)
-        names = STREAM_FIELDS[batch.stream_id]
-        if scales is None:
-            raise ValueError(
-                f"no scales for {batch.name}; fetch them with get_scale first"
-            )
-        return [
-            {name: scale.to_si(raw) for name, scale, raw in zip(names, scales, sample)}
-            for sample in batch.samples
-        ]
+        return [self.decode_sample(batch.stream_id, s) for s in batch.samples]
 
     def describe(self) -> str:
         lines = []

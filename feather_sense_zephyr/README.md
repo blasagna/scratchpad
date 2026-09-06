@@ -1587,10 +1587,43 @@ by the filter commit.
 
 `feather_rerun.py` follows `microbit_v2_zephyr/host/ble_rerun.py`: `rr.init` then
 `rr.spawn(memory_limit=...)` (not `rr.init(spawn=True)`, whose bool form cannot forward the
-limit), an `rrb.Grid` of `rrb.TimeSeriesView`s built by a `build_blueprint`, static
-`rr.SeriesLines` styling logged once, and `rr.set_time` + `rr.log(..., rr.Scalars(...))`
-per sample. Six views: acceleration, angular rate, magnetic field, environment, battery,
-and button state.
+limit), a blueprint built by a `build_blueprint`, static `rr.SeriesLines` styling logged
+once, and `rr.set_time` + `rr.log(..., rr.Scalars(...))` per sample.
+
+It prints the same header the readers do first — `get serial` and `get build id`, so a
+session on screen can be tied to the firmware that produced it — then the scale table, and
+plots nothing until both have arrived.
+
+The layout is an `rrb.Tabs` of two `rrb.Grid`s, split by what each stream *is* rather than
+by rate class alone:
+
+| tab | views |
+|---|---|
+| motion | acceleration, angular rate, magnetic field — and the button, as an `rrb.TextLogView` |
+| environment | temperature, humidity and light, one `rrb.TimeSeriesView` each — and the battery, as an `rrb.TextDocumentView` |
+
+Three things about that split. **The environmental sensors get a plot each** because they
+share no axis — degrees, percent relative humidity, and a raw clear-channel count that runs
+to five figures — so one view scaled to whichever was largest and flattened the other two.
+**The button is a log, not a signal** — a press is an event, and plotting it meant a line
+that is only ever 0 or 1 with a y-axis pinned by hand so the first arriving value did not
+autoscale the view to itself. **The battery is a text box** of the latest reading, because
+after the filter it emits on a 1 % change — minutes apart, 1.03–1.09 times per real
+percent point — and a plot of that is mostly empty axis. It shows percent, the volts behind
+it, and the supply, since `flags` is unfiltered on the device and an unplug lands there at
+once.
+
+That leaves the box blank until the first change, so the viewer opens with a `get battery`
+RPC and seeds it — the one thing this program asks for that the readers do not. The seed is
+logged **at time zero rather than statically**: static data outranks temporal data in
+rerun, so a static seed would shadow every reading the stream later sent and the box would
+never update again. Its raw fields go through `ScaleTable.decode_sample()`, the same scales
+the stream's samples use, rather than a second conversion written beside them — the reply
+carries a bare battery sample body, which is why that method is split out of `decode()`.
+
+Neither text view takes a `time_ranges`: rerun 0.36's viewer gates windowing per view class
+and only the time-series class implements it, so a `VisibleTimeRange` set on one lands in
+the blueprint and is ignored. `--window` therefore reaches four views, not six.
 
 **Unit conversion happens here, host-side, from the scale table the device reported.**
 There is no hard-coded conversion factor in the viewer — it asks the board what a raw count

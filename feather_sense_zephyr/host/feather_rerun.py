@@ -11,6 +11,16 @@ board what a raw count means and multiplies. That is the point of the `get
 scale` opcode, and the cost of it is that this program cannot plot a capture it
 did not ask the scales for.
 
+The board is identified the way the readers identify it -- `get serial` and
+`get build id`, printed as a header before anything is plotted -- so a recording
+can be tied to the firmware that produced it.
+
+Two tabs, split by what the view has to be rather than by rate class alone: the
+continuously streaming signals are plots, and the two streams that report
+*events* -- battery and button -- are text. Battery is seeded at startup with a
+`get battery` RPC, because the stream itself only emits on a filtered 1 %
+change and can be quiet for many minutes on a resting board.
+
 Batched samples are back-dated using the batch's own ``period_us``, so unlike
 the micro:bit viewer there is no ``--accel-batch-time`` flag to choose and no
 nominal rate to assume.
@@ -46,13 +56,17 @@ AXIS_COLORS = {
     "magnitude": (200, 200, 200),
 }
 
-ENV_COLORS = {
-    "temperature": (224, 140, 92),
-    "humidity": (92, 170, 222),
-    "light": (222, 200, 92),
+# The three environmental sensors get a plot each rather than one shared view:
+# they have no axis in common -- degrees, percent relative humidity, and a raw
+# clear-channel count that runs to five figures -- so a single view scaled to
+# whichever was largest and flattened the other two.
+ENV_SENSORS = {
+    "temperature": ("temperature (°C)", (224, 140, 92)),
+    "humidity": ("humidity (%RH)", (92, 170, 222)),
+    # Not lux: SENSOR_CHAN_LIGHT on the APDS9960 is the raw clear-channel
+    # count, which is why the scale table reports it dimensionless.
+    "light": ("light (raw count)", (222, 200, 92)),
 }
-
-BATTERY_COLORS = {"percent": (140, 200, 120), "millivolts": (200, 160, 90)}
 
 
 def _window(seconds: float) -> rrb.VisibleTimeRange:
@@ -65,8 +79,16 @@ def _window(seconds: float) -> rrb.VisibleTimeRange:
 
 
 def build_blueprint(seconds: float) -> rrb.Blueprint:
-    """One view per rate class, mirroring how the device groups the streams."""
-    views: list[rrb.View] = [
+    """Two tabs: the motion streams, and the slow ones.
+
+    Neither text view takes a ``time_ranges``: rerun 0.36's viewer gates
+    windowing per view class and only the time-series class implements it, so a
+    ``VisibleTimeRange`` set on one of these would land in the blueprint and be
+    ignored. That costs nothing here -- both show a latest value or a scrolling
+    log rather than a span -- but it is why ``--window`` reaches four views and
+    not six.
+    """
+    motion = rrb.Grid(
         rrb.TimeSeriesView(
             origin="accel", name="acceleration (m/s²)", time_ranges=[_window(seconds)]
         ),
@@ -76,25 +98,27 @@ def build_blueprint(seconds: float) -> rrb.Blueprint:
         rrb.TimeSeriesView(
             origin="magn", name="magnetic field (µT)", time_ranges=[_window(seconds)]
         ),
-        rrb.TimeSeriesView(
-            origin="env", name="environment", time_ranges=[_window(seconds)]
-        ),
-        rrb.TimeSeriesView(
-            origin="battery", name="battery", time_ranges=[_window(seconds)]
-        ),
-        # A plot, not a state timeline: rerun 0.36's viewer gates windowing per
-        # view class and the state timeline does not implement it, so a
-        # VisibleTimeRange set on one lands in the blueprint and is ignored.
-        # Pin the y-axis, or a signal that is only ever 0 or 1 autoscales to
-        # whichever value happened to arrive first.
-        rrb.TimeSeriesView(
-            origin="button/state",
-            name="button (held)",
-            time_ranges=[_window(seconds)],
-            axis_y=rrb.ScalarAxis(range=(-0.1, 1.1)),
-        ),
-    ]
-    return rrb.Blueprint(rrb.Grid(*views), collapse_panels=True)
+        # A press is an event, not a signal: the log says when the button
+        # changed and to what, where plotting it meant a line that is 0 or 1
+        # and a y-axis pinned by hand so the first arriving value did not
+        # autoscale the view to itself.
+        rrb.TextLogView(origin="button", name="button events"),
+        name="motion",
+    )
+    environment = rrb.Grid(
+        *[
+            rrb.TimeSeriesView(
+                origin=f"env/{name}", name=title, time_ranges=[_window(seconds)]
+            )
+            for name, (title, _) in ENV_SENSORS.items()
+        ],
+        # Battery arrives on a filtered 1 % change -- minutes apart, and
+        # 1.03-1.09 times per real percent point -- so a plot of it is mostly
+        # empty axis. The latest reading is the whole of what there is to say.
+        rrb.TextDocumentView(origin="battery", name="battery"),
+        name="environment",
+    )
+    return rrb.Blueprint(rrb.Tabs(motion, environment), collapse_panels=True)
 
 
 def log_styles() -> None:
@@ -106,23 +130,12 @@ def log_styles() -> None:
                 rr.SeriesLines(names=axis, colors=color, widths=1.5),
                 static=True,
             )
-    for name, color in ENV_COLORS.items():
+    for name, (_, color) in ENV_SENSORS.items():
         rr.log(
             f"env/{name}",
             rr.SeriesLines(names=name, colors=color, widths=1.5),
             static=True,
         )
-    for name, color in BATTERY_COLORS.items():
-        rr.log(
-            f"battery/{name}",
-            rr.SeriesLines(names=name, colors=color, widths=1.5),
-            static=True,
-        )
-    rr.log(
-        "button/state",
-        rr.SeriesLines(names="pressed", colors=(232, 160, 72), widths=1.5),
-        static=True,
-    )
 
 
 class Viewer:
@@ -142,6 +155,37 @@ class Viewer:
         if self._t0_ms is None:
             self._t0_ms = device_ms
         rr.set_time(TIMELINE, duration=(device_ms - self._t0_ms) / 1000.0)
+
+    def _log_battery(self, value: dict[str, float]) -> None:
+        """The battery box: percent, the volts behind it, and the supply.
+
+        ``flags`` is deliberately unfiltered on the device, so an unplug shows
+        up here at once even though the percent it travels with does not.
+        """
+        usb = int(value["flags"]) & fp.BATTERY_FLAG_USB
+        rr.log(
+            "battery",
+            rr.TextDocument(
+                f"# {value['percent']:.0f} %\n\n"
+                f"{value['millivolts']:.3f} V\n\n"
+                f"powered from {'USB' if usb else 'the battery'}",
+                media_type=rr.MediaType.MARKDOWN,
+            ),
+        )
+
+    def on_battery_reply(self, response: fp.RpcResponse) -> None:
+        """Seed the box from `get battery`, so it is not blank until a change.
+
+        Logged at time zero rather than statically: static data outranks
+        temporal data in rerun, so a static seed would shadow every reading the
+        stream later sends and the box would never update again.
+        """
+        if not response.ok:
+            print(f"get battery failed with status {response.status}")
+            return
+        raw = fp.parse_battery_payload(response.payload)
+        rr.set_time(TIMELINE, duration=0.0)
+        self._log_battery(self._scales.decode_sample(fp.STREAM_BATTERY, raw))
 
     def on_batch(self, batch: fp.Batch) -> None:
         values = self._scales.decode(batch)
@@ -175,14 +219,20 @@ class Viewer:
                     ),
                 )
             elif batch.stream_id == fp.STREAM_ENV:
-                rr.log("env/temperature", rr.Scalars(value["temperature"]))
-                rr.log("env/humidity", rr.Scalars(value["humidity"]))
-                rr.log("env/light", rr.Scalars(value["light"]))
+                for name in ENV_SENSORS:
+                    rr.log(f"env/{name}", rr.Scalars(value[name]))
             elif batch.stream_id == fp.STREAM_BATTERY:
-                rr.log("battery/millivolts", rr.Scalars(value["millivolts"] * 1000.0))
-                rr.log("battery/percent", rr.Scalars(value["percent"]))
+                self._log_battery(value)
             elif batch.stream_id == fp.STREAM_BUTTON:
-                rr.log("button/state", rr.Scalars(value["pressed"]))
+                pressed = bool(value["pressed"])
+                rr.log(
+                    "button/events",
+                    rr.TextLog(
+                        f"key {int(value['code'])} "
+                        f"{'pressed' if pressed else 'released'}",
+                        level=rr.TextLogLevel.INFO,
+                    ),
+                )
 
 
 async def run_ble(args: argparse.Namespace) -> int:
@@ -195,11 +245,15 @@ async def run_ble(args: argparse.Namespace) -> int:
         link = BleLink(client)
         print("connected")
         await link.start_rpc()
+        device_id, build_id = await link.identify()
+        print(f"serial    {device_id}")
+        print(f"build     {build_id}")
         scales = await link.fetch_scales()
         print("scales:")
         print(scales.describe())
 
         viewer = Viewer(scales)
+        viewer.on_battery_reply(await link.call(fp.OP_GET_BATTERY))
         await link.subscribe(viewer.on_batch)
 
         started = time.monotonic()
@@ -212,11 +266,15 @@ async def run_ble(args: argparse.Namespace) -> int:
 def run_serial(args: argparse.Namespace) -> int:
     with SerialLink(args.port) as link:
         print(f"data port {link.port}")
+        device_id, build_id = link.identify()
+        print(f"serial    {device_id}")
+        print(f"build     {build_id}")
         scales = link.fetch_scales()
         print("scales:")
         print(scales.describe())
 
         viewer = Viewer(scales)
+        viewer.on_battery_reply(link.call(fp.OP_GET_BATTERY))
         started = time.monotonic()
         while args.seconds is None or time.monotonic() - started < args.seconds:
             for batch in link.read_batches():
