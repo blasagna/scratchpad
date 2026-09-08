@@ -65,7 +65,7 @@ line: `--rows`, `--cols`, `--precision`, and `--scalar` are CLI11's to convert
 now, and `from_chars` is not involved in this port at all — see
 [The CLI](#the-cli).
 
-This reverses the prediction in `matrix_ops/CLAUDE.md`, which had assumed
+This reverses the prediction in `matrix_ops/AGENTS.md`, which had assumed
 `from_chars` would be the C++ answer. The contract was right that the three
 standard libraries disagree about `nan`/`inf`/signs; it was wrong about which
 way to resolve it.

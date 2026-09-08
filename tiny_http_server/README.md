@@ -262,7 +262,7 @@ it say.
 **`--port`'s grammar.** C uses `strtol` with base 10 fixed, as spelled out under
 [Options](#options). C++ binds the option to an `int` and checks it with
 `CLI::Range(0, 65535)` and Rust binds it to a `u16`, both per the root
-[`CLAUDE.md`](../CLAUDE.md) rule that a library check carries an option's grammar
+[`AGENTS.md`](../AGENTS.md) rule that a library check carries an option's grammar
 wherever it can; hand-writing a validator to match C instead is the mistake
 [`text_analyzer`](../text_analyzer/README.md#known-divergence-argument-parsers)
 documented. CLI11 converts with base 0, strips group separators, and trims surrounding
@@ -354,4 +354,4 @@ Ctrl-C is not one of these. There is no handler, so `SIGINT` terminates the proc
 the shell reports `130`; installing one buys a tidy log line in exchange for a global, an
 async-signal-safety discussion, and a `libc` dependency and an `unsafe` block in the Rust
 port, which takes only `clap` like every other Rust port here. The same call
-[`mini_shell`](../mini_shell/CLAUDE.md) made about `SIGINT`.
+[`mini_shell`](../mini_shell/AGENTS.md) made about `SIGINT`.
