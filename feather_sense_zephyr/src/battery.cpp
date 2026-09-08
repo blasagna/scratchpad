@@ -164,7 +164,7 @@ void entry(void *, void *, void *)
 		 * 1 %. percent is an integer, so any change is at least that.
 		 */
 		if (percent_moved) {
-			streams::emit(codec::kStreamBattery, k_uptime_get_32(), 0, 1, &reading,
+			streams::emit(codec::kStreamBattery, streams::now_ms(), 0, 1, &reading,
 				      sizeof(reading));
 		}
 	}

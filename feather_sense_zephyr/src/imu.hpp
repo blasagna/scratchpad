@@ -21,6 +21,16 @@ struct Stats {
 
 Stats stats();
 
+/*
+ * Hold the next drain off for `ms` milliseconds, once.
+ *
+ * A test hook, and the only way to reach the stall clamp: it needs a backlog
+ * past 96 samples, which at 208 Hz is 460 ms of nothing draining the FIFO, and
+ * the worst gap a healthy board has ever shown is 6.7 ms. Nothing in normal
+ * operation calls this.
+ */
+void stall(uint32_t ms);
+
 } /* namespace imu */
 
 #endif /* FEATHER_SENSE_IMU_HPP_ */

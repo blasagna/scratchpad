@@ -295,10 +295,49 @@ established on a real board.
   lists — settled by running it, live limitations, still unverified — and that
   separation is the document's main value. All three interrupt-routing
   questions are now settled (INT1 is `P1.11`, the APDS9960's INT is `P1.00`, the
-  LIS3MDL's DRDY and INT go nowhere), and so is the 16-bit `seq` wrap. Still on
-  the unverified side: the `t_ms` wrap 49.7 days in, and the stall clamp. The
+  LIS3MDL's DRDY and INT go nowhere), and so is the 16-bit `seq` wrap. The
   battery has now been run down over 37 h and the LED *has* been seen to change
-  band, both directions.
+  band, both directions. The unverified list is now down to the deliberately
+  out-of-scope sensors (BMP280, PDM mic) and the `dfg` integration: the two
+  sample-drop paths, the stall clamp and the `t_ms` wrap have all been run.
+
+- **A producer-side drop must call `streams::drop()`, or it is invisible**
+  *(measured — and this document and README both claimed the opposite)*.
+  `emit()` is what stamps `seq`, so a batch dropped before it gets there
+  consumes no sequence number and the host sees a contiguous stream across the
+  hole. Eleven seconds of dropped env samples read as `seq gaps 0`. `drop()`
+  advances the counter without sending anything; `src/env.cpp`, `src/magn.cpp`
+  and `src/imu.cpp`'s stall flush all call it, and `fs stats` counts them as
+  `source drops`. **Call it from the same thread that emits that stream** — that
+  is what preserves the single-writer rule `seq[]` relies on. Deliberately *not*
+  called when a magnetometer fetch fails with nothing buffered: no batch existed
+  to lose, and that case shows as a 150 ms step in `t_ms` against the 200 ms a
+  real discard leaves.
+
+- **Three shell hooks reach the paths a healthy board never takes**
+  *(measured, all four)*. `fs clock <offset>` shifts `t_ms` so its 32-bit wrap
+  arrives in seconds instead of 49.7 days — the offset is absolute and added to
+  `k_uptime_get_32()` by `streams::now_ms()`, which every stream now calls, so
+  **zero it before reading the clock back to compute the next one**, and apply
+  it before any statistics start or the move itself shows up as a 4 294 849 655 ms
+  `gap max`. `fs stall <ms>` sleeps *inside* the IMU drain, so the chip keeps
+  converting into a FIFO nothing is emptying and the 96-sample backlog is real;
+  460 ms is the threshold, and **run the under-threshold control too** — 400 ms
+  produces the five back-dated 19-sample batches the clamp exists to prevent,
+  which is the evidence the clamp is worth having. `fs magnfail <n>` fakes a
+  magnetometer fetch failure, and is the one hook that does *not* reach a real
+  driver error — the LIS3MDL cannot be made to fail recoverably from this side.
+  The env drop path needs no hook: `i2c write_byte i2c@40003000 0x44 0x30 0x93`
+  is the SHT3x break command and every `FETCH_DATA` after it is NACKed by the
+  part; `0x22 0x36` restores it. **Prefer the chip to the hook wherever the chip
+  will do it.**
+
+- **`StreamStats` unwraps `t_ms`; it does not treat a rollover as a reboot**
+  *(measured)*. It used to, and every stream then reported `restarts 1` and
+  `dev 0.00/s` for the whole run — the only figure the tooling exists to
+  produce. A wrap steps back by nearly 2³²; a reboot steps back to near zero
+  from an ordinary uptime, and 2³¹ (24.9 days) is the divider. `t_ms wraps` is
+  its own printed field beside `seq wraps` and `restarts`.
 
 - **A 90-minute run settled the `seq` wrap** *(measured)*: 1 125 800 IMU samples,
   112 580 batches, 0 decode errors and 0 `seq` gaps, with `seq wraps 1`.
@@ -310,9 +349,10 @@ established on a real board.
   restarted all four at once. `StreamStats` now separates the two by watching
   `t_ms`, which a wrap leaves running. And **1 125 800 / 112 580 is exactly
   10.0**, so the INT1 watermark held for every batch over 90 minutes, not just
-  the 1251 batches that first established it. What the run did *not* settle:
-  `t_ms` at 49.7 days, and the stall clamp, which needs a 96-sample backlog that
-  a 6.7 ms worst-case gap never approaches.
+  the 1251 batches that first established it. What the run could not reach —
+  `t_ms` at 49.7 days, and the stall clamp's 96-sample backlog against a 6.7 ms
+  worst-case gap — was reached afterwards by manufacturing both conditions
+  rather than by running longer.
 
 - **The battery reading is filtered twice, and both halves are load-bearing**
   *(measured)*. Requirement 1.7 emits "on a change of at least 1 %"; unfiltered
@@ -391,7 +431,8 @@ established on a real board.
 - `src/usb.cpp` — the usbd setup for both CDC ACM instances, COBS framing onto
   `cdc_acm_data`, and the rx thread.
 - `src/rpc.cpp` — the five opcodes and the scale table, shared by both transports.
-- `src/shell.cpp` — the `fs` command group, including `fs bootloader`.
+- `src/shell.cpp` — the `fs` command group, including `fs bootloader` and the
+  three test hooks (`fs clock`, `fs stall`, `fs magnfail`).
 - `tests/codec/`, `tests/battery_level/` — `native_sim` ztest suites over the two
   pure modules.
 - `host/feather_protocol.py` — the single host-side definition of the wire format,

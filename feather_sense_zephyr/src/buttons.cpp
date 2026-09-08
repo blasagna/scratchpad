@@ -39,7 +39,7 @@ void button_handler(input_event *event, void *)
 
 	LOG_DBG("key %u %s", event->code, sample.pressed ? "press" : "release");
 
-	streams::emit(codec::kStreamButton, k_uptime_get_32(), 0, 1, &sample, sizeof(sample));
+	streams::emit(codec::kStreamButton, streams::now_ms(), 0, 1, &sample, sizeof(sample));
 }
 
 } /* namespace */

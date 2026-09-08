@@ -21,6 +21,7 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 
 LOG_MODULE_REGISTER(imu, LOG_LEVEL_INF);
 
@@ -101,6 +102,11 @@ uint32_t total_batches;
 uint32_t total_overruns;
 uint32_t total_stall_flushes;
 
+/* A pending `fs stall` request, in milliseconds. Written by the shell thread
+ * and read-and-cleared by the imu thread, so it is atomic rather than plain.
+ */
+atomic_t stall_request;
+
 #if DT_NODE_HAS_PROP(IMU_NODE, irq_gpios)
 #define IMU_HAS_TRIGGER 1
 K_SEM_DEFINE(watermark_sem, 0, 1);
@@ -137,6 +143,17 @@ void drain()
 	lsm6ds3trc_sample samples[kMaxDrainSamples];
 	const uint32_t period_us = lsm6ds3trc_sample_period_us(dev);
 
+	/* The stall hook, read-and-cleared in one operation. Sleeping here
+	 * rather than skipping a drain is what makes the backlog real: the
+	 * chip keeps converting into a FIFO nothing is emptying, which is
+	 * exactly the condition the clamp below exists for.
+	 */
+	const uint32_t stall_ms = static_cast<uint32_t>(atomic_set(&stall_request, 0));
+	if (stall_ms != 0) {
+		LOG_WRN("stalling the drain for %u ms on request", stall_ms);
+		k_msleep(static_cast<int32_t>(stall_ms));
+	}
+
 	if (lsm6ds3trc_fifo_overrun(dev)) {
 		total_overruns++;
 	}
@@ -152,6 +169,11 @@ void drain()
 	if (level > kStallSamples) {
 		LOG_WRN("FIFO %d samples deep; dropping the backlog", level);
 		lsm6ds3trc_fifo_flush(dev);
+		/* One drop() per flush, whatever the backlog held: the gap says
+		 * a backlog was dropped here, and how much went with it is in
+		 * the `t_ms` step rather than in the size of the `seq` jump.
+		 */
+		streams::drop(codec::kStreamImu);
 		total_stall_flushes++;
 		return;
 	}
@@ -170,7 +192,7 @@ void drain()
 			return;
 		}
 
-		publish(samples, static_cast<uint8_t>(got), k_uptime_get_32(), period_us);
+		publish(samples, static_cast<uint8_t>(got), streams::now_ms(), period_us);
 
 		if (static_cast<uint8_t>(got) < cap) {
 			/* A short read means the FIFO is drained. */
@@ -244,6 +266,11 @@ int start()
 	k_thread_name_set(&thread, "imu");
 
 	return 0;
+}
+
+void stall(uint32_t ms)
+{
+	atomic_set(&stall_request, static_cast<atomic_val_t>(ms));
 }
 
 Stats stats()

@@ -61,7 +61,14 @@ uint16_t seq[codec::kStreamCount];
 atomic_t stream_enabled[codec::kStreamCount];
 atomic_t imu_batch = kMaxImuBatchSamples;
 
+/* The `t_ms` offset. Signed atomic_t holding a uint32: the value round-trips
+ * through the cast, and only now_ms()'s unsigned addition -- which wraps by
+ * definition -- ever interprets it.
+ */
+atomic_t clock_offset;
+
 atomic_t emitted;
+atomic_t dropped_source;
 atomic_t dropped_ble;
 atomic_t dropped_usb;
 atomic_t dropped_oversize;
@@ -97,6 +104,21 @@ void usb_tx_entry(void *, void *, void *)
 }
 
 } /* namespace */
+
+uint32_t now_ms()
+{
+	return k_uptime_get_32() + static_cast<uint32_t>(atomic_get(&clock_offset));
+}
+
+void set_clock_offset_ms(uint32_t offset)
+{
+	atomic_set(&clock_offset, static_cast<atomic_val_t>(offset));
+}
+
+uint32_t clock_offset_ms()
+{
+	return static_cast<uint32_t>(atomic_get(&clock_offset));
+}
 
 void emit(uint8_t stream_id, uint32_t t_ms, uint16_t period_us, uint8_t count, const void *samples,
 	  size_t samples_bytes)
@@ -140,6 +162,16 @@ void emit(uint8_t stream_id, uint32_t t_ms, uint16_t period_us, uint8_t count, c
 	}
 }
 
+void drop(uint8_t stream_id)
+{
+	if (!valid_stream(stream_id)) {
+		return;
+	}
+
+	seq[index_of(stream_id)]++;
+	atomic_inc(&dropped_source);
+}
+
 bool set_enabled(uint8_t stream_id, bool enable)
 {
 	if (!valid_stream(stream_id)) {
@@ -181,6 +213,7 @@ Counters counters()
 {
 	return Counters{
 		.emitted = static_cast<uint32_t>(atomic_get(&emitted)),
+		.dropped_source = static_cast<uint32_t>(atomic_get(&dropped_source)),
 		.dropped_ble = static_cast<uint32_t>(atomic_get(&dropped_ble)),
 		.dropped_usb = static_cast<uint32_t>(atomic_get(&dropped_usb)),
 		.dropped_oversize = static_cast<uint32_t>(atomic_get(&dropped_oversize)),

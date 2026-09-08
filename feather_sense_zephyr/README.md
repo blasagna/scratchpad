@@ -46,6 +46,7 @@ a 1 Hz environmental stream all running at once:
 | Longest run | **90 minutes**, 1 125 800 IMU samples, 0 errors, 0 seq gaps - and the 16-bit `seq` counter wrapped, see [a long run](#a-long-run) |
 | Longest link | **37.1 h** of BLE with 0 reconnects, off the battery pack, see [the battery on a real pack](#the-battery-on-a-real-pack) |
 | Status LED | seen changing band **in both directions** on hardware - yellow at 56 %, green again at 63 % |
+| Failure paths | both sample-drop paths, the stall clamp and the `t_ms` wrap all **run on hardware**, with their conditions manufactured - see [reaching the paths a healthy board never takes](#reaching-the-paths-a-healthy-board-never-takes) |
 
 The flash figure moves by a few bytes with the commit it was built at, and not because
 anything got bigger. `get build id` reports `git describe`, which CMake resolves at
@@ -69,8 +70,9 @@ the point of the whole design. The link is nowhere near saturated: about
 2.7 KB/s of samples against the ~4.4 KB/s the CircuitPython port reached at a
 23-byte MTU.
 
-Building the firmware turned up ten things this document had wrong or had not
-known, all of them recorded in place below rather than only here:
+Building the firmware turned up twelve things this document had wrong or had not
+known, all of them recorded in place below rather than only here. The last two came
+out of running the failure paths, which is the part that had never been done:
 
 1. The image linked at flash offset 0 and would have erased the SoftDevice
    and the MBR the bootloader itself needs — see [building and
@@ -103,6 +105,16 @@ known, all of them recorded in place below rather than only here:
    way of finding it would not have worked — a watermark interrupt pulses, and a
    shell reads one pin at a time. See [the imu's INT1
    line](#the-imus-int1-line).
+
+11. A drop that never reached `emit()` was invisible in `seq` — the field this
+   document said twice would carry it. Found by running the two drop paths and
+   the stall clamp for the first time, and fixed with `streams::drop()`; see
+   [and a drop that never reaches emit() has to say so
+   itself](#and-a-drop-that-never-reaches-emit-has-to-say-so-itself).
+12. The host read the 32-bit `t_ms` rollover as a device restart, which zeroed the
+   device-timestamp rate for every stream over the whole run — the one figure the
+   tooling exists to produce. See [the t_ms wrap, 49.7 days
+   early](#the-t_ms-wrap-497-days-early).
 
 And one thing the board corrected about the *bench* rather than about the
 firmware: the magnetometer's first readings were saturated on all three axes,
@@ -918,10 +930,13 @@ fallback if the trigger is ever unavailable. See [the imu's INT1
 line](#the-imus-int1-line) for how the pin was found and what the interrupt measurably
 bought over the 49 ms timer it replaced.
 
-A backlog past 96 samples is treated as a stall: the FIFO is flushed rather than drained, because catching up would put stale samples on the
-wire carrying plausible-looking back-dated timestamps, and a `seq` gap is the honest
-report. That is the CircuitPython port's schedule-from-the-deadline rule applied to a
-hardware queue.
+A backlog past 96 samples is treated as a stall: the FIFO is flushed rather than drained,
+because catching up would put stale samples on the wire carrying plausible-looking
+back-dated timestamps, and a `seq` gap is the honest report. That is the CircuitPython
+port's schedule-from-the-deadline rule applied to a hardware queue. Both halves of that
+have now been run against a real backlog, and against a control just under the threshold
+that shows exactly the burst being prevented — see [the stall clamp, and the burst just
+below it](#the-stall-clamp-and-the-burst-just-below-it).
 
 #### a sample that could not be read is not sent
 
@@ -940,10 +955,44 @@ and it is worth stating because the tempting alternative is silent:
   between them would make the pair 100 ms apart while the header still claimed 50, so the
   half-filled batch is discarded instead. Keeping it would back-date the second sample
   onto an instant it was never taken at — and the host could not detect it, because the
-  timestamps its own gap checks run on would be the fabricated ones.
+  timestamps its own gap checks run on would be the fabricated ones. `fs magn` counts
+  those discards.
 
 Both were emitting the partial sample until a review found it; neither had ever been
 observed, because the symptom is data that looks fine.
+
+##### and a drop that never reaches emit() has to say so itself
+
+Running the two paths turned up a defect in the sentence above, which this document
+asserted twice and the code asserted twice more: **a producer-side drop was not visible
+in `seq` at all.** `streams::emit()` stamps the sequence number, so a batch that is
+dropped *before* it gets there consumes no number and leaves `seq` perfectly contiguous
+across the hole. The measurement is in [the two drop paths, on a real
+board](#the-two-drop-paths-on-a-real-board): eleven seconds of dropped env samples,
+`seq 102 → 103`, `seq gaps 0`.
+
+That is exactly the class of error this document exists to prevent — a claim about a
+failure path, restated confidently, never run. The fix is `streams::drop(stream_id)`,
+which advances the stream's sequence counter without sending anything:
+
+- `src/env.cpp` calls it for each sample dropped for an unreadable field.
+- `src/magn.cpp` calls it when it discards a half-filled batch — and **not** when a
+  failed fetch finds nothing buffered, because then no batch existed to lose. That case
+  is still invisible in `seq`, and shows only as a 150 ms step in `t_ms` where 100 ms
+  was due. The two are told apart in exactly that way, and the arithmetic is under [the
+  two drop paths](#the-two-drop-paths-on-a-real-board).
+- `src/imu.cpp` calls it once per stall flush, whatever the backlog's size. The gap says
+  "a backlog was dropped here"; how much went with it is in the `t_ms` step, not in the
+  size of the `seq` jump.
+
+`drop()` must be called from the same thread that emits that stream, for the same reason
+`emit()` needs no lock around `seq[]`: one writer per element and no more.
+
+It follows that a `seq` gap now means *either* the device dropped a batch *or* the link
+did, where before it could only mean the second. That is the right merge — the host's
+question is "is there data I did not get", and the answer is yes either way — and the
+device-side counters (`fs env`, `fs magn`, `fs imu`, `fs stats`) are what separate the
+causes for anyone with the console attached.
 
 ### GATT layout
 
@@ -1301,9 +1350,17 @@ Beyond the built-ins, the application registers an `fs` command group, guarded b
 | `fs imu` | `WHO_AM_I` and which part it means, samples and batches so far, FIFO overruns and stall flushes |
 | `fs battery` | the last reading — millivolts, percent, and whether USB is present |
 | `fs env` | what the last SHT30 fetch cost, in microseconds, how many have failed, and how many samples were dropped for an unreadable field |
+| `fs magn` | magnetometer fetch failures, and how many half-filled batches were discarded because one landed between a batch's two samples |
 | `fs stream <id> <0\|1>` | enable or disable one stream, the same thing RPC opcode `0x02` does |
 | `fs led <r> <g> <b>` | drive the pixel to a known colour; restores itself on the battery thread's next tick |
 | `fs bootloader` | reboot into the UF2 bootloader, so a reflash needs no hand on the board |
+| `fs clock [offset]` | **test hook** — shift `t_ms` by `offset` ms, so its 32-bit wrap can be reached in seconds rather than in 49.7 days |
+| `fs stall <ms>` | **test hook** — hold the next IMU drain off for `ms`, so the FIFO builds the backlog the stall clamp exists for |
+| `fs magnfail <n>` | **test hook** — count the next `n` magnetometer fetches as failed without touching the chip |
+
+The last three are covered in [reaching the paths a healthy board never
+takes](#reaching-the-paths-a-healthy-board-never-takes), along with why each one has to
+exist.
 
 `CONFIG_I2C_SHELL` earns its place here more than anywhere else in the repo:
 
@@ -1464,9 +1521,13 @@ from the CircuitPython port because getting it wrong there over-reported by ~10 
   shows.
 - **`errors`** — frames the decoder rejected. It should read 0. Treat anything else as
   contamination of the data channel, not as noise to tune out.
-- **`seq gaps`** — new here, and the reason `seq` is in the header: it separates a
-  device-side drop from a link-side one, which on the CircuitPython port could only be
-  inferred from the shape of the timestamp spacing.
+- **`seq gaps`** — new here, and the reason `seq` is in the header: it separates a run of
+  batches that arrived from one with a hole in it, which on the CircuitPython port could
+  only be inferred from the shape of the timestamp spacing. A gap means the device dropped
+  a batch *or* the link did; the device-side counters (`fs stats`'s `source drops` against
+  its transport counters) are what separate those two, and [and a drop that never reaches
+  emit() has to say so itself](#and-a-drop-that-never-reaches-emit-has-to-say-so-itself) is
+  why it covers both.
 
 Each reader fetches the scale table over RPC at connect and prints it before streaming,
 since decoding depends on it.
@@ -1483,6 +1544,12 @@ first question 5400 times and the second not at all. Two of the totals are not j
   stream reports `gap max 1000.0 ms` in each of its windows and `4000.0 ms` over the run.
 - **`seq wraps`** counts the 16-bit rollover, which no reporting window is long enough to
   contain. See [a long run](#a-long-run).
+- **`t_ms wraps`** counts the 32-bit one, 49.7 days in. It is a separate field from
+  `restarts` on purpose: `StreamStats` used to read every backwards `t_ms` as a reboot,
+  which is right for a reboot and wrong for a rollover, and cost a phantom restart plus a
+  `dev` of 0.00/s across the whole run. The two are told apart by how far the clock went
+  back — nearly 2³² for a wrap, back to near zero for a reboot. See [the t_ms wrap, 49.7
+  days early](#the-t_ms-wrap-497-days-early).
 
 `--window` sets the reporting interval, which changes only what is printed: every rate is
 still divided by *measured* elapsed and not by the nominal window.
@@ -1568,7 +1635,198 @@ Two other things fell out of it, neither of which the run was looking for:
 
 What this run does **not** settle, because 90 minutes is not long enough: the `t_ms` wrap at
 32 bits is 49.7 days away, and the stall clamp in `src/imu.cpp` needs a 96-sample backlog
-that a `gap max` of 6.7 ms never came close to producing.
+that a `gap max` of 6.7 ms never came close to producing. Both were reached afterwards by
+manufacturing the condition rather than by waiting for it — see below.
+
+### reaching the paths a healthy board never takes
+
+Four paths in this firmware could not be reached by running it: the two sample-drop paths,
+the IMU's stall clamp, and the `t_ms` wrap. Between them they are most of what was left on
+the unverified list, and every one of them is a *failure* path — which is exactly the kind
+that gets written once, reasoned about confidently, and never executed. Two of the four
+turned out to be wrong about their own host-visible effect.
+
+Three shell commands reach them. Each is a test hook, each says so in `--help`, and each
+was deliberately built to run **against the shipped image** rather than against a special
+build: an assertion about the firmware is worth much less when the firmware that carries it
+is not the firmware that ships.
+
+| Hook | Reaches | Why nothing else does |
+|---|---|---|
+| `fs clock <offset>` | the 32-bit `t_ms` wrap | 49.7 days of uptime. The offset is added by `streams::now_ms()`, which every stream now calls instead of `k_uptime_get_32()` — one clock, so all five cross together |
+| `fs stall <ms>` | the stall clamp | It needs a 96-sample backlog, which at 208 Hz is 460 ms of nothing draining the FIFO. The worst gap a healthy board has ever shown is 6.7 ms. Sleeping *inside* the drain rather than skipping it is what makes the backlog real: the chip keeps converting into a FIFO nothing is emptying |
+| `fs magnfail <n>` | the magnetometer's discard branch | The LIS3MDL's DRDY and INT are unrouted and its I²C interface cannot be turned off and back on from this side, so there is no way to make a real fetch fail that the board can also recover from |
+
+The env drop path needs no hook, and did not get one, because the chip provides a better
+one: `i2c write_byte i2c@40003000 0x44 0x30 0x93` is the SHT3x **break** command, which
+stops periodic mode, and every `FETCH_DATA` after it is NACKed by the part itself.
+`i2c write_byte i2c@40003000 0x44 0x22 0x36` puts it back (2 MPS, high repeatability —
+`measure_cmd[2][2]` in Zephyr's driver, which is what `CONFIG_SHT3XD_MPS_2` and the default
+repeatability select). **Prefer the chip to the hook wherever the chip will do it**: the
+break command exercises the driver's own error return, and `fs magnfail` explicitly does
+not — it reaches the discard branch and leaves `lis3mdl_sample_fetch`'s failure on trust.
+That distinction is recorded rather than glossed, because it is the difference between the
+two results below.
+
+### the two drop paths, on a real board
+
+Both were on the unverified list: written after a review, reasoned from the failure they
+replace, never run. Both work. Both were also wrong about what the host would see.
+
+**env, through the chip's own NACK.** With the SHT30 broken out of periodic mode for 11 s,
+against a 40 s decode:
+
+| | |
+|---|---|
+| device-side drops (`fs env`) | **16**, from 16 failed fetches |
+| env samples in 40 s | 22, `dev 0.55/s` |
+| `gap max` on the env stream | **18 001 ms** |
+| decode errors | **0** |
+| IMU and magnetometer during the outage | **208.48/s and 19.99/s**, 0 seq gaps — untouched |
+
+The env stream's own headers across the hole, which is the part that matters:
+
+```
+seq   102  t_ms  120043     <- last before the break command
+seq   103  t_ms  131043     <- first after periodic mode was restored
+```
+
+**Eleven seconds and ten missing samples, and `seq` is contiguous.** `seq gaps 0`. The
+whole-sample drop works exactly as designed and is invisible in the field this document
+twice said would carry it — see [and a drop that never reaches emit() has to say so
+itself](#and-a-drop-that-never-reaches-emit-has-to-say-so-itself) for the fix.
+
+Re-run against the fixed image, the same ten-second break gives `seq 20 → 30` for nine
+dropped samples, the device reporting `9 samples dropped for an unreadable field` and
+`source drops 9`, and the host reporting **`seq gaps 9`**. Device count and host count are
+the same number, which is the property the field is supposed to have.
+
+**magn, through the hook.** Sixteen single injected failures produced **11 discarded
+half-filled batches**, and the other five landed on a tick with nothing buffered. The two
+cases are distinguishable from the host without any device-side counter at all, which is
+worth more than the counter:
+
+| what happened on the failing tick | step in `t_ms` where 100 ms was due |
+|---|---|
+| nothing buffered (`filled == 0`) — one tick skipped, no batch lost | **150 ms** |
+| a sample buffered (`filled == 1`) — that sample discarded | **200 ms** |
+
+Both follow from the batch being two ticks wide: a skipped tick pushes the next batch's
+first sample one tick out, and a discarded one pushes it two. In the 20 s run the steps
+came out as five at 200 ms and three at 150 ms against eight injections, `gap max
+151.0 ms`, `dev 19.34/s` against a nominal 20 — and, again, **`seq gaps 0`** with every
+`seq` step exactly +1.
+
+Against the fixed image the same eight injections give five discards and three skipped
+ticks again, and now the two cases are separable from the host with no device-side counter
+at all:
+
+| step | what it was | `seq` |
+|---|---|---|
+| `+150 ms` | a skipped tick, nothing buffered, no batch lost | **+1** |
+| `+200 ms` | a discarded half-filled batch | **+2** |
+
+`fs magn` reported `5 half-filled batches discarded` and the host reported **`seq gaps
+5`**.
+
+### the stall clamp, and the burst just below it
+
+`fs stall` was run twice in one session, once either side of the 96-sample threshold. The
+control is the more interesting half.
+
+**400 ms — under the threshold (≈83 samples).** `stall flushes` stayed 0 and the backlog
+was delivered, which is the correct behaviour and also a demonstration of why the clamp
+exists. The catch-up came out as five consecutive 19-sample batches:
+
+```
+seq 5270 -> 5271   t_ms +407 ms   count 19
+seq 5271 -> 5272   t_ms   +7 ms   count 19
+seq 5272 -> 5273   t_ms   +7 ms   count 19
+seq 5273 -> 5274   t_ms   +7 ms   count 19
+seq 5274 -> 5275   t_ms   +7 ms   count 19
+seq 5275 -> 5276   t_ms  +71 ms   count 5
+```
+
+Each of those batches claims to span 91 ms of samples while being stamped 7 ms after the
+one before it, because `publish()` back-dates from the drain instant and five drains
+happened within a few milliseconds of each other. **That is the "plausible-looking
+back-dated timestamps" the clamp's comment describes, caught in the act** — the data is
+not corrupt, but the timeline it carries is fiction, and nothing in the frame says so.
+
+**600 ms — over it (≈125 samples).** `stall flushes` went 0 → 1, and the host saw one
+clean hole:
+
+```
+seq 5371 -> 5372   t_ms +693 ms   count 10
+```
+
+No burst, no 19-sample catch-up, `count` back at the watermark on both sides, `gap max
+649.7 ms`, 0 FIFO overruns (the part holds ~682 records, so 125 is not close). The backlog
+was dropped whole, which is the honest report — and `seq` was contiguous here too, until
+the fix above made the flush advance it. Re-run against the fixed image the same 600 ms
+stall gives `seq +2, t_ms +695 ms, count 10` and the host reports `seq gaps 1`, while the
+400 ms control still reports none, because the control drops nothing.
+
+One number worth checking after all three: `fs stats` read `source drops 15` at the end of
+the session — 9 env samples, 5 magnetometer batches and 1 flushed backlog. The counter that
+says a batch never reached `emit()` and the gaps the host counted are the same events seen
+from the two ends.
+
+### the t_ms wrap, 49.7 days early
+
+`fs clock 4294657070` put the wrap six seconds out. The firmware crossed it cleanly:
+
+| | |
+|---|---|
+| IMU across the boundary | `t_ms 4294967259 → 11`, **`seq 6450 → 6451`** |
+| magnetometer | `t_ms 4294967226 → 30`, `seq 3086 → 3087` |
+| env | `t_ms 4294967113 → 817`, `seq 282 → 283` |
+| decode errors | **0** |
+
+Every stream crossed within 150 ms of the others, which is itself a consequence of routing
+all five through `streams::now_ms()`; before that change they read the kernel clock
+separately and nothing tied them together. `publish()`'s `now_ms - span_ms` back-dating is
+unsigned and wraps correctly, so the batch straddling the boundary is right too.
+
+**The host was not fine.** Every stream reported `restarts 1` for a reboot that did not
+happen, and `dev 0.00/s` for the whole run:
+
+```
+imu   dev 0.00/s  host 208.32/s  samples 4170  seq gaps 0  seq wraps 0  restarts 1
+magn  dev 0.00/s  host  19.98/s  samples  400  seq gaps 0  seq wraps 0  restarts 1
+env   dev 0.00/s  host   1.05/s  samples   21  seq gaps 0  seq wraps 0  restarts 1
+```
+
+Both follow from `StreamStats` treating any backwards `t_ms` as a device restart — the
+discriminator added so a `seq` wrap could not be confused with a reboot, which is right
+about reboots and wrong about this. `total_device_rate` then spans a negative interval and
+returns 0.0, so **the one figure this tooling exists to produce would read zero on the day
+it finally mattered.**
+
+The fix unwraps `t_ms` onto a 64-bit timeline. A wrap and a reboot are told apart by how
+far the clock went back: a wrap lands just under the top of the range, so the step back is
+nearly 2³², while a reboot lands near zero from whatever the uptime was. 2³¹ — 24.9 days —
+is the divider, and a reboot after longer uptime than *that* is the one case it cannot call
+correctly, which is recorded rather than papered over. Re-run across the boundary:
+
+```
+imu   dev 208.49/s  host 208.58/s  gap max   5.7 ms  seq gaps 0  t_ms wraps 1  restarts 0
+magn  dev  19.99/s  host  19.96/s  gap max  54.0 ms  seq gaps 0  t_ms wraps 1  restarts 0
+env   dev   1.00/s  host   1.00/s  gap max 1002.0 ms  seq gaps 0  t_ms wraps 1  restarts 0
+```
+
+`t_ms wraps` is now a printed field beside `seq wraps` and `restarts`, so the three
+rollover-shaped events are three separate numbers rather than one that has to be
+interpreted. The batch that straddles the boundary needs no special case: its later
+samples run past 2³² and the next batch's epoch puts them in the same place, which is
+what the `gap max` figures above are checking.
+
+**One trap in running this**, worth writing down because it cost a run: the offset is
+absolute, added to `k_uptime_get_32()`. Reading `fs clock` back while an offset is already
+set returns the *shifted* clock, and computing the next offset from that number targets the
+wrong instant and the wrap never arrives. Zero it first. Apply it before the statistics
+start, too — moving the clock mid-run puts a 4 294 849 655 ms step in `gap max` that is an
+artifact of the move and not of the wrap.
 
 ### the battery, on a real pack
 
@@ -1806,6 +2064,30 @@ with a shell.
   cost of a byte of buffer per bit and one SPI pin, or the two-word upstream fix to the
   driver's `#else` branch at `ws2812_gpio.c:139`.
 
+- **All four paths a healthy board never takes have now been run, and two of them were
+  wrong.** The two sample-drop paths, the IMU stall clamp and the `t_ms` wrap were the whole
+  of the unverified list bar the out-of-scope sensors; each needed its condition
+  manufactured rather than waited for, and three shell hooks plus one SHT3x register write
+  do it — see [reaching the paths a healthy board never
+  takes](#reaching-the-paths-a-healthy-board-never-takes). The mechanisms all work: env
+  drops a sample whose sensor could not be read, magn discards a half-filled batch, the
+  clamp flushes a 125-sample backlog and does *not* flush an 83-sample one, and the firmware
+  crosses the 32-bit `t_ms` boundary with `seq` unbroken and 0 decode errors. What was wrong
+  was what each claimed the host would see. **A producer-side drop was invisible in `seq`**,
+  because `emit()` is what stamps it — eleven seconds of missing env samples read as
+  `seq gaps 0`, against a document that said twice they would show. And **the host read the
+  `t_ms` wrap as a device restart**, zeroing `dev` for every stream over the whole run. Both
+  are fixed and both fixes are re-measured; the numbers, before and after, are in the four
+  sections beginning at [reaching the paths a healthy board never
+  takes](#reaching-the-paths-a-healthy-board-never-takes).
+
+- **A control belongs on every one of these.** The 400 ms stall that deliberately does *not*
+  trip the clamp is worth as much as the 600 ms one that does: it shows the five back-dated
+  19-sample batches the clamp exists to prevent, which no amount of reasoning about the
+  clamp would have produced. The same shape as the pull-up control on the magnetometer sweep
+  and the re-found `P1.11`. **Manufacture the negative case too, or the positive one is just
+  an assertion that fired.**
+
 - **The battery's "≥1 % change" rule now throttles on charge rather than on noise.**
   Requirement 1.7 was implemented literally and met to the letter while doing nothing: the
   ADC dithers 6.7 mV RMS and `percent` is an integer, so the stream emitted 2010/h against
@@ -1840,23 +2122,6 @@ with a shell.
 
 ### still unverified
 
-- **The two sample-drop paths added after the review.** `src/env.cpp` now drops a whole env
-  sample when any of its three fields could not be read, and `src/magn.cpp` discards a
-  half-filled batch when a fetch fails between its two samples — see [a sample that could
-  not be read is not sent](#a-sample-that-could-not-be-read-is-not-sent). Both build and
-  both are reasoned from the failure they replace, but neither has been *run* on hardware:
-  the board was not attached when the change was made, and reaching either path means
-  manufacturing a sensor read failure (for env, the SHT30 NACK that `CONFIG_SHT3XD_MPS_2=y`
-  exists to prevent). The check when a board is next to hand is `fs env`'s new drop counter
-  reading 0 in normal operation, and the env and magn streams still reporting `dev 1.00/s`
-  and `dev 20.00/s` with 0 `seq` gaps.
-- **The `t_ms` wrap at 32 bits, and the stall clamp.** A 90-minute run has now happened and
-  is reported under [a long run](#a-long-run) - it settled the 16-bit `seq` wrap, which this
-  entry used to list, and the queue behaviour it also listed had already been measured under
-  a 6 s reader stall. What that run could not reach is still here: `t_ms` wraps 49.7 days in,
-  and the stall clamp in `src/imu.cpp` needs a 96-sample backlog that a 6.7 ms worst-case gap
-  never approaches. Neither is reachable by running longer at these rates; both would need
-  the condition manufactured.
 - **Pressure and the microphone are deliberately out of scope.** The BMP280 answers at
   `0x77` on the bus scan and Zephyr's `bosch,bme280` driver accepts its chip id `0x58` at
   `drivers/sensor/bosch/bme280/bme280.c:358`; the nRF52840's PDM peripheral has a driver and

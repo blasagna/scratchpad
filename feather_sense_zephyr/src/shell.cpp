@@ -14,6 +14,7 @@
 #include "env.hpp"
 #include "imu.hpp"
 #include "led.hpp"
+#include "magn.hpp"
 #include "streams.hpp"
 #include "usb.hpp"
 
@@ -34,6 +35,13 @@ int cmd_stats(const shell *sh, size_t, char **)
 	const usb::Counters u = usb::counters();
 
 	shell_print(sh, "batches   emitted %u", s.emitted);
+	/* Dropped before ever being built, by env, magn or the IMU's stall
+	 * clamp. The two counters below are the opposite case -- built, stamped,
+	 * and then with nowhere to go. Both now show up on the host as a `seq`
+	 * gap, and only this console tells them apart.
+	 */
+	shell_print(sh, "source drops %u (unread sample, discarded batch, flushed backlog)",
+		    s.dropped_source);
 	/* Two different places a batch can be dropped, and they are not
 	 * interchangeable. A transmit queue only fills if its thread stops
 	 * draining, which in practice does not happen -- usb::send() never
@@ -91,6 +99,53 @@ int cmd_env(const shell *sh, size_t, char **)
 	 * sees as gaps in the env stream's `seq`.
 	 */
 	shell_print(sh, "%u samples dropped for an unreadable field", env::dropped_samples());
+
+	return 0;
+}
+
+int cmd_magn(const shell *sh, size_t, char **)
+{
+	shell_print(sh, "%u fetches failed, %u half-filled batches discarded",
+		    magn::fetch_failures(), magn::dropped_batches());
+
+	return 0;
+}
+
+/*
+ * The three test hooks. Each exists because the path it reaches cannot be
+ * reached any other way on this board, and each was written to be run against
+ * the shipped image rather than a special build -- see README.md, "reaching the
+ * paths a healthy board never takes".
+ */
+int cmd_clock(const shell *sh, size_t argc, char **argv)
+{
+	if (argc == 2) {
+		streams::set_clock_offset_ms(static_cast<uint32_t>(strtoul(argv[1], nullptr, 0)));
+	}
+
+	shell_print(sh, "t_ms offset %u, now %u", streams::clock_offset_ms(), streams::now_ms());
+
+	return 0;
+}
+
+int cmd_stall(const shell *sh, size_t argc, char **argv)
+{
+	const uint32_t ms = static_cast<uint32_t>(strtoul(argv[1], nullptr, 0));
+
+	ARG_UNUSED(argc);
+	imu::stall(ms);
+	shell_print(sh, "the next IMU drain will be held off for %u ms", ms);
+
+	return 0;
+}
+
+int cmd_magnfail(const shell *sh, size_t argc, char **argv)
+{
+	const uint32_t count = static_cast<uint32_t>(strtoul(argv[1], nullptr, 0));
+
+	ARG_UNUSED(argc);
+	magn::fail_next(count);
+	shell_print(sh, "the next %u magnetometer fetches will count as failed", count);
 
 	return 0;
 }
@@ -178,9 +233,15 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(imu, NULL, "Which IMU this board carries, and its FIFO health", cmd_imu),
 	SHELL_CMD(battery, NULL, "The last battery reading", cmd_battery),
 	SHELL_CMD(env, NULL, "What the last SHT30 fetch cost", cmd_env),
+	SHELL_CMD(magn, NULL, "Magnetometer fetch failures and discarded batches", cmd_magn),
 	SHELL_CMD_ARG(stream, NULL, "Enable or disable a stream", cmd_stream, 3, 0),
 	SHELL_CMD_ARG(led, NULL, "Drive the pixel: fs led <r> <g> <b>", cmd_led, 4, 0),
 	SHELL_CMD(bootloader, NULL, "Reboot into the UF2 bootloader", cmd_bootloader),
+	SHELL_CMD_ARG(clock, NULL, "Test hook: offset t_ms, to reach its 32-bit wrap", cmd_clock, 1,
+		      1),
+	SHELL_CMD_ARG(stall, NULL, "Test hook: hold the IMU drain off for <ms>", cmd_stall, 2, 0),
+	SHELL_CMD_ARG(magnfail, NULL, "Test hook: fail the next <n> magnetometer fetches",
+		      cmd_magnfail, 2, 0),
 	SHELL_SUBCMD_SET_END);
 
 } /* namespace */

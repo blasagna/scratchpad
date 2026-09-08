@@ -16,6 +16,7 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 
 LOG_MODULE_REGISTER(magn, LOG_LEVEL_INF);
 
@@ -51,6 +52,31 @@ constexpr uint16_t kPeriodUs = 1000000 / kRateHz;
 constexpr uint8_t kBatchSamples = 2;
 
 k_timer timer;
+
+uint32_t failures;
+uint32_t dropped;
+
+/* Pending injected failures, from `fs magnfail`. Written by the shell thread
+ * and decremented by the magn thread, so it is atomic rather than plain.
+ */
+atomic_t inject_failures;
+
+/* One injected failure, consumed. Kept separate from the fetch itself so that
+ * the branch it reaches is the shipped one and not a copy of it.
+ */
+bool take_injected_failure()
+{
+	while (true) {
+		const atomic_val_t pending = atomic_get(&inject_failures);
+
+		if (pending <= 0) {
+			return false;
+		}
+		if (atomic_cas(&inject_failures, pending, pending - 1)) {
+			return true;
+		}
+	}
+}
 
 /*
  * Gauss (what the driver reports) to deci-microtesla (what goes on the wire).
@@ -98,9 +124,10 @@ void entry(void *, void *, void *)
 
 		sensor_value values[3];
 
-		if (sensor_sample_fetch(dev) < 0 ||
+		if (take_injected_failure() || sensor_sample_fetch(dev) < 0 ||
 		    sensor_channel_get(dev, SENSOR_CHAN_MAGN_XYZ, values) < 0) {
 			LOG_WRN("magnetometer read failed");
+			failures++;
 			/* Discard a half-filled batch rather than closing it with
 			 * the next tick's sample. `period_us` says the two samples
 			 * are kPeriodMs apart, and after a skipped tick they are
@@ -108,14 +135,28 @@ void entry(void *, void *, void *)
 			 * the second sample by 50 ms onto an instant it was never
 			 * taken at, and the host cannot see the error because the
 			 * timestamps it checks its gaps against are the fabricated
-			 * ones. Dropping shows up as a gap in `seq` instead.
+			 * ones.
+			 *
+			 * The discard is reported with streams::drop(), which
+			 * advances `seq` without sending anything -- emit() is
+			 * what stamps that field, so a batch dropped before it
+			 * gets there would otherwise leave the sequence
+			 * contiguous across the hole. A failed fetch with
+			 * nothing buffered gets no drop() and none is owed: no
+			 * batch existed to lose. The host still sees that case,
+			 * as a 150 ms step in `t_ms` where 100 ms was due,
+			 * against the 200 ms a real discard leaves.
 			 */
+			if (filled != 0) {
+				streams::drop(codec::kStreamMagn);
+				dropped++;
+			}
 			filled = 0;
 			continue;
 		}
 
 		if (filled == 0) {
-			first_t_ms = k_uptime_get_32();
+			first_t_ms = streams::now_ms();
 		}
 
 		batch[filled] = codec::MagnSample{
@@ -134,6 +175,21 @@ void entry(void *, void *, void *)
 }
 
 } /* namespace */
+
+uint32_t dropped_batches()
+{
+	return dropped;
+}
+
+uint32_t fetch_failures()
+{
+	return failures;
+}
+
+void fail_next(uint32_t count)
+{
+	atomic_set(&inject_failures, static_cast<atomic_val_t>(count));
+}
 
 int start()
 {

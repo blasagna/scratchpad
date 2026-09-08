@@ -89,6 +89,11 @@ _HEADER_FORMAT = "<IHHBB"
 HEADER_BYTES = struct.calcsize(_HEADER_FORMAT)
 assert HEADER_BYTES == 10
 
+# What `t_ms` rolls over at: it is a uint32 of milliseconds, so 49.7 days. The
+# firmware stamps it from streams::now_ms() and lets it wrap; StreamStats
+# unwraps it. Reached on hardware with `fs clock` rather than waited for.
+T_MS_WRAP = 1 << 32
+
 
 class BatchHeader(NamedTuple):
     t_ms: int
@@ -427,6 +432,13 @@ class StreamStats:
     run totals: at ~20.8 IMU batches/s the 16-bit counter takes about 52 minutes
     to roll over, so it is an event no reporting window is long enough to
     contain and no run before this one was long enough to reach.
+
+    ``t_ms`` rolls over too, at 32 bits and 49.7 days, and this class unwraps it
+    onto a 64-bit timeline rather than reporting it. Everything below runs on
+    the unwrapped value; ``_prev_batch_t_ms`` keeps the raw one, because the
+    rollover is only detectable in the raw field. See
+    :meth:`add` for how a wrap is told apart from a reboot, and ../README.md,
+    "the t_ms wrap, 49.7 days early", for what it cost before it was.
     """
 
     def __init__(self, name: str) -> None:
@@ -450,7 +462,10 @@ class StreamStats:
         self.total_seq_gaps = 0
         self.total_max_gap_ms = 0.0
         self.seq_wraps = 0
+        self.t_ms_wraps = 0
         self.restarts = 0
+        # Added to every raw `t_ms` to get the device timeline. 2**32 per wrap.
+        self._t_ms_epoch = 0
         self.run_first_ts: float | None = None
         self.run_last_ts: float | None = None
         self._run_prev_ts: float | None = None
@@ -461,12 +476,32 @@ class StreamStats:
         # unfalsifiable, since the one thing a long run is trying to establish
         # would also be what a reboot printed. `t_ms` going backwards is what
         # separates them: a real wrap leaves the uptime clock running.
-        restarted = (
+        #
+        # But `t_ms` goes backwards for a second reason, and treating that one
+        # as a reboot too is what this used to do. At 49.7 days the 32-bit field
+        # rolls over, and the board is *fine*: `seq` keeps counting and the
+        # samples keep coming. Measured with `fs clock`, that misread cost one
+        # phantom restart per stream and a `dev` rate of 0.00/s for the whole
+        # run, because the span it divides by went negative.
+        #
+        # The two are separable by how far back the clock went. A wrap lands
+        # just under the top of the range, so the step back is nearly 2**32; a
+        # reboot lands near zero from whatever the uptime was, which for any run
+        # this tooling is used on is far short of half that. 2**31 -- 24.9 days
+        # of uptime -- is the divider, and a reboot after longer than that is
+        # the one case this cannot call correctly. It is recorded rather than
+        # papered over: nothing here has run for a tenth of that.
+        restarted = False
+        if (
             self._prev_batch_t_ms is not None
             and batch.header.t_ms < self._prev_batch_t_ms
-        )
-        if restarted:
-            self.restarts += 1
+        ):
+            if self._prev_batch_t_ms - batch.header.t_ms > T_MS_WRAP // 2:
+                self._t_ms_epoch += T_MS_WRAP
+                self.t_ms_wraps += 1
+            else:
+                restarted = True
+                self.restarts += 1
 
         if self._prev_seq is not None and not restarted:
             expected = (self._prev_seq + 1) & 0xFFFF
@@ -483,7 +518,11 @@ class StreamStats:
         self._prev_seq = batch.header.seq
         self._prev_batch_t_ms = batch.header.t_ms
 
-        for ts in batch.timestamps_ms():
+        for raw_ts in batch.timestamps_ms():
+            # The device timeline, not the raw field. A batch straddling the
+            # rollover needs nothing special: its later samples run past 2**32
+            # here, and the next batch's epoch puts it in the same place.
+            ts = raw_ts + self._t_ms_epoch
             if self.first_ts is None:
                 self.first_ts = ts
             if self.run_first_ts is None:
@@ -553,9 +592,11 @@ class StreamStats:
         """Device-timestamp rate over the whole run. 0.0 until two arrive.
 
         The same ``(count - 1) / span`` rule as :attr:`device_rate`, over the
-        run's first and last timestamps instead of the window's. Note that
-        ``t_ms`` wraps at 32 bits (49.7 days); a run long enough to see that
-        would report a negative span here and is not what this is for.
+        run's first and last timestamps instead of the window's. The 32-bit
+        ``t_ms`` rollover at 49.7 days is unwrapped in :meth:`add` and does not
+        reach this: before it was, a wrap made this span negative and report
+        0.00/s -- the one figure the tooling exists to produce, zeroed on the
+        day it finally mattered.
 
         A device restart mid-run spans the discontinuity and makes this figure
         meaningless, which is why :attr:`restarts` is printed beside it rather
@@ -579,5 +620,6 @@ class StreamStats:
             f"gap max {self.total_max_gap_ms:7.1f} ms  "
             f"seq gaps {self.total_seq_gaps}  "
             f"seq wraps {self.seq_wraps}  "
+            f"t_ms wraps {self.t_ms_wraps}  "
             f"restarts {self.restarts}"
         )

@@ -77,9 +77,10 @@ void entry(void *, void *, void *)
 		codec::EnvSample sample = {};
 		sensor_value value;
 
-		/* Cycle counter, not k_uptime_get_32(): the whole point of the
-		 * measurement is to find out whether this read is expensive,
-		 * and a millisecond tick cannot tell 0 ms from 900 us.
+		/* Cycle counter, not the millisecond clock: the whole point of
+		 * the measurement is to find out whether this read is
+		 * expensive, and a millisecond tick cannot tell 0 ms from
+		 * 900 us.
 		 */
 		const uint32_t started = k_cycle_get_32();
 		const bool sht_ok = sensor_sample_fetch(sht) == 0;
@@ -126,12 +127,18 @@ void entry(void *, void *, void *)
 		 * not, and the host cannot tell. The SHT30's periodic-mode NACK
 		 * makes that a real event rather than a theoretical one (see
 		 * README.md, "the environmental read"). Drop the whole sample
-		 * instead: the host sees it as a gap in `seq`, which is what that
-		 * field is for. It is the same rule the IMU's stall clamp follows,
-		 * and it costs a good light reading on a cycle where the SHT30
-		 * failed -- which is the right trade against a silent zero.
+		 * instead. It is the same rule the IMU's stall clamp follows, and
+		 * it costs a good light reading on a cycle where the SHT30 failed
+		 * -- which is the right trade against a silent zero.
+		 *
+		 * streams::drop() rather than a bare `continue`: emit() is what
+		 * stamps `seq`, so returning here without it leaves the sequence
+		 * contiguous across the hole and the host cannot see the drop at
+		 * all. Measured on the board -- eleven seconds of dropped samples
+		 * with `seq gaps 0`.
 		 */
 		if (!temperature_ok || !humidity_ok || !light_ok) {
+			streams::drop(codec::kStreamEnv);
 			dropped++;
 			continue;
 		}
@@ -139,7 +146,7 @@ void entry(void *, void *, void *)
 		/* period_us is 0 for the unbatched streams: count is 1 and
 		 * there is nothing for the host to back-date.
 		 */
-		streams::emit(codec::kStreamEnv, k_uptime_get_32(), 0, 1, &sample, sizeof(sample));
+		streams::emit(codec::kStreamEnv, streams::now_ms(), 0, 1, &sample, sizeof(sample));
 	}
 }
 

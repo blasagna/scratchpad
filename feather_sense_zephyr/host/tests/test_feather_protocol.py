@@ -301,6 +301,57 @@ class Stats(unittest.TestCase):
         self.assertEqual(stats.seq_wraps, 1)
         self.assertEqual(stats.total_seq_gaps, 0)
 
+    def test_a_thirty_two_bit_t_ms_wrap_is_not_a_reboot(self) -> None:
+        """49.7 days in, `t_ms` rolls over and the board is fine.
+
+        Reached on hardware with `fs clock` rather than waited for, and it
+        found this: every stream reported a phantom restart and a device rate
+        of 0.00/s, because the run's span went negative. See ../README.md,
+        "the t_ms wrap, 49.7 days early".
+        """
+        stats = fp.StreamStats("imu")
+        stats.add(
+            make_batch(t_ms=fp.T_MS_WRAP - 37, seq=6450, period_us=4808, count=10)
+        )
+        stats.add(make_batch(t_ms=11, seq=6451, period_us=4808, count=10))
+
+        self.assertEqual(stats.restarts, 0)
+        self.assertEqual(stats.t_ms_wraps, 1)
+        self.assertEqual(stats.total_seq_gaps, 0)
+        # The whole point: the run's span stays positive and the rate stays
+        # real, where the raw field would have made it negative.
+        self.assertGreater(stats.total_device_rate, 200.0)
+        self.assertLess(stats.total_device_rate, 216.0)
+
+    def test_a_reboot_is_still_a_reboot_after_the_unwrap(self) -> None:
+        """A reboot goes back to near zero from an ordinary uptime.
+
+        A wrap goes back by nearly the whole 32-bit range. That difference is
+        the discriminator, and it has to keep working in both directions or
+        the unwrap has traded one misreading for another.
+        """
+        stats = fp.StreamStats("imu")
+        stats.add(make_batch(t_ms=3_000_000, seq=40000))
+        stats.add(make_batch(t_ms=12, seq=0))
+
+        self.assertEqual(stats.restarts, 1)
+        self.assertEqual(stats.t_ms_wraps, 0)
+
+    def test_a_batch_straddling_the_wrap_keeps_its_samples_in_order(self) -> None:
+        """The batch whose own samples cross the boundary needs no special case.
+
+        `timestamps_ms()` runs past 2**32 for its later samples, and the next
+        batch's epoch lands in the same place, so the timeline is continuous
+        through the join. `gap max` is what would show it if it were not.
+        """
+        stats = fp.StreamStats("imu")
+        stats.add(make_batch(t_ms=fp.T_MS_WRAP - 20, seq=1, period_us=4808, count=10))
+        stats.add(make_batch(t_ms=28, seq=2, period_us=4808, count=10))
+
+        self.assertEqual(stats.t_ms_wraps, 1)
+        # Every interval is one sample period; nothing jumped.
+        self.assertLess(stats.max_gap_ms, 10.0)
+
     def test_reset_starts_a_window_without_losing_continuity_or_totals(self) -> None:
         stats = fp.StreamStats("imu")
         stats.add(make_batch(seq=1, count=10))
