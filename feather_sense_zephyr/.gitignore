@@ -1,0 +1,9 @@
+# `build/` is covered by the repo root's .gitignore; these are not. The glob on
+# twister-out catches the numbered backups twister makes on a re-run
+# (twister-out.1, .2, ...), not just the current one.
+#
+# All three hold symlinks into ~/zephyrproject, which is why the root `fmt-c`
+# task takes its file list from `git ls-files` rather than from a `**` glob: a
+# glob that followed them would reformat the Zephyr installation in place.
+build_test/
+twister-out*/

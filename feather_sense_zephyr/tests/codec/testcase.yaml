@@ -1,0 +1,11 @@
+tests:
+  codec.batch_header:
+    platform_allow:
+      - native_sim
+    tags:
+      - codec
+  codec.cobs:
+    platform_allow:
+      - native_sim
+    tags:
+      - codec

@@ -1,0 +1,5 @@
+# Without this, dtc warns "compatible 'scratchpad,lsm6ds3trc' has unknown vendor
+# prefix 'scratchpad'" on every build. `scratchpad` is this repository, not a
+# real vendor -- the compatible is invented here because Zephyr has no driver
+# for either part this board has carried.
+scratchpad	scratchpad (this repository)
