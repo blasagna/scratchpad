@@ -53,7 +53,7 @@ and the stream seam stays two ordinary generic parameters. `Interrupted` gets a 
 arm and is retried: a bare `read(2)` surfaces `EINTR` where stdio restarts the read under
 `SA_RESTART`, the same arm `mini_shell/rust`'s `read_line` needs.
 
-**`--host` is the one that retires a rule.** The root [`CLAUDE.md`](../../CLAUDE.md) calls
+**`--host` is the one that retires a rule.** The root [`AGENTS.md`](../../AGENTS.md) calls
 a hand-written validator the last resort, for a rule no built-in can state, and `--host`
 is the C++ port's example of it — `CLI::ValidIPV4` splits on `.` and range-checks four
 numbers of its own parsing rather than asking the resolver. Rust's `Ipv4Addr` parser *is*
@@ -114,7 +114,7 @@ messages replaced.
 
 ## `--port` is `u16`, and that is the whole validator
 
-The root [`CLAUDE.md`](../../CLAUDE.md) rule is that a library check carries an option's
+The root [`AGENTS.md`](../../AGENTS.md) rule is that a library check carries an option's
 grammar wherever it can, and here the type alone does it. `u16`'s range is exactly
 0–65535, it reads base 10, it takes a leading `+`, and it turns down `abc`, `0x1F90`,
 `8_080`, `-1`, and `65536`. No `value_parser!(u16).range(..)`, and certainly no

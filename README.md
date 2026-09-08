@@ -4,7 +4,7 @@ A personal monorepo of small programs and exercises to practice programming. Exp
 
 ## Prerequisites
 
-`valgrind` (used via `bazel test --config=valgrind`, see the per-area CLAUDE.md files)
+`valgrind` (used via `bazel test --config=valgrind`, see the per-area AGENTS.md files)
 requires the system package `libc6-dbg`: `sudo apt install libc6-dbg` on
 Debian/Ubuntu. Without it, valgrind fails at startup ("a function redirection which is
 mandatory for this platform-tool combination cannot be set up") because the system's

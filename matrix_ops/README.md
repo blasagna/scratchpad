@@ -397,7 +397,7 @@ against one above:
   flat sampling at criterion's minimum sample size of 10.
 - **faer and nalgebra are both column-major**, where Eigen was pinned to
   row-major to match. Converting per element rather than reinterpreting the
-  buffer is what keeps this honest; see the note in `CLAUDE.md`.
+  buffer is what keeps this honest; see the note in `AGENTS.md`.
 
 **1024x1024 `mul`**, on the same Ryzen 7 9700X:
 

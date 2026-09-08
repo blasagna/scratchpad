@@ -85,7 +85,7 @@ prediction improved a lot); each README notes which and why.
 
 ## Conventions
 
-Standard repo rules apply (see the root [`CLAUDE.md`](../CLAUDE.md)): Bazel with
+Standard repo rules apply (see the root [`AGENTS.md`](../AGENTS.md)): Bazel with
 `-Wall -Werror -Wextra -pedantic` and `-std=c++20`, `cc_library` + `cc_test`
 (GoogleTest) + `cc_binary`. The one new third-party dependency is
 `google_benchmark`, declared in the root `MODULE.bazel` and used only by the

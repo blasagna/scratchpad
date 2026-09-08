@@ -125,7 +125,7 @@ page on every 200.
 
 ## `--port` is the library's, `--host` is not
 
-The root [`CLAUDE.md`](../../CLAUDE.md) rule is that a library check carries an option's
+The root [`AGENTS.md`](../../AGENTS.md) rule is that a library check carries an option's
 grammar wherever it can. So `--port` is bound to an `int` and checked with
 `CLI::Range(0, 65535)`, and the resulting difference from C's `strtol` is
 [recorded as a divergence](../README.md#known-divergences) rather than hand-rolled back

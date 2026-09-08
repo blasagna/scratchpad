@@ -65,7 +65,7 @@ first, because sources are grouped rather than interleaved.
 includes C99 `0x1p3`. `f64::from_str` rejects those. Hand-rolling hex-float
 parsing carries a rounding-correctness burden for a syntax nobody types into a
 matrix, so this port rejects them and says so. This is the question
-[`../CLAUDE.md`](../CLAUDE.md) left open for "the Rust port": use
+[`../AGENTS.md`](../AGENTS.md) left open for "the Rust port": use
 `parse::<f64>()` with an `is_finite()` guard, which lands every other case right
 — `+3`, `.5`, `4.`, `1e-400` → `0`, and `1e400`/`inf`/`nan` rejected.
 

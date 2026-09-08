@@ -333,7 +333,7 @@ numpy and pyarrow appear only in the examples, and a test enforces that by walki
 core's imports.
 
 Everything the list above asks for is covered by a demo *and* a test — see the
-checklist table in [`../dfg/CLAUDE.md`](CLAUDE.md) for which is which. Three further
+checklist table in [`../dfg/AGENTS.md`](AGENTS.md) for which is which. Three further
 examples exercise the payload types this document names: `pixi run audio` (numpy
 blocks, several windows out of one firing, a bounded edge dropping), `pixi run video`
 (uint8 frames, decimation, and the 200 Hz-against-30 fps alignment done by an ordinary
