@@ -31,9 +31,9 @@ the script splits its cases by who reports the outcome. `run_case` compares
 stdout and the exit status, and covers every happy path plus every error the
 *program* reports (exit 2 or 1). `run_case_parser_error` covers the ones the
 *parser* reports and asserts only that both ports reject the command line;
-`run_case_status_only` covers `--help`. Stderr is not compared at all any more.
+`run_case_status_only` covers `--help`. Stderr is not compared at all.
 
-**The Rust port is still not in the script**, for a reason that has nothing to
+**The Rust port is not in the script**, for a reason that has nothing to
 do with wording: its dimensions pair with operands by index rather than by the
 order typed, so it disagrees on command lines both other ports accept — and this
 script can only assert agreement. Its surface is pinned by
@@ -60,14 +60,14 @@ script can only assert agreement. Its surface is pinned by
   hand-checked `-?[0-9]+`.
 
   **Both ports use `strtod`, and the C++ one deliberately does not use
-  `std::from_chars`** — reversing what this file originally predicted. For
+  `std::from_chars`**. For
   `double`, `from_chars` rejects a leading `+` (the contract accepts `+3`) and
   reports `result_out_of_range` for underflow as well as overflow, so it cannot
   accept `1e-400` while refusing `1e400` the way the contract requires. The
   reasoning is written up in [`cpp/README.md`](cpp/README.md).
 
-  **The Rust port answers the question this bullet used to leave open**: it uses
-  `parse::<f64>()` with an `is_finite()` guard. That lands every case right —
+  **The Rust port uses `parse::<f64>()` with an `is_finite()` guard.** That lands
+  every case right —
   `+3`, `.5`, `4.`, `1e-400` → `0`, and `1e400`/`inf`/`nan` rejected — except
   hex floats, which `strtod` accepts and `f64::from_str` does not. Rejecting
   them is the one documented gap in the shared number set; hand-rolling hex
@@ -86,13 +86,13 @@ script can only assert agreement. Its surface is pinned by
   under `bazel run`. The C++ port hands the whole job to CLI11 and takes CLI11's
   wording and CLI11's exit codes (109 for an unknown option, 114 for a missing
   value, 105 for a rejected value). Do not try to reconcile the two; the parity
-  script no longer compares stderr, and `--help=x` is a live divergence — the C
+  script does not compare stderr, and `--help=x` is a live divergence — the C
   port rejects it, CLI11 reads it as a request for help and exits 0.
 
-  **Which command lines are accepted is no longer fully shared either**, since
-  the C++ port now takes CLI11's number grammar as well as its diagnostics — see
-  the next bullet. `run_case_parser_error` still catches a divergence in every
-  spelling outside that grammar, and a divergence there is still a real bug.
+  **Which command lines are accepted is not fully shared either**, since
+  the C++ port takes CLI11's number grammar as well as its diagnostics — see
+  the next bullet. `run_case_parser_error` catches a divergence in every
+  spelling outside that grammar, and a divergence there is a real bug.
 - **The integer options accept `+?[0-9]+` in C and Rust, and whatever CLI11
   accepts in C++.** This is the one part of the contract the ports do not share,
   and it is deliberate: `--rows`, `--cols`, `--precision`, and `--scalar` are
@@ -104,9 +104,8 @@ script can only assert agreement. Its surface is pinned by
   [`README.md`](README.md#known-divergence-argument-parsers).
 
   **`check_parity.sh` cannot hold this line, so do not expect it to.** The
-  script only asserts that the ports agree; the cases that used to pin the
-  strict spelling (`err_spaced_rows`, `err_spaced_precision`) are gone, and what
-  is left are the spellings both still reject — `++2`, `2.5` for a dimension,
+  script only asserts that the ports agree, so its cases are the spellings both
+  reject — `++2`, `2.5` for a dimension,
   `0`, past `INT_MAX`, precision over `1100`.
 
   **NaN is the exception, and it is checked by hand in `run()`.** No CLI11
@@ -183,9 +182,9 @@ script can only assert agreement. Its surface is pinned by
   its absence fails silently.** Without it xtensor-blas skips its `cblas_dgemm`
   overloads and uses a generic C++ gemm that is ~50x slower — while still
   producing correct results, and while `ldd` still shows `libopenblas.so`
-  because it is linked but never called. `bench/run.sh` now hard-fails if the
+  because it is linked but never called. `bench/run.sh` hard-fails if the
   binary references no `cblas_*` symbols; do not relax that check into an `ldd`
-  grep, which is what originally reported a confident green on a wrong number.
+  grep, which reports a confident green on a wrong number.
 
 - **A benchmark against OpenBLAS decides on `-march`, not on the libraries.**
   OpenBLAS picks an AVX-512 kernel at runtime via CPUID whatever we compile

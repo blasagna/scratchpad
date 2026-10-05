@@ -38,9 +38,8 @@ target's SWD header, and the target powered — see `README.md`.
 - **The bug in `src/main.rs` is deliberate**: `index` increments without
   wrapping, so `history[index]` panics with an out-of-bounds access after
   `HISTORY_LEN` samples. That's the point — see `README.md` for the intended
-  debugging exercises before "fixing" it. **Do not "fix" it.** It has been
-  fixed by mistake once (commit `3e48f14`), which silently broke the whole
-  exercise while four doc sites went on promising a panic. If it ever is
+  debugging exercises before "fixing" it. **Do not "fix" it.** A fix silently
+  breaks the whole exercise while the docs go on promising a panic. If it ever is
   fixed on purpose, `README.md`'s step 1 and step 2.4, the comment above the
   line, the `HISTORY_LEN` doc comment, and this bullet all have to change
   with it.

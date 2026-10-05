@@ -21,7 +21,7 @@ worth naming out loud rather than paying by reflex.
 bazel test //cpp_rust_bindings/...            # the logic lives here (31 cases)
 bazel run -- //cpp_rust_bindings/cpp:exprkit_cli '2 ^ 10'
 
-cargo test -p exprkit                         # the seam (33 tests, incl. doctests)
+cargo test -p exprkit                         # the seam (unit, CLI, and doctests)
 cargo run -q -p exprkit -- '2 ^ 10'
 ```
 
@@ -71,9 +71,9 @@ cargo run -q -p exprkit -- '2 ^ 10'
   two about a dash followed by a non-digit. Both agree once `--` is used, which
   is the spelling to prefer in docs and examples.
 - **Each CLI takes exactly one expression, and lets its parser do the parsing.**
-  Both did accept a list, with a hand-written `split_options` pre-scan on each
-  side deciding what counted as an option. One quoted argument removed the need
-  for both. An expression beginning with `-` is written after `--`.
+  Accepting a list would need a hand-written pre-scan on each side to decide what
+  counts as an option; one quoted argument needs none. An expression beginning
+  with `-` is written after `--`.
 - **Neither declares a `-h` alias; only `--help`.** Both parsers classify
   `-<non-digit>` as a short option, so with `-h` declared, `exprkit '-h + 1'`
   matched the help flag and printed help with **exit 0** — a wrong answer that

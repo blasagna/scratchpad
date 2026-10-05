@@ -89,7 +89,7 @@ established on a real board.
   declares `clock-frequency = <64000000>` on `&{/cpus/cpu@0}` (path syntax — the
   node has no label), giving 44/38/22/51. Check with
   `grep CONFIG_DELAY_T build/zephyr/.config`. The pin (`P0.16`) and the GRB
-  `color-mapping` were both right all along, and are now confirmed.
+  `color-mapping` are confirmed correct.
 
 - **`fs led <r> <g> <b>` is the only way to diagnose the pixel.** A NeoPixel has
   no readback, so a timing fault, a channel-order fault and a wrong pin are
@@ -105,8 +105,7 @@ established on a real board.
   NeoPixel, since the board's two plain LEDs are red and blue and cannot express
   three battery bands.
 
-- **The battery divider *does* need an overlay** *(measured)*, contrary to what
-  the design document originally said. The board DTS declares the `vbatt`
+- **The battery divider *does* need an overlay** *(measured)*. The board DTS declares the `vbatt`
   `voltage-divider` node but no `channel@5` under `&adc`, and without one every
   reading is **0 mV with no error** — `adc_channel_setup_dt()` configures
   nothing, and `adc_raw_to_millivolts_dt()` multiplies by a `DT_PROP_OR(..., 0)`
@@ -186,8 +185,7 @@ established on a real board.
   wrong once. Relatedly, `SENSOR_CHAN_LIGHT` on the APDS9960 is the **raw clear
   channel count**, not lux (`drivers/sensor/apds9960/apds9960.c:275`).
 
-- **The magnetometer's wire unit is deci-µT** *(measured)*. Centi-µT — which the
-  design originally specified — puts the LIS3MDL's own ±400 µT full scale at
+- **The magnetometer's wire unit is deci-µT** *(measured)*. Centi-µT would put the LIS3MDL's own ±400 µT full scale at
   ±40000, past an `int16`, so the *wire* clips before the sensor does. Deci-µT
   costs nothing real: the 0.1 µT step is below the part's ~0.32 µT RMS noise,
   and Earth's field still gets ~480 counts.
@@ -236,9 +234,8 @@ established on a real board.
   compiles `src/codec.cpp` with the host compiler — it is Zephyr-header-free so
   that `native_sim` can build it, and that property is reused here — and
   requires the Python to reproduce its bytes *and* the values behind them.
-  Signedness used to be its blind spot, because the `Sample` structs lived in
-  `src/env.cpp` and its siblings behind Zephyr headers; they are in `codec.hpp`
-  now, so `gen_vectors.cpp` builds field vectors through the firmware's own
+  Signedness is covered because the `Sample` structs live in `codec.hpp`, outside
+  any Zephyr header, so `gen_vectors.cpp` builds field vectors through the firmware's own
   structs and both directions fail *(verified by mutation)* — env's `"<hHH"` to
   `"<hhH"` on the host, and `EnvSample::light_level` to `int16_t` on the
   firmware, the latter as a narrowing error that stops the generator compiling.
@@ -293,16 +290,11 @@ established on a real board.
 
 - **Do not restate an unverified hardware fact as known.** README keeps three
   lists — settled by running it, live limitations, still unverified — and that
-  separation is the document's main value. All three interrupt-routing
-  questions are now settled (INT1 is `P1.11`, the APDS9960's INT is `P1.00`, the
-  LIS3MDL's DRDY and INT go nowhere), and so is the 16-bit `seq` wrap. The
-  battery has now been run down over 37 h and the LED *has* been seen to change
-  band, both directions. The unverified list is now down to the deliberately
-  out-of-scope sensors (BMP280, PDM mic) and the `dfg` integration: the two
-  sample-drop paths, the stall clamp and the `t_ms` wrap have all been run.
+  separation is the document's main value. Check README's "still unverified"
+  list before calling anything settled — a fact's status lives there, not here.
 
 - **A producer-side drop must call `streams::drop()`, or it is invisible**
-  *(measured — and this document and README both claimed the opposite)*.
+  *(measured)*.
   `emit()` is what stamps `seq`, so a batch dropped before it gets there
   consumes no sequence number and the host sees a contiguous stream across the
   hole. Eleven seconds of dropped env samples read as `seq gaps 0`. `drop()`
@@ -333,7 +325,7 @@ established on a real board.
   will do it.**
 
 - **`StreamStats` unwraps `t_ms`; it does not treat a rollover as a reboot**
-  *(measured)*. It used to, and every stream then reported `restarts 1` and
+  *(measured)*. Treating one as a reboot makes every stream report `restarts 1` and
   `dev 0.00/s` for the whole run — the only figure the tooling exists to
   produce. A wrap steps back by nearly 2³²; a reboot steps back to near zero
   from an ordinary uptime, and 2³¹ (24.9 days) is the divider. `t_ms wraps` is
@@ -346,7 +338,7 @@ established on a real board.
   sends `seq` backwards**, so a lone wrap count proves nothing by itself; what
   makes it a measurement is that the IMU was the only stream whose batch count
   passed 65 536 and the only one reporting a wrap, where a reboot would have
-  restarted all four at once. `StreamStats` now separates the two by watching
+  restarted all four at once. `StreamStats` separates the two by watching
   `t_ms`, which a wrap leaves running. And **1 125 800 / 112 580 is exactly
   10.0**, so the INT1 watermark held for every batch over 90 minutes, not just
   the 1251 batches that first established it. What the run could not reach —

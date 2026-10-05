@@ -55,10 +55,10 @@ symlinks that lead out of the repo — the west areas' `build/` directories
 (`microbit_v2_zephyr/build/`, `rpi_pico_zephyr_debug/build/`, and
 `feather_sense_zephyr/build/`) link to the Zephyr installation, and a glob that follows them reformats it in place.
 
-`pixi run lint-c` runs cppcheck over the 7 Bazel C/C++ areas. Memory checking for a
-given area is `bazel test <targets> --config=valgrind` (needs the system package
-`libc6-dbg`, see [`README.md`](README.md)) or `--config=asan` for a faster
-alternative; see the per-area `AGENTS.md` for exact invocations.
+`pixi run lint-c` runs cppcheck over the Bazel C/C++ areas except
+`memory_optimization`. Memory checking for a given area is `bazel test <targets>
+--config=valgrind` (needs the system package `libc6-dbg`, see
+[`README.md`](README.md)) or `--config=asan` for a faster alternative; see the per-area `AGENTS.md` for exact invocations.
 
 ## Repo-wide conventions
 
@@ -159,14 +159,16 @@ root environment, `dfg/python` type-checks with its own `pixi run type` rather t
 through the root `type-py` — the same arrangement `rust_python_bindings` uses. It is
 also the only area with a `pyrefly.toml`: without a config pyrefly runs its `basic`
 preset, which is lenient enough to miss `x: int = "s"`, and `dfg/python` opts into
-`default` instead. The other areas still run at `basic`.
+`default` there. The root `type-py` and both west areas' `host/` environments reach
+the same preset with `-p default` on the command line; only `rust_python_bindings`
+runs at `basic`.
 
-`microbit_v2_zephyr/host/` is the third area with its own environment, for the same
-reason: it needs bleak to talk to the board over BLE and rerun-sdk to plot what it hears,
-and the root environment holds only dev tools. Its `pixi run type` passes `-p default` on
-the command line rather than adding a `pyrefly.toml`. Both of its programs are plain
-scripts rather than a package, and the second one imports the first directly — the wire
-format is defined once, in `ble_stream.py`.
+`microbit_v2_zephyr/host/` and `feather_sense_zephyr/host/` have their own environments
+for the same reason: they need bleak to talk to the board over BLE and rerun-sdk to plot
+what it hears, and the root environment holds only dev tools. Their `pixi run type`
+passes `-p default` on the command line rather than adding a `pyrefly.toml`. Their
+programs are plain scripts rather than a package, and each area defines its wire format
+once on the host — `ble_stream.py` and `feather_protocol.py` — for the others to import.
 
 **New Rust crates** use the 2024 edition (`edition = "2024"`) and are added to the
 `members` list in the root `Cargo.toml` — unless, like `rpi_pico_rust_debug/`, the

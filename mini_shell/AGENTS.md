@@ -149,27 +149,25 @@ still come back clean. See the buffering bullet below.
 - **Out of memory reports the same line and the same exit code in C and C++**, by
   different routes: C gets a `getline` failure or a failed `malloc` of the argv array
   and returns `SHELL_ERR_NOMEM`, C++ catches `std::bad_alloc` around the loop in `main`. **The Rust port aborts instead**,
-  which this file used to call a divergence in advance and now records as one: Rust's
-  allocator aborts before any `try_reserve` dance could see it, and the same call is
-  already made and documented in `matrix_ops/rust`. It is in the divergence table in
+  a recorded divergence: Rust's allocator aborts before any `try_reserve` dance could
+  see it, the same call `matrix_ops/rust` makes and documents. It is in the divergence table in
   [`README.md`](README.md#known-divergences); `ShellError` accordingly has two
   variants where C's `ShellResult` has four, since `Read::read` also separates end of
   input from a read error in the type where `getline` needs `ferror`/`feof` to.
 - **`exit` is the only builtin**, matched as the bare word after trimming ASCII
   whitespace. `EXIT`, `exitx`, and `exit 3` are looked up as programs like anything
-  else, and none of them is one, so all three now report "command not found". **`cd` is
-  deliberately absent** and reports the same way — it would not have worked before
-  either, since every command was a fresh process, but it now says so rather than
-  appearing to do nothing. One builtin invites the rest of them.
+  else, and none of them is one, so all three report "command not found". **`cd` is
+  deliberately absent** and reports the same way — it could not work anyway, since
+  every command runs in a fresh process, and saying so beats appearing to do nothing. One builtin invites the rest of them.
 - **A line containing a NUL is refused, not truncated.** `execvp` takes NUL-terminated
   strings, so running `echo a\0rm -rf /` would run `echo a` and silently drop the rest.
   This is the one place the port is not byte-transparent, unlike `simple_logger`, and
   the `execvp` signature is the reason — the same reason `system()` gave before it.
 - **End of input writes one closing newline; `exit` does not.** The prompt just written
   is the last thing on its line, so Ctrl-D leaves the cursor somewhere sane.
-- **Status 127 is not special-cased**, and there is no longer anything special about
-  it: the interpreter that used to exit 127 for a missing command is gone, and
-  mini_shell reports a missing program itself, before any wait status exists. A command
+- **Status 127 is not special-cased**: no interpreter sits between mini_shell and the
+  command, and mini_shell reports a missing program itself, before any wait status
+  exists. A command
   that exits 127 chose to.
 
 ## Gotchas
@@ -209,11 +207,9 @@ still come back clean. See the buffering bullet below.
   an unreadable stdin as a clean end of input. `main.cpp` checks `std::ferror(stdin)`
   afterwards to recover it — the same fixup, for the same reason, as
   `simple_logger/cpp/main.cpp`. Deleting it makes the program exit 0 on a failed read.
-- **`SIGINT` is no longer a divergence, because nothing blocks it any more.** `system()`
-  was required by POSIX to set `SIGINT`/`SIGQUIT` to `SIG_IGN` in the caller while the
-  command ran, so Ctrl-C at a terminal used to kill only the child in C and C++ while
-  the Rust port died with it. With `fork` + `exec` no port does that, so all three now
-  die together. Restoring it properly means `signal(2)` in the parent, which in Rust
+- **Ctrl-C kills the shell along with the command, in all three ports.** No port
+  ignores `SIGINT`/`SIGQUIT` in the parent while a command runs, as `system()` would.
+  Doing that properly means `signal(2)` in the parent, which in Rust
   means a `libc` dependency and an `unsafe` block, and the ports here take only `clap`.
   Interactive-only, so nothing in `check_parity.sh` or any suite will tell you about it.
 - **`execvp` still reaches `/bin/sh` in exactly one case, and Rust does not.** POSIX

@@ -32,7 +32,7 @@ Afterward:
 
 - **Review the git diff** — the outputs are committed and are the parity contract.
 - The alternate config (`ALT_FLAGS` in `regenerate.sh`) must stay in sync with
-  `kAltConfig` / `ALT_CONFIG` in the three golden tests (`//text_analyzer/{c,cpp}:test_golden`
+  `alt_config()` in the three golden tests (`//text_analyzer/{c,cpp}:test_golden`
   and `rust/tests/golden.rs`). If you change one, change all.
 
 > Note: the steps above are copied from the `regenerate.sh` and `make_inputs.sh`
