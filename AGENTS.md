@@ -62,6 +62,20 @@ symlinks that lead out of the repo — the west areas' `build/` directories
 
 ## Repo-wide conventions
 
+**Documentation uses ASD-STE100 Simplified Technical English** as its writing
+standard. This applies to the prose in every `README.md`, `AGENTS.md` and
+`SKILL.md` file. The rules to check first:
+
+- Put no more than 20 words in a procedural sentence and 25 in a descriptive one.
+- Put no more than six sentences in a paragraph, and one topic in each.
+- Write one instruction in each sentence. Use the imperative for procedures.
+- Use the active voice. Do not use `-ing` verb forms.
+- Do not make noun clusters of more than three words.
+
+Code, commands, identifiers, file paths and quoted output are exempt. Most
+existing docs do not comply yet. Bring a paragraph into line with the
+standard when you change it.
+
 **Bazel builds are strict by default** (`.bazelrc`): `-Wall -Werror -Wextra
 -pedantic`, and C++ compiles with `-std=c++20`. During iteration, opt out with
 `--config=permissive` (warnings still shown, not fatal). The default build is
