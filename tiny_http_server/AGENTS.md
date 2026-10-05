@@ -35,7 +35,7 @@ printf 'GET / HTTP/1.1\r\n\r\n' | nc 127.0.0.1 8080
 
 **`check_parity.sh` compares the response bytes, the log, and the exit status**, and the
 whole of the contract agrees today — the only recorded divergences are the argument
-parsers' and two things Rust's standard library will not say. Three things about its
+parsers' and two things Rust's standard library will not say. Four things about its
 shape are load-bearing:
 
 - **It uses `--port 0` and `--once`, which is most of why those options exist.** A fixed
@@ -49,7 +49,7 @@ shape are load-bearing:
   request, so a case the server does not answer (a client that sends nothing, one that
   hangs up mid-header) would leave the server running until the script's timeout. Those
   live in the unit suites instead.
-- **Two checks there are absolute, not comparisons**, because both ports could regress
+- **Two checks there are absolute, not comparisons**, because every port could regress
   together and every diff would still be clean: `check_drain` requires the `405` to
   survive a request with an unread body, and `check_ephemeral_port` requires `--port 0` to
   report a port it really bound.

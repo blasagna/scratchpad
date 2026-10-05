@@ -52,8 +52,8 @@ cargo test -p simple_logger
 - **Options permute**: `simple_logger log.txt --level error msg` works everywhere.
   Every port gets this from its parser — `getopt_long` in C, CLI11 in C++, clap
   in Rust — and `--` ends option parsing in all three. Attached values
-  (`--level=error`, `-lerror`) now work everywhere too; abbreviated long options
-  still only work in C. See the divergences below.
+  (`--level=error`, `-lerror`) work everywhere too; abbreviated long options
+  work only in C. See the divergences below.
 - **stdin**: one entry per line; strip one `\n` then one `\r`; a blank line is an empty
   entry; a final line without a newline still logs; empty stdin writes nothing but
   still creates the file.
@@ -62,7 +62,7 @@ cargo test -p simple_logger
   rather than NUL-terminated strings. The exception is **argv in the Rust port**,
   which clap requires to be UTF-8 (exit 2); C and C++ pass those bytes through.
 - **The ports do not agree on every argument spelling.** A repeated option and
-  abbreviated long options still behave differently in at least one port, and
+  abbreviated long options behave differently in at least one port, and
   `check_parity.sh` does not cover either — see the **Known divergences** table
   in [`README.md`](README.md). The intersection is the supported surface: plain
   `--option value`, given once. Do not add a shared-behavior claim about argument

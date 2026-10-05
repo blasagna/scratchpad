@@ -56,14 +56,14 @@ cd text_analyzer/rust && cargo test     # Rust unit + golden + property tests
 ./text_analyzer/bench/run.sh --check    # direct three-way byte-parity diff, text and JSON
 ```
 
-## Testing layout (folded in here)
+## Testing layout
 
 - **Golden tests.** `testdata/` holds 13 hand-reviewed edge cases, each with expected
   text and JSON under two configs (defaults and a fixed alternate `top_n=3,
   max_word_len=5`). Bazel can't build the Cargo binary, so rather than shelling out,
   **each port diffs its own rendering against the same committed goldens**
   (`//text_analyzer/{c,cpp}:test_golden`, `rust/tests/golden.rs`), enforcing parity
-  transitively. The alternate config is duplicated as `kAltConfig`/`ALT_CONFIG` in the
+  transitively. The alternate config is duplicated as `alt_config()` in the
   three golden tests and `ALT_FLAGS` in `regenerate.sh` — keep them in sync.
 - **Property tests** live in `rust/tests/property.rs` (proptest over the public API:
   chunk invariance, stat consistency, bounded/sorted rankings, JSON always parses, …).
