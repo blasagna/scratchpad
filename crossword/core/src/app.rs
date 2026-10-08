@@ -234,6 +234,8 @@ pub struct App {
     pub show_help: bool,
     /// How far the help overlay is scrolled.
     pub help_scroll: u16,
+    /// How far the help can scroll, as the frontend last reported it.
+    help_max_scroll: u16,
     pub should_quit: bool,
     /// The puzzle being downloaded, while a download is in flight.
     pub loading: Option<PuzzleRef>,
@@ -258,6 +260,7 @@ impl App {
             message: None,
             show_help: false,
             help_scroll: 0,
+            help_max_scroll: crate::help::line_count(),
             should_quit: false,
             loading: None,
             store,
@@ -288,7 +291,7 @@ impl App {
             // j and k scroll the help; any other key closes it.
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
-                    self.help_scroll = (self.help_scroll + 1).min(crate::help::line_count())
+                    self.help_scroll = (self.help_scroll + 1).min(self.help_max_scroll)
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
                     self.help_scroll = self.help_scroll.saturating_sub(1)
@@ -387,6 +390,14 @@ impl App {
     pub fn open_help(&mut self) {
         self.show_help = true;
         self.help_scroll = 0;
+    }
+
+    /// Sets how far the help can scroll. That depends on how much of it the
+    /// frontend shows at once, so the frontend reports it after each draw.
+    /// `j` then stops where the view stops, and `k` scrolls back at once.
+    pub fn set_help_max_scroll(&mut self, max: u16) {
+        self.help_max_scroll = max;
+        self.help_scroll = self.help_scroll.min(max);
     }
 
     /// Saves progress, then asks the event loop to exit.
@@ -576,7 +587,7 @@ impl App {
     fn leave_puzzle(&mut self, now: Instant) {
         self.save(now);
         if let Some(solve) = self.solve.take() {
-            let status = status_of(&solve.game);
+            let status = solve.game.progress(now).status();
             let item = self.browse.as_mut().and_then(|b| {
                 b.tabs
                     .iter_mut()
@@ -659,16 +670,6 @@ fn chorded(key: Key) -> bool {
 
 fn solved_hint() -> Message {
     Message::success("This puzzle is solved. :reset starts over.")
-}
-
-fn status_of(game: &Game) -> Status {
-    if game.is_solved() {
-        Status::Solved
-    } else if (0..game.puzzle().len()).any(|c| !game.letter(c).is_empty()) {
-        Status::Started
-    } else {
-        Status::New
-    }
 }
 
 /// `m:ss`, or `h:mm:ss` from an hour on.
@@ -1027,10 +1028,12 @@ fn run_command(s: &mut Solve, command: &str, now: Instant) -> Outcome {
                 )));
                 return out;
             };
+            // A check or a reveal is not an undo step: undo must not unlock
+            // the squares it locks.
             match name {
                 "check" => {
-                    let mut report = Default::default();
-                    out.changed = edit(g, |g| report = g.check(scope));
+                    let report = g.check(scope);
+                    out.changed = report.checked > 0;
                     out.message = Some(match report {
                         crate::game::CheckReport { checked: 0, .. } => {
                             Message::info("There are no letters to check there.")
@@ -1044,8 +1047,8 @@ fn run_command(s: &mut Solve, command: &str, now: Instant) -> Outcome {
                     });
                 }
                 "reveal" => {
-                    let mut revealed = 0;
-                    out.changed = edit(g, |g| revealed = g.reveal(scope));
+                    let revealed = g.reveal(scope);
+                    out.changed = true;
                     out.message = Some(Message::info(match revealed {
                         0 => "Nothing to reveal there.".to_string(),
                         1 => "Revealed 1 square.".to_string(),
@@ -1320,6 +1323,18 @@ mod tests {
     }
 
     #[test]
+    fn undo_does_not_take_back_a_reveal() {
+        let mut app = solving();
+        keys(&mut app, "ic⎋:reveal word⏎");
+        assert_eq!(grid(&app), "CAT...#..");
+        keys(&mut app, "u");
+        assert_eq!(grid(&app), "CAT...#..");
+        assert_eq!(solve(&app).game.mark(1), Mark::Revealed);
+        keys(&mut app, "u");
+        assert!(app.message.as_ref().unwrap().text.contains("oldest"));
+    }
+
+    #[test]
     fn backspace_on_an_empty_command_line_cancels_it() {
         let mut app = solving();
         keys(&mut app, ":⌫");
@@ -1461,6 +1476,17 @@ mod tests {
         keys(&mut app, "l");
         assert!(!app.show_help);
         assert_eq!(solve(&app).game.cursor(), 0); // the key only closed help
+    }
+
+    #[test]
+    fn help_stops_scrolling_where_the_frontend_says() {
+        let mut app = solving();
+        app.set_help_max_scroll(3);
+        keys(&mut app, "?jjjjjjk");
+        assert_eq!(app.help_scroll, 2);
+        // A taller view scrolls less, and pulls the scroll back with it.
+        app.set_help_max_scroll(1);
+        assert_eq!(app.help_scroll, 1);
     }
 
     #[test]

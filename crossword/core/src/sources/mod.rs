@@ -16,6 +16,7 @@ pub mod nyt;
 pub mod princetonian;
 pub mod universal;
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use chrono::{Days, NaiveDate};
@@ -402,13 +403,15 @@ pub(crate) struct PlacedAnswer {
 /// Lays placed answers onto a grid. Squares no answer covers are blocks.
 /// `size` is the grid size when the source states it. Otherwise the size is
 /// the extent of the answers. With `lowercase_circles`, a lowercase letter
-/// marks a circled square.
+/// marks a circled square. An empty answer covers no square, so it is
+/// dropped with its clue.
 pub(crate) fn grid_from_answers(
     meta: Meta,
     size: Option<(usize, usize)>,
     answers: &[PlacedAnswer],
     lowercase_circles: bool,
 ) -> Result<PuzzleData, SourceError> {
+    let answers: Vec<&PlacedAnswer> = answers.iter().filter(|a| !a.answer.is_empty()).collect();
     let end = |a: &PlacedAnswer| {
         let len = a.answer.chars().count();
         match a.direction {
@@ -419,7 +422,7 @@ pub(crate) fn grid_from_answers(
     let (width, height) = size.unwrap_or_else(|| {
         answers
             .iter()
-            .map(end)
+            .map(|a| end(a))
             .fold((0, 0), |(w, h), (x, y)| (w.max(x), h.max(y)))
     });
     if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE {
@@ -430,7 +433,7 @@ pub(crate) fn grid_from_answers(
 
     let mut grid: Vec<Option<String>> = vec![None; width * height];
     let mut circled = Vec::new();
-    for a in answers {
+    for &a in &answers {
         let (x_end, y_end) = end(a);
         if x_end > width || y_end > height {
             return Err(SourceError::Parse(format!(
@@ -467,6 +470,7 @@ pub(crate) fn grid_from_answers(
         height,
         grid,
         circled,
+        alternates: BTreeMap::new(),
         clues,
     })
 }
@@ -513,6 +517,23 @@ mod tests {
         assert_eq!(clean_text("<-- Look left"), "<-- Look left");
         assert_eq!(clean_text("a < b > c"), "a < b > c");
         assert_eq!(clean_text("  two\n lines "), "two lines");
+    }
+
+    #[test]
+    fn empty_answers_place_nothing() {
+        let across = |x, answer: &str| PlacedAnswer {
+            x,
+            y: 0,
+            direction: Direction::Across,
+            answer: answer.into(),
+            clue: "Clue".into(),
+        };
+        // The empty answer sits just past the grid's right edge.
+        let answers = [across(0, "AB"), across(2, "")];
+        let data = grid_from_answers(Meta::default(), None, &answers, false).unwrap();
+        assert_eq!((data.width, data.height), (2, 1));
+        assert_eq!(data.clues.len(), 1);
+        assert!(grid_from_answers(Meta::default(), None, &answers[1..], false).is_err());
     }
 
     #[test]

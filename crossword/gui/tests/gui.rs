@@ -72,6 +72,7 @@ fn small_data() -> PuzzleData {
         meta: Meta {
             title: "Tiny Test".into(),
             author: "Ada Lovelace".into(),
+            editor: String::new(),
             copyright: String::new(),
             date: Some("2026-10-08".into()),
         },
@@ -82,6 +83,7 @@ fn small_data() -> PuzzleData {
             .map(|c| (c != '#').then(|| c.to_string()))
             .collect(),
         circled: vec![8],
+        alternates: Default::default(),
         clues: vec![
             clue(Direction::Across, 1, "Feline"),
             clue(Direction::Across, 4, "Exist"),

@@ -99,6 +99,7 @@ pub fn parse_puzzle(meta: &str, clues: &str, authors: &str) -> Result<PuzzleData
     let meta = Meta {
         title: listed.title.unwrap_or_default(),
         author: join_names(&names),
+        editor: String::new(),
         copyright: "The Daily Princetonian".into(),
         date: date_prefix(&listed.date).map(|d| d.to_string()),
     };

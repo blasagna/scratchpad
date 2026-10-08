@@ -43,6 +43,10 @@ cargo test -p crossword_core --test live -- --ignored   # needs the network
   one worker thread. The GUI runs each request on a thread of its own and
   awaits the answer, so the iced executor never blocks. `App` sends
   `Request`s and receives `Response`s, so tests answer by hand.
+- **A panic in a fetch must not stop the TUI.** The worker thread catches
+  it and sends `Request::failed`. The panic hook restores the terminal, so
+  it ignores the thread named `fetch`. Without this, one bad puzzle leaves
+  the terminal broken and every later request on "Loading…".
 - **Alt+key in insert mode is Esc and then the key.** Terminals send Alt
   chords as an Esc prefix, and a fast Esc and key arrive the same way. Without
   this rule, `Esc` and `q` sent together type a `Q`.

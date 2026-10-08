@@ -228,8 +228,8 @@ fn solve_view<'a>(app: &'a App, solve: &'a Solve, now: Instant) -> Element<'a, M
     if !meta.title.is_empty() {
         details.push(meta.title.clone());
     }
-    if !meta.author.is_empty() {
-        details.push(format!("by {}", meta.author));
+    if let Some(byline) = meta.byline() {
+        details.push(byline);
     }
     let clock = format_duration(game.elapsed(now));
     let clock = if game.is_solved() {

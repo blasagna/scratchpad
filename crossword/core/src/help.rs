@@ -69,7 +69,8 @@ pub const LISTS: Section = Section {
 pub const COLUMNS: [&[Section]; 2] = [&[NORMAL, INSERT], &[COMMANDS, LISTS]];
 
 /// Lines in the help as one column: each section's title, its rows and a
-/// blank line. This bounds how far the help can scroll.
+/// blank line. This bounds how far the help can scroll until a frontend
+/// reports the limit of its own view.
 pub fn line_count() -> u16 {
     COLUMNS
         .iter()

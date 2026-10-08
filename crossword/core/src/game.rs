@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::puzzle::{Direction, Puzzle, answer_matches};
+use crate::puzzle::{Direction, Puzzle};
+use crate::store::Status;
 
 /// The most undo steps kept.
 const UNDO_LIMIT: usize = 500;
@@ -50,6 +51,20 @@ pub struct Progress {
     pub direction: Direction,
     pub elapsed_secs: u64,
     pub solved: bool,
+}
+
+impl Progress {
+    /// How far the player has got: solved, or started once any square
+    /// holds a letter.
+    pub fn status(&self) -> Status {
+        if self.solved {
+            Status::Solved
+        } else if self.fill.iter().any(|f| !f.is_empty()) {
+            Status::Started
+        } else {
+            Status::New
+        }
+    }
 }
 
 /// What a check found, for the status line.
@@ -105,7 +120,9 @@ impl Game {
     }
 
     /// Resumes saved progress. Progress that does not fit this grid — say,
-    /// from a puzzle the publisher has since corrected — is discarded.
+    /// from a puzzle the publisher has since corrected — is discarded. A
+    /// saved mark that no longer fits its letter is dropped, so that a
+    /// corrected answer never stays locked on the old letter.
     pub fn with_progress(puzzle: Puzzle, progress: Progress) -> Game {
         let mut game = Game::new(puzzle);
         let len = game.puzzle.len();
@@ -115,7 +132,12 @@ impl Game {
         for cell in 0..len {
             if game.puzzle.is_open(cell) {
                 game.fill[cell] = progress.fill[cell].trim().to_uppercase();
-                game.marks[cell] = progress.marks[cell];
+                let right = game.cell_correct(cell);
+                game.marks[cell] = match progress.marks[cell] {
+                    Mark::Correct | Mark::Revealed if !right => Mark::None,
+                    Mark::Wrong if right || game.fill[cell].is_empty() => Mark::None,
+                    mark => mark,
+                };
             }
         }
         if game.puzzle.is_open(progress.cursor) {
@@ -174,9 +196,7 @@ impl Game {
     }
 
     fn cell_correct(&self, cell: usize) -> bool {
-        self.puzzle
-            .solution(cell)
-            .is_some_and(|s| answer_matches(s, &self.fill[cell]))
+        self.puzzle.accepts(cell, &self.fill[cell])
     }
 
     // ----- timer -----------------------------------------------------------
@@ -575,7 +595,8 @@ impl Game {
         }
     }
 
-    /// Marks each filled square in `scope` right (locking it) or wrong.
+    /// Marks each filled square in `scope` right (locking it) or wrong. A
+    /// check is not an undo step, and undo never unlocks a square.
     pub fn check(&mut self, scope: Scope) -> CheckReport {
         let mut report = CheckReport::default();
         if self.solved {
@@ -598,7 +619,7 @@ impl Game {
 
     /// Fills `scope` with its answers. Squares that were already right are
     /// marked correct, and the others are marked revealed. Returns how many
-    /// squares were revealed.
+    /// squares were revealed. As with a check, undo cannot take it back.
     pub fn reveal(&mut self, scope: Scope) -> usize {
         if self.solved {
             return 0;
@@ -658,9 +679,20 @@ impl Game {
         }
     }
 
+    /// Puts back a snapshot's letters and marks, except on squares that a
+    /// check or reveal has locked since: a lock outlives undo and redo. A
+    /// wrong mark stays while its letter stays.
     fn restore(&mut self, snapshot: Snapshot) {
-        self.fill = snapshot.fill;
-        self.marks = snapshot.marks;
+        for (cell, letters) in snapshot.fill.into_iter().enumerate() {
+            let mark = self.marks[cell];
+            if mark.is_locked() {
+                continue;
+            }
+            if !(mark == Mark::Wrong && letters == self.fill[cell]) {
+                self.marks[cell] = snapshot.marks[cell];
+            }
+            self.fill[cell] = letters;
+        }
         self.cursor = snapshot.cursor;
         self.direction = snapshot.direction;
     }
@@ -691,7 +723,8 @@ impl Game {
         unchanged
     }
 
-    /// Steps back one change. A solved puzzle stays solved.
+    /// Steps back one change. A solved puzzle stays solved, and a locked
+    /// square keeps its letter.
     pub fn undo(&mut self) -> bool {
         if self.solved {
             return false;
@@ -946,6 +979,41 @@ mod tests {
     }
 
     #[test]
+    fn undo_keeps_checked_and_revealed_squares() {
+        let mut g = game();
+        g.checkpoint();
+        type_word(&mut g, "CO"); // the cursor moves on to cell 2
+        g.reveal(Scope::Cell); // T
+        g.check(Scope::Entry); // C right, O wrong
+        assert!(g.undo());
+        // The typing is undone, but not on the squares that are now locked.
+        assert_eq!(letters(&g), "C.T...#..");
+        assert_eq!(
+            (g.mark(0), g.mark(1), g.mark(2)),
+            (Mark::Correct, Mark::None, Mark::Revealed)
+        );
+        assert!(g.redo());
+        assert_eq!(
+            (letters(&g).as_str(), g.mark(1)),
+            ("COT...#..", Mark::Wrong)
+        );
+    }
+
+    #[test]
+    fn undo_keeps_a_wrong_mark_while_its_letter_stays() {
+        let mut g = game();
+        type_word(&mut g, "CO");
+        g.checkpoint();
+        g.goto_last();
+        g.replace_cell("E");
+        g.goto_first();
+        g.step(0, 1);
+        g.check(Scope::Cell); // O is wrong
+        assert!(g.undo()); // takes back the E, which came before the check
+        assert_eq!((g.letter(8), g.mark(1)), ("", Mark::Wrong));
+    }
+
+    #[test]
     fn unchanged_checkpoints_are_dropped() {
         let mut g = game();
         g.checkpoint();
@@ -1034,5 +1102,55 @@ mod tests {
         let mut wrong = saved;
         wrong.fill.pop();
         assert_eq!(letters(&Game::with_progress(small(), wrong)), "......#..");
+    }
+
+    #[test]
+    fn restored_marks_must_still_fit_their_letters() {
+        let mut g = game();
+        type_word(&mut g, "CAT");
+        g.goto_first();
+        g.check(Scope::Entry);
+        let mut saved = g.progress(Instant::now());
+        // The publisher has since changed 1A's first answer, and a wrong
+        // mark sits on a letter that is right.
+        saved.fill[0] = "B".into();
+        saved.marks[1] = Mark::Wrong;
+        let mut restored = Game::with_progress(small(), saved);
+        assert_eq!(restored.mark(0), Mark::None);
+        assert_eq!(restored.mark(1), Mark::None);
+        assert_eq!(restored.mark(2), Mark::Correct);
+        // The stale letter is no longer locked, so the puzzle can be solved.
+        restored.goto_first();
+        restored.replace_cell("C");
+        assert_eq!(restored.letter(0), "C");
+    }
+
+    #[test]
+    fn alternate_answers_count_as_right() {
+        let mut data = data_from_rows(&["CAT", "ARE", "#EE"], &[]);
+        data.alternates.insert(0, vec!["B".into()]);
+        let mut g = Game::new(Puzzle::new(data).unwrap());
+        type_word(&mut g, "BAT");
+        g.goto_first();
+        assert_eq!(
+            g.check(Scope::Entry),
+            CheckReport {
+                checked: 3,
+                wrong: 0
+            }
+        );
+        g.next_open_entry(true); // 4A
+        type_word(&mut g, "AREEE");
+        assert!(g.is_solved());
+    }
+
+    #[test]
+    fn status_follows_the_letters_and_the_solve() {
+        let mut g = game();
+        assert_eq!(g.progress(Instant::now()).status(), Status::New);
+        g.type_letters("C");
+        assert_eq!(g.progress(Instant::now()).status(), Status::Started);
+        g.reveal(Scope::Puzzle);
+        assert_eq!(g.progress(Instant::now()).status(), Status::Solved);
     }
 }

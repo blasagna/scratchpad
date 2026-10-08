@@ -6,7 +6,7 @@
 //! standard clue numbering, one [`Entry`] per across or down run, and the
 //! lookup from a square to the entries that pass through it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -54,10 +54,25 @@ pub struct Meta {
     #[serde(default)]
     pub author: String,
     #[serde(default)]
+    pub editor: String,
+    #[serde(default)]
     pub copyright: String,
     /// Publication date as `YYYY-MM-DD`, when the source gives one.
     #[serde(default)]
     pub date: Option<String>,
+}
+
+impl Meta {
+    /// The credit for a header: `by A`, `by A, edited by E`, or `edited by E`
+    /// when the source names only the editor.
+    pub fn byline(&self) -> Option<String> {
+        match (self.author.trim(), self.editor.trim()) {
+            ("", "") => None,
+            (author, "") => Some(format!("by {author}")),
+            ("", editor) => Some(format!("edited by {editor}")),
+            (author, editor) => Some(format!("by {author}, edited by {editor}")),
+        }
+    }
 }
 
 /// One clue as a source supplies it, before it is matched to a grid run.
@@ -80,6 +95,10 @@ pub struct PuzzleData {
     /// Row-major indices of circled or shaded squares.
     #[serde(default)]
     pub circled: Vec<usize>,
+    /// Other answers that a square accepts, by row-major index, such as the
+    /// second reading of a Schrödinger square.
+    #[serde(default)]
+    pub alternates: BTreeMap<usize, Vec<String>>,
     pub clues: Vec<ClueData>,
 }
 
@@ -119,25 +138,29 @@ pub struct Puzzle {
     circled: Vec<bool>,
 }
 
+/// Whether `cell` starts an across run and a down run of two or more open
+/// squares. The numbering and the entries both follow this rule.
+fn run_starts(width: usize, height: usize, grid: &[Option<String>], cell: usize) -> (bool, bool) {
+    let open = |i: usize| grid[i].is_some();
+    if !open(cell) {
+        return (false, false);
+    }
+    let (row, col) = (cell / width, cell % width);
+    let across = (col == 0 || !open(cell - 1)) && col + 1 < width && open(cell + 1);
+    let down = (row == 0 || !open(cell - width)) && row + 1 < height && open(cell + width);
+    (across, down)
+}
+
 /// Computes the standard clue numbering for a grid. A square gets the next
 /// number when it starts an across or down run of two or more open squares.
 pub fn numbering(width: usize, height: usize, grid: &[Option<String>]) -> Vec<Option<u32>> {
-    let open = |row: usize, col: usize| grid[row * width + col].is_some();
     let mut numbers = vec![None; grid.len()];
     let mut next = 1;
-    for row in 0..height {
-        for col in 0..width {
-            if !open(row, col) {
-                continue;
-            }
-            let starts_across =
-                (col == 0 || !open(row, col - 1)) && col + 1 < width && open(row, col + 1);
-            let starts_down =
-                (row == 0 || !open(row - 1, col)) && row + 1 < height && open(row + 1, col);
-            if starts_across || starts_down {
-                numbers[row * width + col] = Some(next);
-                next += 1;
-            }
+    for (cell, number) in numbers.iter_mut().enumerate() {
+        let (across, down) = run_starts(width, height, grid, cell);
+        if across || down {
+            *number = Some(next);
+            next += 1;
         }
     }
     numbers
@@ -189,6 +212,21 @@ impl Puzzle {
         if let Some(bad) = data.circled.iter().find(|&&i| i >= len) {
             return Err(PuzzleError(format!("circled square {bad} is off the grid")));
         }
+        for (&cell, answers) in data.alternates.iter_mut() {
+            let Some(Some(answer)) = data.grid.get(cell) else {
+                return Err(PuzzleError(format!(
+                    "square {cell} has other answers but is not open"
+                )));
+            };
+            let mut normalized: Vec<String> = Vec::new();
+            for other in answers.iter().map(|a| a.trim().to_uppercase()) {
+                if !other.is_empty() && other != *answer && !normalized.contains(&other) {
+                    normalized.push(other);
+                }
+            }
+            *answers = normalized;
+        }
+        data.alternates.retain(|_, answers| !answers.is_empty());
 
         let numbers = numbering(width, height, &data.grid);
         let texts: HashMap<(Direction, u32), &str> = data
@@ -202,12 +240,13 @@ impl Puzzle {
         let mut down = Vec::new();
         for (i, number) in numbers.iter().enumerate() {
             let Some(number) = *number else { continue };
-            let (row, col) = (i / width, i % width);
-            if (col == 0 || !open(i - 1)) && col + 1 < width && open(i + 1) {
-                let cells: Vec<usize> = (i..row * width + width).take_while(|&j| open(j)).collect();
+            let (starts_across, starts_down) = run_starts(width, height, &data.grid, i);
+            if starts_across {
+                let row_end = (i / width + 1) * width;
+                let cells: Vec<usize> = (i..row_end).take_while(|&j| open(j)).collect();
                 across.push((number, cells));
             }
-            if (row == 0 || !open(i - width)) && row + 1 < height && open(i + width) {
+            if starts_down {
                 let cells: Vec<usize> = (i..len).step_by(width).take_while(|&j| open(j)).collect();
                 down.push((number, cells));
             }
@@ -290,6 +329,18 @@ impl Puzzle {
         self.data.grid.get(cell).and_then(|s| s.as_deref())
     }
 
+    /// True when `guess` counts as the answer for a square: its own answer,
+    /// or another that the publisher accepts there.
+    pub fn accepts(&self, cell: usize, guess: &str) -> bool {
+        self.solution(cell)
+            .is_some_and(|s| answer_matches(s, guess))
+            || self
+                .data
+                .alternates
+                .get(&cell)
+                .is_some_and(|others| others.iter().any(|a| answer_matches(a, guess)))
+    }
+
     pub fn number(&self, cell: usize) -> Option<u32> {
         self.numbers.get(cell).copied().flatten()
     }
@@ -345,6 +396,7 @@ pub(crate) mod tests {
             height: rows.len(),
             grid,
             circled: Vec::new(),
+            alternates: BTreeMap::new(),
             clues: clues
                 .iter()
                 .map(|&(direction, number, text)| ClueData {
@@ -470,6 +522,41 @@ pub(crate) mod tests {
         let mut blank = data_from_rows(&["AB", "CD"], &[]);
         blank.grid[0] = Some("  ".into());
         assert!(Puzzle::new(blank).is_err());
+
+        let mut alternate_on_block = data_from_rows(&["AB", "C#"], &[]);
+        alternate_on_block.alternates.insert(3, vec!["X".into()]);
+        assert!(Puzzle::new(alternate_on_block).is_err());
+    }
+
+    #[test]
+    fn alternates_are_accepted_and_normalized() {
+        let mut data = data_from_rows(&["CAT", "ARE", "#EE"], &[]);
+        data.alternates
+            .insert(0, vec![" b ".into(), "C".into(), "B".into()]);
+        data.alternates.insert(1, vec!["a".into(), " ".into()]);
+        let p = Puzzle::new(data).unwrap();
+        // The answer itself, blanks and repeats are dropped.
+        assert_eq!(p.data().alternates.get(&0), Some(&vec!["B".to_string()]));
+        assert_eq!(p.data().alternates.get(&1), None);
+        assert!(p.accepts(0, "C") && p.accepts(0, "b"));
+        assert!(!p.accepts(0, "D"));
+        assert!(!p.accepts(1, "B"));
+    }
+
+    #[test]
+    fn bylines_credit_whoever_is_named() {
+        let meta = |author: &str, editor: &str| Meta {
+            author: author.into(),
+            editor: editor.into(),
+            ..Meta::default()
+        };
+        assert_eq!(meta("A", "").byline().as_deref(), Some("by A"));
+        assert_eq!(
+            meta("A", "E").byline().as_deref(),
+            Some("by A, edited by E")
+        );
+        assert_eq!(meta(" ", "E").byline().as_deref(), Some("edited by E"));
+        assert_eq!(meta("", " ").byline(), None);
     }
 
     #[test]

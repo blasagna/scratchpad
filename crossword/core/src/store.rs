@@ -8,6 +8,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -78,11 +79,8 @@ impl Store {
     }
 
     pub fn status(&self, puzzle: &PuzzleRef) -> Status {
-        match self.load_progress(puzzle) {
-            Some(p) if p.solved => Status::Solved,
-            Some(p) if p.fill.iter().any(|f| !f.is_empty()) => Status::Started,
-            _ => Status::New,
-        }
+        self.load_progress(puzzle)
+            .map_or(Status::New, |p| p.status())
     }
 }
 
@@ -97,14 +95,24 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
 }
 
 /// Writes through a temporary file and a rename, so a crash mid-write never
-/// leaves half a file behind.
+/// leaves half a file behind. Each write has a temporary file of its own:
+/// two writers of one file at once, such as the TUI and the GUI saving the
+/// same puzzle, cannot mix their bytes, and the last rename wins.
 fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_vec(value)?)?;
-    fs::rename(&tmp, path)
+    let tmp = path.with_extension(format!(
+        "json.{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let written = fs::write(&tmp, serde_json::to_vec(value)?).and_then(|()| fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -163,6 +171,27 @@ mod tests {
         let r = reference("../../escape");
         assert!(store.save_puzzle(&r, small().data()).is_err());
         assert!(store.load_puzzle(&r).is_none());
+    }
+
+    #[test]
+    fn concurrent_writes_of_one_file_all_land_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path(), dir.path());
+        let r = reference("2026-10-08");
+        let data = small().data().clone();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..25 {
+                        store.save_puzzle(&r, &data).unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(store.load_puzzle(&r), Some(data));
+        // No temporary file is left behind.
+        let files = fs::read_dir(dir.path().join("puzzles/universal")).unwrap();
+        assert_eq!(files.count(), 1);
     }
 
     #[test]

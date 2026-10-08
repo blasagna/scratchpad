@@ -96,10 +96,6 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
         .or_else(|| author.strip_prefix("by "))
         .unwrap_or(author)
         .trim();
-    let author = match u.editor.trim() {
-        "" => author.to_string(),
-        editor => format!("{author}, edited by {editor}"),
-    };
     let date = NaiveDate::parse_from_str(u.date.trim(), "%Y%m%d")
         .ok()
         .map(|d| d.to_string());
@@ -109,7 +105,8 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
     Ok(PuzzleData {
         meta: Meta {
             title: u.title.trim().to_string(),
-            author,
+            author: author.to_string(),
+            editor: u.editor.trim().to_string(),
             copyright: u.copyright.trim().to_string(),
             date,
         },
@@ -117,6 +114,7 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
         height: u.height,
         grid,
         circled: Vec::new(),
+        alternates: Default::default(),
         clues,
     })
 }
@@ -131,7 +129,10 @@ mod tests {
     #[test]
     fn puzzle_parses_grid_clues_and_byline() {
         let data = parse_puzzle(PUZZLE).unwrap();
-        assert_eq!(data.meta.author, "Ada Lovelace, edited by Grace Hopper");
+        assert_eq!(
+            data.meta.byline().as_deref(),
+            Some("by Ada Lovelace, edited by Grace Hopper")
+        );
         assert_eq!(data.meta.date.as_deref(), Some("2026-10-08"));
         let puzzle = Puzzle::new(data).unwrap();
         assert!(!puzzle.is_open(6));

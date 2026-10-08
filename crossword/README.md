@@ -180,6 +180,9 @@ A click on a square closes the command line, but insert mode stays on.
 ### Rules
 
 - A rebus square accepts the full answer or its first letter alone.
+- Some squares accept more than one answer, such as an NYT Schrödinger
+  square. Each of these answers is right.
+- Undo does not unlock a square. A check or a reveal is not an undo step.
 - A solved puzzle is read-only. `:reset` starts it again.
 - The timer stops when you solve the puzzle. It also pauses when the terminal
   window loses focus, if the terminal reports focus changes.
@@ -207,7 +210,8 @@ The app saves your progress at these times:
 **Terminal.** When the terminal has space, each square is a 3×2 box with its
 clue number in the top line. A 15×15 grid then needs 61 columns and 31 rows.
 In a smaller terminal, the grid changes to one row for each square with no
-lines or numbers, and a 15×15 grid needs 45 columns and 15 rows. The clue
+lines or numbers, and a 15×15 grid needs 45 columns and 15 rows. If this
+grid is also too large, it scrolls to keep the cursor in view. The clue
 lists stand beside the grid when they have 24 columns or more.
 
 **GUI.** The grid takes the left part of the window and grows with it, up to

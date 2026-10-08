@@ -4,7 +4,11 @@
 //! `NYT-S` cookie, and without one [`super::Fetcher`] makes no request at all.
 //! The JSON is the v6 format the NYT web app reads. Each square is either an
 //! empty object (a block) or carries its `answer`. A `type` other than 1 marks
-//! a circled or shaded square, and `moreAnswers.valid` lists rebus spellings.
+//! a circled or shaded square. `moreAnswers.valid` lists other answers that
+//! the square accepts, such as another rebus spelling or the second reading
+//! of a Schrödinger square.
+
+use std::collections::BTreeMap;
 
 use chrono::NaiveDate;
 use serde::Deserialize;
@@ -24,11 +28,18 @@ pub fn cookie_header(token: &str) -> String {
 /// environment variable, or else from `nyt-s` in the config directory
 /// (`~/.config/crossword/nyt-s` on Linux).
 pub fn configured_cookie() -> Option<String> {
-    let token = std::env::var("NYT_S").ok().or_else(|| {
+    first_cookie(std::env::var("NYT_S").ok(), || {
         let path = dirs::config_dir()?.join("crossword").join("nyt-s");
         std::fs::read_to_string(path).ok()
-    })?;
-    (!token.trim().is_empty()).then(|| cookie_header(&token))
+    })
+}
+
+/// The first token that is not blank, as a `Cookie` header value. A blank
+/// `NYT_S`, as from `export NYT_S=`, does not hide the file.
+fn first_cookie(env: Option<String>, file: impl FnOnce() -> Option<String>) -> Option<String> {
+    let usable = |token: &String| !token.trim().is_empty();
+    let token = env.filter(usable).or_else(|| file().filter(usable))?;
+    Some(cookie_header(&token))
 }
 
 pub fn puzzle_url(source: SourceId, date: NaiveDate) -> String {
@@ -118,18 +129,21 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
 
     let mut grid = Vec::with_capacity(board.cells.len());
     let mut circled = Vec::new();
-    for (i, cell) in board.cells.iter().enumerate() {
+    let mut alternates = BTreeMap::new();
+    for (i, cell) in board.cells.into_iter().enumerate() {
+        let valid = cell.more_answers.map(|m| m.valid).unwrap_or_default();
         let answer = cell
             .answer
-            .clone()
             .filter(|a| !a.trim().is_empty())
-            .or_else(|| {
-                cell.more_answers
-                    .as_ref()
-                    .and_then(|m| m.valid.first().cloned())
-            });
-        if answer.is_some() && cell.kind.is_some_and(|k| k != 1) {
-            circled.push(i);
+            .or_else(|| valid.first().cloned());
+        if let Some(answer) = &answer {
+            if cell.kind.is_some_and(|k| k != 1) {
+                circled.push(i);
+            }
+            let others: Vec<String> = valid.into_iter().filter(|v| v != answer).collect();
+            if !others.is_empty() {
+                alternates.insert(i, others);
+            }
         }
         grid.push(answer);
     }
@@ -154,15 +168,6 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
         })
         .collect();
 
-    let mut author = join_names(&root.constructors);
-    if let Some(editor) = root
-        .editor
-        .as_deref()
-        .map(str::trim)
-        .filter(|e| !e.is_empty())
-    {
-        author = format!("{author}, edited by {editor}");
-    }
     let copyright = match root.copyright.as_deref().map(str::trim) {
         Some(year) if !year.is_empty() => format!("© {year} The New York Times"),
         _ => "The New York Times".to_string(),
@@ -170,7 +175,8 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
     Ok(PuzzleData {
         meta: Meta {
             title: root.title.unwrap_or_default().trim().to_string(),
-            author,
+            author: join_names(&root.constructors),
+            editor: root.editor.unwrap_or_default().trim().to_string(),
             copyright,
             date: root.publication_date,
         },
@@ -178,6 +184,7 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
         height,
         grid,
         circled,
+        alternates,
         clues,
     })
 }
@@ -193,8 +200,8 @@ mod tests {
     fn puzzle_parses_rebus_circles_and_clues() {
         let data = parse_puzzle(PUZZLE).unwrap();
         assert_eq!(
-            data.meta.author,
-            "Ada Lovelace and Alan Turing, edited by Grace Hopper"
+            data.meta.byline().as_deref(),
+            Some("by Ada Lovelace and Alan Turing, edited by Grace Hopper")
         );
         assert_eq!(data.meta.copyright, "© 2026 The New York Times");
         assert_eq!(data.meta.date.as_deref(), Some("2026-10-08"));
@@ -203,6 +210,9 @@ mod tests {
         let puzzle = Puzzle::new(data).unwrap();
         assert_eq!(puzzle.solution(2), Some("TEA")); // rebus square
         assert_eq!(puzzle.solution(1), Some("A")); // from moreAnswers
+        // Square 0 has an answer and also accepts another in moreAnswers.
+        assert!(puzzle.accepts(0, "C") && puzzle.accepts(0, "B"));
+        assert!(!puzzle.data().alternates.contains_key(&1));
         assert!(!puzzle.is_open(6));
         let clues: Vec<(u32, char, &str)> = puzzle
             .entries()
@@ -220,6 +230,30 @@ mod tests {
                 (3, 'D', "Teeing ground"),
             ]
         );
+    }
+
+    #[test]
+    fn byline_without_constructors_names_the_editor() {
+        let none = PUZZLE.replace(r#"["Ada Lovelace", "Alan Turing"]"#, "[]");
+        let data = parse_puzzle(&none).unwrap();
+        assert_eq!(
+            data.meta.byline().as_deref(),
+            Some("edited by Grace Hopper")
+        );
+    }
+
+    #[test]
+    fn a_blank_environment_cookie_falls_back_to_the_file() {
+        let file = || Some("abc\n".to_string());
+        assert_eq!(
+            first_cookie(Some(" ".into()), file).as_deref(),
+            Some("NYT-S=abc")
+        );
+        assert_eq!(
+            first_cookie(Some("xyz".into()), file).as_deref(),
+            Some("NYT-S=xyz")
+        );
+        assert_eq!(first_cookie(None, || Some("\n".into())), None);
     }
 
     #[test]

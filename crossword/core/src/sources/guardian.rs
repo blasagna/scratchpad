@@ -174,6 +174,7 @@ pub fn parse_puzzle(body: &str) -> Result<PuzzleData, SourceError> {
     let meta = Meta {
         title: crossword.name,
         author: crossword.creator.map(|c| c.name).unwrap_or_default(),
+        editor: String::new(),
         copyright: "Guardian News & Media".into(),
         date: crossword
             .date

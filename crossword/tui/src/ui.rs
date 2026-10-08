@@ -5,6 +5,7 @@
 //! interior inside box-drawing lines, with the clue number set into the
 //! square's top border, so a 15×15 needs 61×31 cells. When that does not fit,
 //! the compact layout drops the lines and the numbers, which takes 45×15.
+//! When even that does not fit, the compact grid scrolls with the cursor.
 
 use std::time::Instant;
 
@@ -359,8 +360,8 @@ fn render_header(frame: &mut Frame, solve: &Solve, area: Rect, now: Instant) {
     if !meta.title.is_empty() {
         details.push(meta.title.clone());
     }
-    if !meta.author.is_empty() {
-        details.push(format!("by {}", meta.author));
+    if let Some(byline) = meta.byline() {
+        details.push(byline);
     }
     left.push(Span::styled(
         format!(" {}", details.join(" · ")),
@@ -448,10 +449,16 @@ fn draw_grid(buf: &mut Buffer, area: Rect, game: &Game, layout: GridLayout, curs
     let word = puzzle.entry(game.current_entry()).cells.clone();
 
     if layout == GridLayout::Compact {
-        for row in 0..h {
-            for col in 0..w {
+        // A grid larger than the area shows the part around the cursor.
+        let first_row = scroll_start(game.cursor() / w, area.height as usize, h);
+        let first_col = scroll_start(game.cursor() % w, area.width as usize / 3, w);
+        for row in first_row..h {
+            for col in first_col..w {
                 let cell = row * w + col;
-                let (x, y) = (area.x + col as u16 * 3, area.y + row as u16);
+                let (x, y) = (
+                    area.x + (col - first_col) as u16 * 3,
+                    area.y + (row - first_row) as u16,
+                );
                 if puzzle.is_open(cell) {
                     let (text, style) = square(game, cell, &word, cursor_bg);
                     let text = if text.trim().is_empty() {
@@ -564,6 +571,15 @@ fn draw_grid(buf: &mut Buffer, area: Rect, game: &Game, layout: GridLayout, curs
             }
         }
     }
+}
+
+/// The first of `total` rows or columns to draw when only `shown` fit. It
+/// keeps `pos` in view, in the middle where the edges allow.
+fn scroll_start(pos: usize, shown: usize, total: usize) -> usize {
+    if shown == 0 || shown >= total {
+        return 0;
+    }
+    pos.saturating_sub(shown / 2).min(total - shown)
 }
 
 /// Greedy word wrap to `width` columns.
@@ -807,8 +823,9 @@ fn help_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     (column(help::COLUMNS[0]), column(help::COLUMNS[1]))
 }
 
-fn render_help(frame: &mut Frame, scroll: u16) {
-    let screen = frame.area();
+/// Where the help overlay sits on `screen`, whether it shows two columns,
+/// and how many lines it holds.
+fn help_layout(screen: Rect) -> (Rect, bool, u16) {
     let (left, right) = help_columns();
     let wide = screen.width >= HELP_WIDE + 2;
     let (width, content) = if wide {
@@ -816,9 +833,22 @@ fn render_help(frame: &mut Frame, scroll: u16) {
     } else {
         (60, (left.len() + right.len()) as u16)
     };
-    let area = centered(screen, width, content + 2);
+    (centered(screen, width, content + 2), wide, content)
+}
+
+/// How far the help overlay can scroll on `screen`. The event loop reports
+/// it to the app, so that `j` stops where the view stops.
+pub fn help_max_scroll(screen: Rect) -> u16 {
+    let (area, _, content) = help_layout(screen);
+    content.saturating_sub(area.height.saturating_sub(2))
+}
+
+fn render_help(frame: &mut Frame, scroll: u16) {
+    let screen = frame.area();
+    let (left, right) = help_columns();
+    let (area, wide, content) = help_layout(screen);
     let visible = area.height.saturating_sub(2);
-    let scroll = scroll.min(content.saturating_sub(visible));
+    let scroll = scroll.min(help_max_scroll(screen));
     let hint = if content > visible {
         " j/k scroll · other keys close "
     } else {
@@ -853,6 +883,15 @@ fn render_help(frame: &mut Frame, scroll: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_keeps_the_position_in_view() {
+        assert_eq!(scroll_start(20, 18, 21), 3); // the last row, at the bottom
+        assert_eq!(scroll_start(0, 18, 21), 0);
+        assert_eq!(scroll_start(10, 18, 21), 1); // near the middle
+        assert_eq!(scroll_start(5, 18, 15), 0); // it all fits
+        assert_eq!(scroll_start(5, 0, 15), 0);
+    }
 
     #[test]
     fn wrap_breaks_on_words_and_splits_long_ones() {

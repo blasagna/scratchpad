@@ -10,6 +10,7 @@ use crossword_core::puzzle::{ClueData, Direction, Meta, PuzzleData};
 use crossword_core::sources::{PuzzleRef, Response, Size, SourceError, SourceId};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 
 fn render(app: &App, width: u16, height: u16) -> Vec<String> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -52,6 +53,7 @@ fn small_data() -> PuzzleData {
         meta: Meta {
             title: "Tiny Test".into(),
             author: "Ada Lovelace".into(),
+            editor: String::new(),
             copyright: String::new(),
             date: Some("2026-10-08".into()),
         },
@@ -62,6 +64,7 @@ fn small_data() -> PuzzleData {
             .map(|c| (c != '#').then(|| c.to_string()))
             .collect(),
         circled: vec![8],
+        alternates: Default::default(),
         clues: vec![
             clue(Direction::Across, 1, "Feline"),
             clue(Direction::Across, 4, "Exist"),
@@ -73,16 +76,22 @@ fn small_data() -> PuzzleData {
     }
 }
 
-/// A fully open 15×15, to exercise the layout choice at daily size.
-fn big_data() -> PuzzleData {
+/// A fully open square grid, to exercise the layout choice at daily and
+/// Sunday sizes.
+fn open_data(side: usize) -> PuzzleData {
     PuzzleData {
         meta: Meta::default(),
-        width: 15,
-        height: 15,
-        grid: vec![Some("A".to_string()); 225],
+        width: side,
+        height: side,
+        grid: vec![Some("A".to_string()); side * side],
         circled: Vec::new(),
+        alternates: Default::default(),
         clues: Vec::new(),
     }
+}
+
+fn big_data() -> PuzzleData {
+    open_data(15)
 }
 
 fn solving(data: PuzzleData) -> App {
@@ -189,6 +198,32 @@ fn daily_size_falls_back_to_compact_on_small_terminals() {
         small.contains(" ·  ·  · "),
         "blank squares show a dot:\n{small}"
     );
+}
+
+#[test]
+fn a_grid_taller_than_the_screen_scrolls_to_the_cursor() {
+    // A Sunday 21×21 in an 80×24 terminal has room for 18 rows.
+    let mut app = solving(open_data(21));
+    press(&mut app, "rq");
+    assert!(screen(&app, 80, 24).contains(" Q "));
+    press(&mut app, "Grz");
+    let bottom = screen(&app, 80, 24);
+    assert!(
+        bottom.contains(" Z "),
+        "the last square is in view:\n{bottom}"
+    );
+    assert!(!bottom.contains(" Q "), "the first row has scrolled away");
+}
+
+#[test]
+fn help_scroll_stops_where_the_view_stops() {
+    let mut app = solving(small_data());
+    app.set_help_max_scroll(crossword_tui::ui::help_max_scroll(Rect::new(0, 0, 80, 24)));
+    press(&mut app, "?");
+    press(&mut app, &"j".repeat(80));
+    let bottom = screen(&app, 80, 24);
+    press(&mut app, "k");
+    assert_ne!(screen(&app, 80, 24), bottom, "k moves the view at once");
 }
 
 #[test]

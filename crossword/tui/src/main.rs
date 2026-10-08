@@ -1,7 +1,9 @@
 //! CLI entry point: reads the NYT cookie, sets up the terminal, starts the
 //! fetch thread and runs the event loop.
 
+use std::any::Any;
 use std::io::{self, Stdout};
+use std::panic::{self, AssertUnwindSafe};
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::thread;
@@ -18,12 +20,15 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crossword_core::app::App;
-use crossword_core::sources::{Fetcher, Request, Response, Size, nyt};
+use crossword_core::sources::{Fetcher, Request, Response, Size, SourceError, nyt};
 use crossword_core::store::Store;
 use crossword_tui::{input, ui};
 
 /// How often the loop wakes to redraw the timer.
 const TICK: Duration = Duration::from_millis(250);
+
+/// The name of the thread that serves fetch requests.
+const FETCH_THREAD: &str = "fetch";
 
 #[derive(Parser)]
 #[command(
@@ -54,9 +59,14 @@ fn main() -> ExitCode {
     };
 
     // Restore the terminal before a panic message prints, or it lands in the
-    // alternate screen and the shell is left in raw mode.
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
+    // alternate screen and the shell is left in raw mode. The fetch thread
+    // is the exception: it turns a panic into a failed request and the UI
+    // runs on, so the terminal must stay as it is.
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        if thread::current().name() == Some(FETCH_THREAD) {
+            return;
+        }
         let _ = restore_terminal();
         default_hook(info);
     }));
@@ -100,24 +110,46 @@ fn restore_terminal() -> io::Result<()> {
 }
 
 /// Starts the thread that serves listing and download requests, so the UI
-/// never blocks on the network.
-fn spawn_fetcher(fetcher: Fetcher) -> (mpsc::Sender<Request>, mpsc::Receiver<Response>) {
+/// never blocks on the network. A request that panics gets a failed
+/// response, so the screen that waits for it does not wait for ever, and
+/// the thread serves the next one.
+fn spawn_fetcher(
+    fetcher: Fetcher,
+) -> io::Result<(mpsc::Sender<Request>, mpsc::Receiver<Response>)> {
     let (request_tx, request_rx) = mpsc::channel::<Request>();
     let (response_tx, response_rx) = mpsc::channel::<Response>();
-    thread::spawn(move || {
-        for request in request_rx {
-            let response = fetcher.handle(request, Local::now().date_naive());
-            if response_tx.send(response).is_err() {
-                break;
+    thread::Builder::new()
+        .name(FETCH_THREAD.into())
+        .spawn(move || {
+            for request in request_rx {
+                let fallback = request.clone();
+                let handled = panic::catch_unwind(AssertUnwindSafe(|| {
+                    fetcher.handle(request, Local::now().date_naive())
+                }));
+                let response = handled.unwrap_or_else(|payload| {
+                    let error = format!("the fetch thread failed: {}", panic_text(&*payload));
+                    fallback.failed(SourceError::Parse(error))
+                });
+                if response_tx.send(response).is_err() {
+                    break;
+                }
             }
-        }
-    });
-    (request_tx, response_rx)
+        })?;
+    Ok((request_tx, response_rx))
+}
+
+/// The message a panic was raised with.
+fn panic_text(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown error")
 }
 
 fn run(terminal: &mut Tui, cli: &Cli, store: Option<Store>) -> io::Result<()> {
     let (requests, responses) =
-        spawn_fetcher(Fetcher::new(nyt::configured_cookie(), store.clone()));
+        spawn_fetcher(Fetcher::new(nyt::configured_cookie(), store.clone()))?;
     let mut app = App::new(store);
     if let Some(size) = cli.size {
         app.open_size(size);
@@ -128,7 +160,10 @@ fn run(terminal: &mut Tui, cli: &Cli, store: Option<Store>) -> io::Result<()> {
             // The fetch thread lives as long as this loop.
             let _ = requests.send(request);
         }
-        terminal.draw(|frame| ui::render(frame, &app, Instant::now()))?;
+        let screen = terminal
+            .draw(|frame| ui::render(frame, &app, Instant::now()))?
+            .area;
+        app.set_help_max_scroll(ui::help_max_scroll(screen));
 
         if event::poll(TICK)? {
             // Drain everything queued, so fast typing redraws once.
