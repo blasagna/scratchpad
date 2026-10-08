@@ -403,6 +403,35 @@ impl Game {
         self.enter_entry(next, self.puzzle.entry(next).cells[0]);
     }
 
+    /// A click on a square, as in the NYT app: a click on the cursor's square
+    /// switches direction, and a click elsewhere moves there. Returns false
+    /// for a block.
+    pub fn click(&mut self, cell: usize) -> bool {
+        if !self.puzzle.is_open(cell) {
+            return false;
+        }
+        if cell == self.cursor {
+            self.toggle_direction();
+        } else {
+            self.set_cursor(cell);
+        }
+        true
+    }
+
+    /// Puts the cursor at the start of an entry, facing along it.
+    pub fn goto_entry(&mut self, entry: usize) {
+        if let Some(first) = self.puzzle.entries().get(entry).map(|e| e.cells[0]) {
+            self.enter_entry(entry, first);
+        }
+    }
+
+    /// How many open squares hold a letter, and how many there are.
+    pub fn fill_counts(&self) -> (usize, usize) {
+        self.puzzle.open_cells().fold((0, 0), |(filled, open), c| {
+            (filled + usize::from(!self.fill[c].is_empty()), open + 1)
+        })
+    }
+
     /// Jumps to an entry by its number and direction, as `:12a` does.
     pub fn goto_clue(&mut self, direction: Direction, number: u32) -> bool {
         let found = self
@@ -926,6 +955,27 @@ mod tests {
         g.type_letters("C");
         assert!(!g.drop_unchanged_checkpoint());
         assert!(g.undo());
+    }
+
+    #[test]
+    fn clicks_move_or_switch_direction() {
+        let mut g = game();
+        assert!(g.click(4));
+        assert_eq!((g.cursor(), g.direction()), (4, Direction::Across));
+        assert!(g.click(4)); // the same square again switches direction
+        assert_eq!(g.direction(), Direction::Down);
+        assert!(!g.click(6)); // a block
+        assert_eq!(g.cursor(), 4);
+        g.goto_entry(2); // 5A
+        assert_eq!((g.cursor(), g.direction()), (7, Direction::Across));
+    }
+
+    #[test]
+    fn fill_counts_count_open_squares() {
+        let mut g = game();
+        assert_eq!(g.fill_counts(), (0, 8));
+        type_word(&mut g, "CA");
+        assert_eq!(g.fill_counts(), (2, 8));
     }
 
     #[test]

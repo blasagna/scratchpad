@@ -4,17 +4,17 @@
 
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crossword::app::{App, Screen};
-use crossword::puzzle::{ClueData, Direction, Meta, PuzzleData};
-use crossword::sources::{PuzzleRef, Response, Size, SourceError, SourceId};
+use crossword_core::app::{App, Screen};
+use crossword_core::keys::typed;
+use crossword_core::puzzle::{ClueData, Direction, Meta, PuzzleData};
+use crossword_core::sources::{PuzzleRef, Response, Size, SourceError, SourceId};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 fn render(app: &App, width: u16, height: u16) -> Vec<String> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
-        .draw(|frame| crossword::ui::render(frame, app, Instant::now()))
+        .draw(|frame| crossword_tui::ui::render(frame, app, Instant::now()))
         .unwrap();
     let buffer = terminal.backend().buffer().clone();
     (0..height)
@@ -27,13 +27,8 @@ fn screen(app: &App, width: u16, height: u16) -> String {
 }
 
 fn press(app: &mut App, keys: &str) {
-    for c in keys.chars() {
-        let code = match c {
-            '⎋' => KeyCode::Esc,
-            '⏎' => KeyCode::Enter,
-            c => KeyCode::Char(c),
-        };
-        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE), Instant::now());
+    for key in typed(keys) {
+        app.handle_key(key, Instant::now());
     }
 }
 

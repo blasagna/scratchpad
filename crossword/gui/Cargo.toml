@@ -1,0 +1,22 @@
+[package]
+name = "crossword_gui"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "crossword_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "crossword-gui"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+crossword_core = { path = "../core" }
+dirs = "6"
+iced = { version = "0.14", features = ["canvas", "smol"] }
+
+[dev-dependencies]
+iced_test = "0.14"

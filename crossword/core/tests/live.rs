@@ -3,14 +3,14 @@
 //! network, so they are ignored by default. Run them with:
 //!
 //! ```sh
-//! cargo test -p crossword --test live -- --ignored
+//! cargo test -p crossword_core --test live -- --ignored
 //! ```
 //!
 //! The NYT test runs only when `NYT_S` holds a subscription cookie.
 
 use chrono::Local;
-use crossword::puzzle::Puzzle;
-use crossword::sources::{Fetcher, SourceId, nyt};
+use crossword_core::puzzle::Puzzle;
+use crossword_core::sources::{Fetcher, SourceId, nyt};
 
 fn check_latest(fetcher: &Fetcher, source: SourceId) {
     let today = Local::now().date_naive();

@@ -2,7 +2,6 @@
 //! fetch thread and runs the event loop.
 
 use std::io::{self, Stdout};
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::thread;
@@ -18,10 +17,10 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crossword::app::App;
-use crossword::sources::{Fetcher, Request, Response, Size, nyt};
-use crossword::store::Store;
-use crossword::ui;
+use crossword_core::app::App;
+use crossword_core::sources::{Fetcher, Request, Response, Size, nyt};
+use crossword_core::store::Store;
+use crossword_tui::{input, ui};
 
 /// How often the loop wakes to redraw the timer.
 const TICK: Duration = Duration::from_millis(250);
@@ -44,15 +43,6 @@ struct Cli {
     /// Keep no cache and save no progress.
     #[arg(long)]
     no_save: bool,
-}
-
-/// The NYT-S cookie from the environment, or else from the config file.
-fn nyt_cookie() -> Option<String> {
-    let token = std::env::var("NYT_S").ok().or_else(|| {
-        let path: PathBuf = dirs::config_dir()?.join("crossword").join("nyt-s");
-        std::fs::read_to_string(path).ok()
-    })?;
-    (!token.trim().is_empty()).then(|| nyt::cookie_header(&token))
 }
 
 fn main() -> ExitCode {
@@ -126,7 +116,8 @@ fn spawn_fetcher(fetcher: Fetcher) -> (mpsc::Sender<Request>, mpsc::Receiver<Res
 }
 
 fn run(terminal: &mut Tui, cli: &Cli, store: Option<Store>) -> io::Result<()> {
-    let (requests, responses) = spawn_fetcher(Fetcher::new(nyt_cookie(), store.clone()));
+    let (requests, responses) =
+        spawn_fetcher(Fetcher::new(nyt::configured_cookie(), store.clone()));
     let mut app = App::new(store);
     if let Some(size) = cli.size {
         app.open_size(size);
@@ -143,8 +134,10 @@ fn run(terminal: &mut Tui, cli: &Cli, store: Option<Store>) -> io::Result<()> {
             // Drain everything queued, so fast typing redraws once.
             loop {
                 match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        app.handle_key(key, Instant::now())
+                    Event::Key(event) if event.kind == KeyEventKind::Press => {
+                        if let Some(key) = input::key(event) {
+                            app.handle_key(key, Instant::now());
+                        }
                     }
                     Event::FocusLost => app.set_focus(false, Instant::now()),
                     Event::FocusGained => app.set_focus(true, Instant::now()),

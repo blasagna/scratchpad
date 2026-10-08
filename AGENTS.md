@@ -22,7 +22,7 @@ work in that subtree) and usually a `README.md` with the full narrative.
 | `mini_shell/` | A prototype shell that forks and execs one program per line, ported to C / C++ / Rust | [`mini_shell/AGENTS.md`](mini_shell/AGENTS.md) |
 | `tiny_http_server/` | An HTTP server that serves one hello-world page, one connection at a time, ported to C / C++ / Rust with cross-port parity | [`tiny_http_server/AGENTS.md`](tiny_http_server/AGENTS.md) |
 | `morse_trainer/` | A terminal UI for practicing Morse code (Rust) | [`morse_trainer/AGENTS.md`](morse_trainer/AGENTS.md) |
-| `crossword/` | A terminal UI to solve crosswords with vim-style keys, in three sizes after the NYT's Mini, Midi and Crossword, from free sources or from the NYT with the player's own cookie (Rust) | [`crossword/AGENTS.md`](crossword/AGENTS.md) |
+| `crossword/` | An app to solve crosswords with vim-style keys, in three sizes after the NYT's Mini, Midi and Crossword, from free sources or from the NYT with the player's own cookie — one core crate with a terminal UI (ratatui) and a GUI (iced) over it (Rust) | [`crossword/AGENTS.md`](crossword/AGENTS.md) |
 | `rust_python_bindings/` | Python bindings for a Rust library, with PyO3 + maturin | [`rust_python_bindings/AGENTS.md`](rust_python_bindings/AGENTS.md) |
 | `cpp_rust_bindings/` | Rust bindings for a C++ library, with cxx | [`cpp_rust_bindings/AGENTS.md`](cpp_rust_bindings/AGENTS.md) |
 | `rust_hosted_cpp/` | A C++ library with no build system of its own, built/tested/run entirely from Rust | [`rust_hosted_cpp/AGENTS.md`](rust_hosted_cpp/AGENTS.md) |

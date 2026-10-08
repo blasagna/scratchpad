@@ -20,6 +20,17 @@ pub fn cookie_header(token: &str) -> String {
     format!("NYT-S={value}")
 }
 
+/// The player's cookie as a `Cookie` header value. It comes from the `NYT_S`
+/// environment variable, or else from `nyt-s` in the config directory
+/// (`~/.config/crossword/nyt-s` on Linux).
+pub fn configured_cookie() -> Option<String> {
+    let token = std::env::var("NYT_S").ok().or_else(|| {
+        let path = dirs::config_dir()?.join("crossword").join("nyt-s");
+        std::fs::read_to_string(path).ok()
+    })?;
+    (!token.trim().is_empty()).then(|| cookie_header(&token))
+}
+
 pub fn puzzle_url(source: SourceId, date: NaiveDate) -> String {
     let kind = match source {
         SourceId::NytMini => "mini",

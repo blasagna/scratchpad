@@ -17,11 +17,12 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
 };
 
-use crate::app::{App, Browse, Listing, Mode, Screen, Solve, Tone, format_duration};
-use crate::game::{Game, Mark};
-use crate::puzzle::Direction;
-use crate::sources::Size;
-use crate::store::Status;
+use crossword_core::app::{App, Browse, Listing, Mode, Screen, Solve, Tone, format_duration};
+use crossword_core::game::{Game, Mark};
+use crossword_core::help::{self, Section};
+use crossword_core::puzzle::Direction;
+use crossword_core::sources::Size;
+use crossword_core::store::Status;
 
 const ACCENT: Color = Color::Cyan;
 const PAPER: Color = Color::Gray;
@@ -755,11 +756,10 @@ fn render_mode_line(frame: &mut Frame, app: &App, solve: &Solve, area: Rect) {
     )];
     left.extend(message_line(app).spans);
 
-    let open: Vec<usize> = game.puzzle().open_cells().collect();
-    let filled = open.iter().filter(|&&c| !game.letter(c).is_empty()).count();
+    let (filled, open) = game.fill_counts();
     let right = Line::from(vec![
         Span::styled(
-            format!("{}  {filled}/{} ", solve.showcmd(), open.len()),
+            format!("{}  {filled}/{open} ", solve.showcmd()),
             Style::default().fg(LINES),
         ),
         Span::styled("?", Style::default().fg(ACCENT)),
@@ -778,70 +778,24 @@ fn render_mode_line(frame: &mut Frame, app: &App, solve: &Solve, area: Rect) {
 
 // ----- help ------------------------------------------------------------------
 
-const HELP_NORMAL: &[(&str, &str)] = &[
-    ("h j k l  arrows", "move, over blocks; counts work: 3l"),
-    ("w  b  e", "next entry / its start / its end"),
-    ("0  ^  $", "start / end of this entry"),
-    ("gg  G", "first / last square"),
-    ("Tab  Shift-Tab", "next / previous unfinished entry"),
-    ("space  Enter", "switch across / down"),
-    ("i  a", "insert here / on the next square"),
-    ("I  A", "insert at the start / end of entry"),
-    ("x  r{c}  R", "clear / replace a square / rebus"),
-    ("dd  D", "clear the entry / to its end"),
-    ("cc  C  s", "change the entry / to end / square"),
-    ("u  Ctrl-r", "undo / redo"),
-    (":", "command line"),
-    ("q", "back to the list (progress is saved)"),
-];
-
-const HELP_INSERT: &[(&str, &str)] = &[
-    ("letters", "type and advance"),
-    ("Backspace", "erase, or step back and erase"),
-    ("space", "erase and step on"),
-    ("arrows  Tab", "move / next unfinished entry"),
-    ("Enter", "switch across / down"),
-    ("Esc  Ctrl-c", "back to normal mode"),
-];
-
-const HELP_COMMANDS: &[(&str, &str)] = &[
-    (":check [scope]", "mark wrong letters"),
-    (":reveal [scope]", "show answers"),
-    (":clear [scope]", "erase letters"),
-    ("", "scope: cell, word or puzzle"),
-    ("", "(word if left out)"),
-    (":12a  :12d  :12", "jump to a clue"),
-    (":reset", "start over, timer too"),
-    (":w  :q  :qa", "save / back / quit"),
-];
-
-const HELP_LISTS: &[(&str, &str)] = &[
-    ("j k  g G", "move"),
-    ("Ctrl-d  Ctrl-u", "move a page"),
-    ("h l  Tab", "switch source"),
-    ("Enter  r", "open / reload"),
-    ("q", "back"),
-];
-
 /// Width of the key column in each help column.
-const HELP_KEYS_LEFT: usize = 17;
-const HELP_KEYS_RIGHT: usize = 17;
+const HELP_KEYS: usize = 17;
 /// Inner width of the two-column help: 2 + 17 + 36 on the left, a gap of
 /// 2, and 2 + 17 + 28 on the right.
 const HELP_WIDE: u16 = 104;
 
-fn help_section(title: &str, rows: &[(&str, &str)], key_w: usize) -> Vec<Line<'static>> {
+fn help_section(section: &Section) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(Span::styled(
-        title.to_string(),
+        section.title,
         Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
     ))];
-    for (keys, what) in rows {
+    for (keys, what) in section.rows {
         lines.push(Line::from(vec![
             Span::styled(
-                format!("  {keys:<key_w$}"),
+                format!("  {keys:<HELP_KEYS$}"),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(what.to_string()),
+            Span::raw(*what),
         ]));
     }
     lines.push(Line::default());
@@ -849,23 +803,8 @@ fn help_section(title: &str, rows: &[(&str, &str)], key_w: usize) -> Vec<Line<'s
 }
 
 fn help_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
-    let left = [
-        help_section("Normal mode", HELP_NORMAL, HELP_KEYS_LEFT),
-        help_section("Insert mode", HELP_INSERT, HELP_KEYS_LEFT),
-    ]
-    .concat();
-    let right = [
-        help_section("Commands", HELP_COMMANDS, HELP_KEYS_RIGHT),
-        help_section("Lists", HELP_LISTS, HELP_KEYS_RIGHT),
-    ]
-    .concat();
-    (left, right)
-}
-
-/// How far the help can scroll in its tallest, one-column form.
-pub fn help_max_scroll() -> u16 {
-    let (left, right) = help_columns();
-    (left.len() + right.len()) as u16
+    let column = |sections: &[Section]| sections.iter().flat_map(help_section).collect();
+    (column(help::COLUMNS[0]), column(help::COLUMNS[1]))
 }
 
 fn render_help(frame: &mut Frame, scroll: u16) {

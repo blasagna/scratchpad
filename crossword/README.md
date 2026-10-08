@@ -1,18 +1,38 @@
 # crossword (Rust)
 
-A terminal UI to solve crosswords with vim-style keys, built on ratatui and
-crossterm. Puzzles come in three sizes, after the NYT's Mini, Midi and
-Crossword. Free sources supply all three. NYT puzzles work too, with your own
-subscription cookie.
+An app to solve crosswords with vim-style keys. It has two frontends: a
+terminal UI built on ratatui, and a desktop GUI built on iced. Puzzles come in
+three sizes, after the NYT's Mini, Midi and Crossword. Free sources supply all
+three. NYT puzzles work too, with your own subscription cookie.
+
+The two frontends share one core crate. The core holds the puzzle model, the
+rules, the sources, the saved files and the vim keys. Each frontend
+only converts its input into core calls and draws the core's state. Thus the
+keys, the commands and the saved progress are the same in both. You can start
+a puzzle in the terminal and finish it in the GUI.
 
 ## Build and run
 
 ```sh
-cargo run -p crossword                 # start on the size menu
-cargo run -p crossword -- mini         # open the Mini list (also: midi, crossword)
-cargo run -p crossword -- --no-save    # keep no cache and save no progress
-cargo test -p crossword                # offline tests
-cargo test -p crossword --test live -- --ignored   # live tests against each source
+cargo run -p crossword_tui                  # the terminal UI, on the size menu
+cargo run -p crossword_tui -- mini          # open the Mini list (also: midi, crossword)
+cargo run -p crossword_gui                  # the GUI
+cargo run -p crossword_gui -- crossword     # the GUI, on the Crossword list
+cargo run -p crossword_tui -- --no-save     # keep no cache and save no progress (both)
+```
+
+```sh
+cargo test -p crossword_core -p crossword_tui -p crossword_gui   # offline tests
+cargo test -p crossword_core --test live -- --ignored            # each source, live
+cargo test -p crossword_gui --test gui -- --ignored              # live puzzles in the GUI
+```
+
+The GUI tests run headless through `iced_test`, so they open no window. To
+look at what they draw, give them a directory for PNG snapshots:
+
+```sh
+CROSSWORD_GUI_SNAPSHOTS=/tmp/shots ICED_TEST_BACKEND=tiny-skia \
+    cargo test -p crossword_gui --test gui
 ```
 
 ## Puzzle sources
@@ -69,7 +89,7 @@ so. Copy a new cookie then.
 
 ## How to use
 
-The app has three screens:
+Both frontends have three screens:
 
 1. **Sizes.** Choose Mini, Midi or Crossword.
 2. **List.** Each source of the size has a tab. A `✓` marks a solved puzzle
@@ -77,7 +97,8 @@ The app has three screens:
 3. **Puzzle.** The grid, the Across and Down clues, the current clue, and a
    mode line as in vim.
 
-Press `?` on any screen for the key reference.
+Press `?` on any screen for the key reference. The keys below work the same
+in the terminal and in the GUI.
 
 ### Keys in normal mode
 
@@ -144,6 +165,18 @@ A scope is `cell`, `word` or `puzzle`. The default is `word`.
 | `r` | Reload the list. |
 | `q`, `Esc` | Go back. |
 
+### The mouse in the GUI
+
+| Click | Action |
+|-------|--------|
+| a size, a tab or a puzzle | Open it. |
+| a square | Move the cursor there. Click the cursor's square to switch between across and down. |
+| a clue | Go to the start of its entry. |
+| `← List`, `← Sizes` | Go back. The app saves your progress. |
+| `? Help` | Show the key reference. Press `Esc` or click to close it. |
+
+A click on a square closes the command line, but insert mode stays on.
+
 ### Rules
 
 - A rebus square accepts the full answer or its first letter alone.
@@ -152,6 +185,8 @@ A scope is `cell`, `word` or `puzzle`. The default is `word`.
   window loses focus, if the terminal reports focus changes.
 
 ## Files
+
+Both frontends use the same files.
 
 | What | Where on Linux |
 |------|----------------|
@@ -163,41 +198,64 @@ The app saves your progress at these times:
 
 - when you leave insert mode, and every 10 seconds in insert mode
 - after each change in normal mode
-- when the terminal window loses focus
+- when the window loses focus
+- when you close the GUI window
 - on `:w`, and when you leave the puzzle or quit
 
 ## Grid layout
 
-When the terminal has space, each square is a 3×2 box with its clue number in
-the top line. A 15×15 grid then needs 61 columns and 31 rows. In a smaller
-terminal, the grid changes to one row for each square with no lines or
-numbers, and a 15×15 grid needs 45 columns and 15 rows. The clue lists stand
-beside the grid when they have 24 columns or more.
+**Terminal.** When the terminal has space, each square is a 3×2 box with its
+clue number in the top line. A 15×15 grid then needs 61 columns and 31 rows.
+In a smaller terminal, the grid changes to one row for each square with no
+lines or numbers, and a 15×15 grid needs 45 columns and 15 rows. The clue
+lists stand beside the grid when they have 24 columns or more.
+
+**GUI.** The grid takes the left part of the window and grows with it, up to
+120 pixels a square. A red slash marks a wrong letter, and a corner triangle
+marks a revealed square, as in the NYT app.
 
 ## Layout
 
-- `src/puzzle.rs` — the puzzle model. It derives the clue numbers and the
-  entries from the grid.
-- `src/game.rs` — the state of one puzzle: the letters, the cursor, marks,
-  undo and the timer.
-- `src/app.rs` — the screens and the vim modes, as a state machine that the
-  tests drive with key events.
-- `src/ui.rs` — draws the screens with ratatui.
-- `src/store.rs` — the puzzle cache and the progress files.
-- `src/sources/` — one module for each publisher, the HTTP client, and the
-  `Fetcher` that runs on a separate thread.
-- `src/main.rs` — the CLI, the terminal setup and the event loop.
-- `tests/render.rs` — draws each screen on a headless terminal.
-- `tests/live.rs` — network tests, ignored by default.
-- `tests/fixtures/` — small synthetic puzzles in each source's format.
+The area is three crates in the cargo workspace:
+
+- `core/` (`crossword_core`) — everything but the drawing and the input:
+  - `src/puzzle.rs` — the puzzle model. It derives the clue numbers and the
+    entries from the grid.
+  - `src/game.rs` — the state of one puzzle: the letters, the cursor, marks,
+    undo and the timer.
+  - `src/app.rs` — the screens, the vim modes and the click actions, as a
+    state machine that the tests drive with key events.
+  - `src/keys.rs` — the key type that both frontends convert their input to.
+  - `src/help.rs` — the key reference that both frontends show.
+  - `src/store.rs` — the puzzle cache and the progress files.
+  - `src/sources/` — one module for each publisher, the HTTP client, and the
+    `Fetcher`.
+  - `tests/live.rs` — network tests, ignored by default.
+  - `tests/fixtures/` — small synthetic puzzles in each source's format.
+- `tui/` (`crossword_tui`, binary `crossword`) — the terminal frontend:
+  - `src/ui.rs` — draws the screens with ratatui.
+  - `src/input.rs` — converts crossterm keys to core keys.
+  - `src/main.rs` — the terminal setup, the fetch thread and the event loop.
+  - `tests/render.rs` — draws each screen on a headless terminal.
+- `gui/` (`crossword_gui`, binary `crossword-gui`) — the iced frontend:
+  - `src/view.rs` — the screens and the help overlay.
+  - `src/grid.rs` — the grid as a canvas, with click detection.
+  - `src/input.rs` — converts iced keys to core keys.
+  - `src/style.rs` — the colours and the widget styles.
+  - `src/lib.rs` — the update loop. It sends each message to the core and
+    runs downloads on threads of their own.
+  - `tests/gui.rs` — headless tests that click and type through `iced_test`.
 
 ## Add a source
 
 1. Add a variant to `SourceId`, with a name and a slug.
 2. Add the variant to `Size::sources`.
-3. Write a module in `src/sources/` with a pure `parse_puzzle` function that
-   returns a `PuzzleData`.
-4. Add a synthetic fixture in `tests/fixtures/` and a unit test for the parser.
+3. Write a module in `core/src/sources/` with a pure `parse_puzzle` function
+   that returns a `PuzzleData`.
+4. Add a synthetic fixture in `core/tests/fixtures/` and a unit test for the
+   parser.
 5. Connect the list and the download in `Fetcher::list` and
    `Fetcher::download`.
-6. Add a live test to `tests/live.rs`.
+6. Add a live test to `core/tests/live.rs`.
+
+Both frontends show the new source with no change.

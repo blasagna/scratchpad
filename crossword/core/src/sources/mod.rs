@@ -210,6 +210,17 @@ pub enum Request {
     Fetch(PuzzleRef),
 }
 
+impl Request {
+    /// The response for a request whose worker failed before it could
+    /// answer, so the screen that waits for it does not wait for ever.
+    pub fn failed(self, error: SourceError) -> Response {
+        match self {
+            Request::List(source) => Response::Listed(source, Err(error)),
+            Request::Fetch(puzzle) => Response::Fetched(puzzle, Err(error)),
+        }
+    }
+}
+
 /// What the fetch thread sends back. There is one response per player
 /// action, so the size gap between the variants costs nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]

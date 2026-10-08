@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::keys::{Key, KeyCode};
 
 use crate::game::{Game, Scope};
 use crate::puzzle::{Direction, Puzzle};
@@ -189,6 +189,17 @@ impl Solve {
         keys
     }
 
+    /// Drops a command line, a rebus or a half-typed operator. Insert mode
+    /// stays on, so a click while typing just moves the cursor.
+    fn reset_input(&mut self) {
+        if matches!(self.mode, Mode::Command | Mode::Rebus) {
+            self.mode = Mode::Normal;
+            self.input.clear();
+        }
+        self.pending = None;
+        self.count = None;
+    }
+
     fn enter_insert(&mut self, checkpoint: bool) -> Option<Message> {
         if self.game.is_solved() {
             return Some(solved_hint());
@@ -272,12 +283,12 @@ impl App {
         std::mem::take(&mut self.requests)
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent, now: Instant) {
+    pub fn handle_key(&mut self, key: Key, now: Instant) {
         if self.show_help {
             // j and k scroll the help; any other key closes it.
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
-                    self.help_scroll = (self.help_scroll + 1).min(crate::ui::help_max_scroll())
+                    self.help_scroll = (self.help_scroll + 1).min(crate::help::line_count())
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
                     self.help_scroll = self.help_scroll.saturating_sub(1)
@@ -373,7 +384,7 @@ impl App {
         }
     }
 
-    fn open_help(&mut self) {
+    pub fn open_help(&mut self) {
         self.show_help = true;
         self.help_scroll = 0;
     }
@@ -397,7 +408,7 @@ impl App {
 
     // ----- home ------------------------------------------------------------
 
-    fn home_key(&mut self, key: KeyEvent) {
+    fn home_key(&mut self, key: Key) {
         self.message = None;
         let last = Size::ALL.len() - 1;
         match key.code {
@@ -424,43 +435,109 @@ impl App {
 
     // ----- browse ----------------------------------------------------------
 
-    fn browse_key(&mut self, key: KeyEvent) {
+    fn browse_key(&mut self, key: Key) {
         self.message = None;
         let Some(browse) = self.browse.as_mut() else {
             self.screen = Screen::Home;
             return;
         };
-        let tabs = browse.tabs.len();
+        let (tabs, active) = (browse.tabs.len(), browse.active);
+        let tab = browse.tab_mut();
         match key.code {
             KeyCode::Char('c') if ctrl(key) => self.should_quit = true,
-            KeyCode::Char('d') if ctrl(key) => browse.tab_mut().move_selection(PAGE as isize),
-            KeyCode::Char('u') if ctrl(key) => browse.tab_mut().move_selection(-(PAGE as isize)),
+            KeyCode::Char('d') if ctrl(key) => tab.move_selection(PAGE as isize),
+            KeyCode::Char('u') if ctrl(key) => tab.move_selection(-(PAGE as isize)),
             _ if ctrl(key) => {}
-            KeyCode::Char('j') | KeyCode::Down => browse.tab_mut().move_selection(1),
-            KeyCode::Char('k') | KeyCode::Up => browse.tab_mut().move_selection(-1),
-            KeyCode::PageDown => browse.tab_mut().move_selection(PAGE as isize),
-            KeyCode::PageUp => browse.tab_mut().move_selection(-(PAGE as isize)),
-            KeyCode::Char('g') | KeyCode::Home => browse.tab_mut().selected = 0,
-            KeyCode::Char('G') | KeyCode::End => browse.tab_mut().move_selection(isize::MAX),
+            KeyCode::Char('j') | KeyCode::Down => tab.move_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => tab.move_selection(-1),
+            KeyCode::PageDown => tab.move_selection(PAGE as isize),
+            KeyCode::PageUp => tab.move_selection(-(PAGE as isize)),
+            KeyCode::Char('g') | KeyCode::Home => tab.selected = 0,
+            KeyCode::Char('G') | KeyCode::End => tab.move_selection(isize::MAX),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
-                browse.active = (browse.active + 1) % tabs
+                self.select_tab((active + 1) % tabs)
             }
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
-                browse.active = (browse.active + tabs - 1) % tabs
+                self.select_tab((active + tabs - 1) % tabs)
             }
-            KeyCode::Char('r') => {
-                let tab = browse.tab_mut();
-                tab.listing = Listing::Loading;
-                self.requests.push(Request::List(tab.source));
-            }
+            KeyCode::Char('r') => self.reload(),
             KeyCode::Enter => self.open_selected(),
-            KeyCode::Char('q') | KeyCode::Esc => {
-                self.loading = None;
-                self.screen = Screen::Home;
-            }
+            KeyCode::Char('q') | KeyCode::Esc => self.screen_back(),
             KeyCode::Char('?') => self.open_help(),
             _ => {}
         }
+    }
+
+    // ----- pointer actions -------------------------------------------------
+    //
+    // What the GUI's clicks do. The keys reach the same methods, so both
+    // frontends share one behaviour.
+
+    /// Shows a source's tab on the browse screen.
+    pub fn select_tab(&mut self, index: usize) {
+        if let Some(browse) = self.browse.as_mut()
+            && index < browse.tabs.len()
+        {
+            browse.active = index;
+        }
+    }
+
+    /// Selects an item of the current tab and opens its puzzle.
+    pub fn open_item(&mut self, index: usize) {
+        let Some(browse) = self.browse.as_mut() else {
+            return;
+        };
+        let tab = browse.tab_mut();
+        if index < tab.items().len() {
+            tab.selected = index;
+            self.open_selected();
+        }
+    }
+
+    /// Lists the current tab's source again.
+    pub fn reload(&mut self) {
+        if let Some(browse) = self.browse.as_mut() {
+            let tab = browse.tab_mut();
+            tab.listing = Listing::Loading;
+            self.requests.push(Request::List(tab.source));
+        }
+    }
+
+    /// Goes back one screen: from a puzzle to its list, saving progress, and
+    /// from a list to the sizes.
+    pub fn back(&mut self, now: Instant) {
+        match self.screen {
+            Screen::Solve => self.leave_puzzle(now),
+            Screen::Browse => self.screen_back(),
+            Screen::Home => {}
+        }
+    }
+
+    fn screen_back(&mut self) {
+        self.loading = None;
+        self.message = None;
+        self.screen = Screen::Home;
+    }
+
+    /// A click on a square: it moves the cursor there, or switches direction
+    /// on the cursor's own square. It also closes the command line.
+    pub fn click_cell(&mut self, cell: usize) {
+        if let Some(solve) = self.solve.as_mut() {
+            solve.reset_input();
+            solve.game.click(cell);
+        }
+    }
+
+    /// A click on a clue: the cursor goes to the start of its entry.
+    pub fn click_clue(&mut self, entry: usize) {
+        if let Some(solve) = self.solve.as_mut() {
+            solve.reset_input();
+            solve.game.goto_entry(entry);
+        }
+    }
+
+    pub fn close_help(&mut self) {
+        self.show_help = false;
     }
 
     fn open_selected(&mut self) {
@@ -522,7 +599,7 @@ impl App {
 
     // ----- solve -----------------------------------------------------------
 
-    fn solve_key(&mut self, key: KeyEvent, now: Instant) {
+    fn solve_key(&mut self, key: Key, now: Instant) {
         let Some(solve) = self.solve.as_mut() else {
             self.screen = Screen::Browse;
             return;
@@ -572,22 +649,12 @@ impl App {
     }
 }
 
-/// The key without its Alt bit, when Alt is held without Ctrl. Terminals send
-/// Alt+x as Esc then x, so this is also what a quick Esc and x look like.
-fn esc_prefixed(key: KeyEvent) -> Option<KeyEvent> {
-    let alt_only =
-        key.modifiers.contains(KeyModifiers::ALT) && !key.modifiers.contains(KeyModifiers::CONTROL);
-    alt_only.then(|| KeyEvent::new(key.code, key.modifiers - KeyModifiers::ALT))
+fn ctrl(key: Key) -> bool {
+    key.is_ctrl()
 }
 
-fn ctrl(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-}
-
-/// True for Ctrl or Alt chords, which never type a letter.
-fn chorded(key: KeyEvent) -> bool {
-    key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+fn chorded(key: Key) -> bool {
+    key.is_chorded()
 }
 
 fn solved_hint() -> Message {
@@ -626,9 +693,9 @@ fn edit(game: &mut Game, change: impl FnOnce(&mut Game)) -> bool {
     !game.drop_unchanged_checkpoint()
 }
 
-fn normal_key(s: &mut Solve, key: KeyEvent) -> Outcome {
+fn normal_key(s: &mut Solve, key: Key) -> Outcome {
     // Alt+x is Esc then x: the Esc cancels a pending operator or count.
-    let key = match esc_prefixed(key) {
+    let key = match key.esc_prefixed() {
         Some(plain) => {
             s.pending = None;
             s.count = None;
@@ -805,11 +872,11 @@ fn locked_hint() -> Message {
     Message::info("That square was checked or revealed, so it is locked.")
 }
 
-fn insert_key(s: &mut Solve, key: KeyEvent) -> Outcome {
+fn insert_key(s: &mut Solve, key: Key) -> Outcome {
     let mut out = Outcome::default();
     // Terminals send Alt+x as Esc then x, and an Esc typed just before a key
     // can arrive the same way. Like vim, take it as Esc followed by the key.
-    if let Some(plain) = esc_prefixed(key) {
+    if let Some(plain) = key.esc_prefixed() {
         leave_insert(s, &mut out);
         let next = normal_key(s, plain);
         return Outcome {
@@ -865,7 +932,7 @@ fn leave_insert(s: &mut Solve, out: &mut Outcome) {
     out.save = true;
 }
 
-fn command_key(s: &mut Solve, key: KeyEvent, now: Instant) -> Outcome {
+fn command_key(s: &mut Solve, key: Key, now: Instant) -> Outcome {
     match key.code {
         KeyCode::Esc => s.mode = Mode::Normal,
         KeyCode::Char('c' | '[') if ctrl(key) => s.mode = Mode::Normal,
@@ -886,7 +953,7 @@ fn command_key(s: &mut Solve, key: KeyEvent, now: Instant) -> Outcome {
     Outcome::default()
 }
 
-fn rebus_key(s: &mut Solve, key: KeyEvent) -> Outcome {
+fn rebus_key(s: &mut Solve, key: Key) -> Outcome {
     let mut out = Outcome::default();
     match key.code {
         KeyCode::Esc => s.mode = Mode::Normal,
@@ -1024,28 +1091,14 @@ mod tests {
     use crate::puzzle::tests::small;
     use crate::sources::SourceError;
 
-    fn press(app: &mut App, code: KeyCode) {
-        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE), Instant::now());
-    }
-
     fn keys(app: &mut App, text: &str) {
-        for c in text.chars() {
-            let code = match c {
-                '⎋' => KeyCode::Esc,
-                '⏎' => KeyCode::Enter,
-                '⌫' => KeyCode::Backspace,
-                '⇥' => KeyCode::Tab,
-                c => KeyCode::Char(c),
-            };
-            press(app, code);
+        for key in crate::keys::typed(text) {
+            app.handle_key(key, Instant::now());
         }
     }
 
     fn ctrl_key(app: &mut App, c: char) {
-        app.handle_key(
-            KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
-            Instant::now(),
-        );
+        app.handle_key(Key::ctrl(c), Instant::now());
     }
 
     fn reference() -> PuzzleRef {
@@ -1158,10 +1211,7 @@ mod tests {
     fn alt_chord_in_insert_mode_is_escape_then_the_key() {
         let mut app = solving();
         keys(&mut app, "ic");
-        app.handle_key(
-            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT),
-            Instant::now(),
-        );
+        app.handle_key(Key::alt(KeyCode::Char('q')), Instant::now());
         // Esc left insert mode, and q then left the puzzle.
         assert_eq!(app.screen, Screen::Browse);
         let item = app.browse.as_ref().unwrap().selected_item().unwrap();
@@ -1318,6 +1368,55 @@ mod tests {
         assert!(!solve(&app).game.is_running());
         app.set_focus(true, t0);
         assert!(solve(&app).game.is_running());
+    }
+
+    #[test]
+    fn pointer_actions_match_the_keys() {
+        let mut app = App::new(None);
+        app.open_size(Size::Mini);
+        app.select_tab(1);
+        assert_eq!(app.browse.as_ref().unwrap().active, 1);
+        app.select_tab(9); // out of range: ignored
+        assert_eq!(app.browse.as_ref().unwrap().active, 1);
+        app.take_requests();
+        app.reload();
+        assert_eq!(app.take_requests(), [Request::List(SourceId::NytMini)]);
+        app.back(Instant::now());
+        assert_eq!(app.screen, Screen::Home);
+
+        let mut app = solving();
+        keys(&mut app, ":che");
+        app.click_cell(4);
+        assert_eq!(solve(&app).mode, Mode::Normal);
+        assert_eq!(solve(&app).game.cursor(), 4);
+        app.click_clue(3); // 1D
+        assert_eq!(
+            (solve(&app).game.cursor(), solve(&app).game.direction()),
+            (0, Direction::Down)
+        );
+        keys(&mut app, "ic");
+        app.click_cell(8);
+        assert_eq!(solve(&app).mode, Mode::Insert); // a click keeps insert mode
+        app.back(Instant::now());
+        assert_eq!(app.screen, Screen::Browse);
+    }
+
+    #[test]
+    fn open_item_downloads_the_clicked_puzzle() {
+        let mut app = App::new(None);
+        app.open_size(Size::Crossword);
+        let other = PuzzleRef {
+            id: "2026-10-07".into(),
+            ..reference()
+        };
+        app.on_response(
+            Response::Listed(SourceId::Universal, Ok(vec![reference(), other.clone()])),
+            Instant::now(),
+        );
+        app.take_requests();
+        app.open_item(1);
+        assert_eq!(app.take_requests(), [Request::Fetch(other.clone())]);
+        assert_eq!(app.loading, Some(other));
     }
 
     #[test]
