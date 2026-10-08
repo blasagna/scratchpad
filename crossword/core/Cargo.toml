@@ -1,0 +1,23 @@
+[package]
+name = "crossword_core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "crossword_core"
+path = "src/lib.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"], optional = true }
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "3"
+
+[features]
+# Lets the binaries take a `Size` as a command-line value.
+clap = ["dep:clap"]
+
+[dev-dependencies]
+tempfile = "3"

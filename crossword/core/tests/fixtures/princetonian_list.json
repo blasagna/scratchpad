@@ -1,0 +1,5 @@
+[
+  {"author_ids": ["a1"], "date": "2026-04-02T00:00:00+00:00", "id": "aaaa-1111", "mini": true, "title": "First"},
+  {"author_ids": ["a1"], "date": "2026-04-03T00:00:00+00:00", "id": "bbbb-2222", "mini": true, "title": "Second"},
+  {"author_ids": ["a1"], "date": "2026-04-04T00:00:00+00:00", "id": "../evil", "mini": true, "title": "Bad id"}
+]
