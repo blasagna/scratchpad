@@ -30,11 +30,12 @@ use crate::store::Store;
 pub const LISTING_DAYS: u64 = 60;
 
 /// The three puzzle sizes, after the NYT's Mini, Midi and daily Crossword.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum Size {
     Mini,
     Midi,
-    #[value(alias = "full", alias = "daily")]
+    #[cfg_attr(feature = "clap", value(alias = "full", alias = "daily"))]
     Crossword,
 }
 

@@ -152,7 +152,7 @@ mod tests {
 
         assert_eq!(store.status(&r), Status::New);
         let mut game = Game::new(small());
-        game.type_letters("C");
+        game.type_letters("C", Instant::now());
         store
             .save_progress(&r, &game.progress(Instant::now()))
             .unwrap();

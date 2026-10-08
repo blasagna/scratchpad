@@ -618,10 +618,10 @@ impl App {
         let was_solved = solve.game.is_solved();
         let was_full = solve.game.is_full();
         let mut out = match solve.mode {
-            Mode::Normal => normal_key(solve, key),
-            Mode::Insert => insert_key(solve, key),
+            Mode::Normal => normal_key(solve, key, now),
+            Mode::Insert => insert_key(solve, key, now),
             Mode::Command => command_key(solve, key, now),
-            Mode::Rebus => rebus_key(solve, key),
+            Mode::Rebus => rebus_key(solve, key, now),
         };
 
         let game = &solve.game;
@@ -694,7 +694,7 @@ fn edit(game: &mut Game, change: impl FnOnce(&mut Game)) -> bool {
     !game.drop_unchanged_checkpoint()
 }
 
-fn normal_key(s: &mut Solve, key: Key) -> Outcome {
+fn normal_key(s: &mut Solve, key: Key, now: Instant) -> Outcome {
     // Alt+x is Esc then x: the Esc cancels a pending operator or count.
     let key = match key.esc_prefixed() {
         Some(plain) => {
@@ -714,7 +714,7 @@ fn normal_key(s: &mut Solve, key: Key) -> Outcome {
         match (pending, code) {
             (Pending::G, KeyCode::Char('g')) => g.goto_first(),
             (Pending::Replace, KeyCode::Char(c)) if !chorded(key) && c.is_alphanumeric() => {
-                out.changed = edit(g, |g| g.replace_cell(&c.to_string()));
+                out.changed = edit(g, |g| g.replace_cell(&c.to_string(), now));
                 if !out.changed && !g.editable(g.cursor()) {
                     out.message = Some(locked_hint());
                 }
@@ -767,7 +767,7 @@ fn normal_key(s: &mut Solve, key: Key) -> Outcome {
         KeyCode::Char('r') if ctrl(key) => {
             let mut any = false;
             for _ in 0..count {
-                any |= g.redo();
+                any |= g.redo(now);
             }
             out.changed = any;
             if !any {
@@ -873,13 +873,13 @@ fn locked_hint() -> Message {
     Message::info("That square was checked or revealed, so it is locked.")
 }
 
-fn insert_key(s: &mut Solve, key: Key) -> Outcome {
+fn insert_key(s: &mut Solve, key: Key, now: Instant) -> Outcome {
     let mut out = Outcome::default();
     // Terminals send Alt+x as Esc then x, and an Esc typed just before a key
     // can arrive the same way. Like vim, take it as Esc followed by the key.
     if let Some(plain) = key.esc_prefixed() {
         leave_insert(s, &mut out);
-        let next = normal_key(s, plain);
+        let next = normal_key(s, plain, now);
         return Outcome {
             save: true,
             changed: out.changed || next.changed,
@@ -896,7 +896,7 @@ fn insert_key(s: &mut Solve, key: Key) -> Outcome {
             out.changed = true;
         }
         KeyCode::Char(c) if c.is_alphanumeric() => {
-            g.type_letters(&c.to_string());
+            g.type_letters(&c.to_string(), now);
             out.changed = true;
         }
         KeyCode::Backspace => {
@@ -954,7 +954,7 @@ fn command_key(s: &mut Solve, key: Key, now: Instant) -> Outcome {
     Outcome::default()
 }
 
-fn rebus_key(s: &mut Solve, key: Key) -> Outcome {
+fn rebus_key(s: &mut Solve, key: Key, now: Instant) -> Outcome {
     let mut out = Outcome::default();
     match key.code {
         KeyCode::Esc => s.mode = Mode::Normal,
@@ -962,7 +962,7 @@ fn rebus_key(s: &mut Solve, key: Key) -> Outcome {
         KeyCode::Enter => {
             s.mode = Mode::Normal;
             let letters = std::mem::take(&mut s.input);
-            out.changed = edit(&mut s.game, |g| g.replace_cell(&letters));
+            out.changed = edit(&mut s.game, |g| g.replace_cell(&letters, now));
         }
         KeyCode::Backspace => {
             s.input.pop();
@@ -1047,7 +1047,7 @@ fn run_command(s: &mut Solve, command: &str, now: Instant) -> Outcome {
                     });
                 }
                 "reveal" => {
-                    let revealed = g.reveal(scope);
+                    let revealed = g.reveal(scope, now);
                     out.changed = true;
                     out.message = Some(Message::info(match revealed {
                         0 => "Nothing to reveal there.".to_string(),

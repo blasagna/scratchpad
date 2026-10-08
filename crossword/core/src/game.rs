@@ -4,6 +4,7 @@
 //! Nothing here knows about keys or terminals. `app` maps keys onto these
 //! calls, which keeps every rule unit-testable.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -95,7 +96,8 @@ pub struct Game {
     /// Time banked before the current run of the timer.
     elapsed: Duration,
     running_since: Option<Instant>,
-    undo: Vec<Snapshot>,
+    /// Oldest first, so the oldest step drops off the front at the limit.
+    undo: VecDeque<Snapshot>,
     redo: Vec<Snapshot>,
 }
 
@@ -114,7 +116,7 @@ impl Game {
             solved: false,
             elapsed: Duration::ZERO,
             running_since: None,
-            undo: Vec::new(),
+            undo: VecDeque::new(),
             redo: Vec::new(),
         }
     }
@@ -489,7 +491,7 @@ impl Game {
     /// wraps to an earlier blank. A completed entry hands the cursor on to the
     /// next entry with a blank square. In an entry that was already full, the
     /// cursor steps one square so that the player can overwrite in place.
-    pub fn type_letters(&mut self, letters: &str) {
+    pub fn type_letters(&mut self, letters: &str, now: Instant) {
         if self.solved {
             return;
         }
@@ -513,7 +515,7 @@ impl Game {
             // Overwriting a full entry, or nothing left blank anywhere.
             self.cursor = cells[pos + 1];
         }
-        self.check_solved();
+        self.check_solved(now);
     }
 
     /// Moves to the first blank square after `entry` in clue order.
@@ -564,11 +566,11 @@ impl Game {
     }
 
     /// Vim `r`: replaces the square under the cursor without moving.
-    pub fn replace_cell(&mut self, letters: &str) {
+    pub fn replace_cell(&mut self, letters: &str, now: Instant) {
         let letters = letters.trim().to_uppercase();
         if !letters.is_empty() {
             self.set(self.cursor, &letters);
-            self.check_solved();
+            self.check_solved(now);
         }
     }
 
@@ -620,7 +622,7 @@ impl Game {
     /// Fills `scope` with its answers. Squares that were already right are
     /// marked correct, and the others are marked revealed. Returns how many
     /// squares were revealed. As with a check, undo cannot take it back.
-    pub fn reveal(&mut self, scope: Scope) -> usize {
+    pub fn reveal(&mut self, scope: Scope, now: Instant) -> usize {
         if self.solved {
             return 0;
         }
@@ -637,7 +639,7 @@ impl Game {
                 revealed += 1;
             }
         }
-        self.check_solved();
+        self.check_solved(now);
         revealed
     }
 
@@ -661,10 +663,12 @@ impl Game {
         self.goto_first();
     }
 
-    fn check_solved(&mut self) {
+    /// Marks the puzzle solved once every square is right, and stops the
+    /// clock at `now`.
+    fn check_solved(&mut self, now: Instant) {
         if !self.solved && self.is_correct() {
             self.solved = true;
-            self.pause(Instant::now());
+            self.pause(now);
         }
     }
 
@@ -704,9 +708,9 @@ impl Game {
             return;
         }
         if self.undo.len() == UNDO_LIMIT {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
-        self.undo.push(self.snapshot());
+        self.undo.push_back(self.snapshot());
         self.redo.clear();
     }
 
@@ -715,10 +719,10 @@ impl Game {
     pub fn drop_unchanged_checkpoint(&mut self) -> bool {
         let unchanged = self
             .undo
-            .last()
+            .back()
             .is_some_and(|s| s.fill == self.fill && s.marks == self.marks);
         if unchanged {
-            self.undo.pop();
+            self.undo.pop_back();
         }
         unchanged
     }
@@ -729,7 +733,7 @@ impl Game {
         if self.solved {
             return false;
         }
-        let Some(snapshot) = self.undo.pop() else {
+        let Some(snapshot) = self.undo.pop_back() else {
             return false;
         };
         self.redo.push(self.snapshot());
@@ -737,16 +741,16 @@ impl Game {
         true
     }
 
-    pub fn redo(&mut self) -> bool {
+    pub fn redo(&mut self, now: Instant) -> bool {
         if self.solved {
             return false;
         }
         let Some(snapshot) = self.redo.pop() else {
             return false;
         };
-        self.undo.push(self.snapshot());
+        self.undo.push_back(self.snapshot());
         self.restore(snapshot);
-        self.check_solved();
+        self.check_solved(now);
         true
     }
 }
@@ -770,7 +774,7 @@ mod tests {
 
     fn type_word(g: &mut Game, word: &str) {
         for c in word.chars() {
-            g.type_letters(&c.to_string());
+            g.type_letters(&c.to_string(), Instant::now());
         }
     }
 
@@ -829,9 +833,9 @@ mod tests {
     fn typing_skips_filled_squares_and_wraps_within_the_entry() {
         let mut g = game();
         g.step(0, 1); // cell 1
-        g.type_letters("A"); // -> 2
+        g.type_letters("A", Instant::now()); // -> 2
         assert_eq!(g.cursor(), 2);
-        g.type_letters("T"); // nothing later; wraps to the blank at 0
+        g.type_letters("T", Instant::now()); // nothing later; wraps to the blank at 0
         assert_eq!(g.cursor(), 0);
     }
 
@@ -840,7 +844,7 @@ mod tests {
         let mut g = game();
         type_word(&mut g, "CAT"); // the cursor moves on to 4A
         g.prev_entry_start(); // back to the start of 1A
-        g.type_letters("B");
+        g.type_letters("B", Instant::now());
         assert_eq!(g.cursor(), 1);
         assert_eq!(g.letter(0), "B");
     }
@@ -921,11 +925,24 @@ mod tests {
         assert_eq!(g.mark(0), Mark::Correct);
         assert_eq!(g.mark(1), Mark::Wrong);
         // A correct square is locked; a wrong one clears its mark on change.
-        g.replace_cell("X");
+        g.replace_cell("X", Instant::now());
         assert_eq!(g.letter(0), "C");
         g.step(0, 1);
-        g.replace_cell("A");
+        g.replace_cell("A", Instant::now());
         assert_eq!((g.letter(1), g.mark(1)), ("A", Mark::None));
+    }
+
+    #[test]
+    fn the_clock_stops_at_the_solve() {
+        let mut g = game();
+        let t0 = Instant::now();
+        g.resume(t0);
+        g.reveal(Scope::Puzzle, t0 + Duration::from_secs(42));
+        assert!(g.is_solved());
+        assert_eq!(
+            g.elapsed(t0 + Duration::from_secs(100)),
+            Duration::from_secs(42)
+        );
     }
 
     #[test]
@@ -933,10 +950,10 @@ mod tests {
         let mut g = game();
         g.resume(Instant::now());
         type_word(&mut g, "CAT");
-        assert_eq!(g.reveal(Scope::Cell), 1); // cursor moved on to cell 3
+        assert_eq!(g.reveal(Scope::Cell, Instant::now()), 1); // cursor moved on to cell 3
         assert_eq!((g.letter(3), g.mark(3)), ("A", Mark::Revealed));
         assert!(!g.is_solved());
-        g.reveal(Scope::Puzzle);
+        g.reveal(Scope::Puzzle, Instant::now());
         assert!(g.is_solved());
         assert!(!g.is_running());
         // A solved grid is read-only.
@@ -974,7 +991,7 @@ mod tests {
         assert!(g.undo());
         assert_eq!((letters(&g).as_str(), g.cursor()), ("......#..", 0));
         assert!(!g.undo());
-        assert!(g.redo());
+        assert!(g.redo(Instant::now()));
         assert_eq!((letters(&g).as_str(), g.cursor()), ("CAT...#..", 0));
     }
 
@@ -983,7 +1000,7 @@ mod tests {
         let mut g = game();
         g.checkpoint();
         type_word(&mut g, "CO"); // the cursor moves on to cell 2
-        g.reveal(Scope::Cell); // T
+        g.reveal(Scope::Cell, Instant::now()); // T
         g.check(Scope::Entry); // C right, O wrong
         assert!(g.undo());
         // The typing is undone, but not on the squares that are now locked.
@@ -992,7 +1009,7 @@ mod tests {
             (g.mark(0), g.mark(1), g.mark(2)),
             (Mark::Correct, Mark::None, Mark::Revealed)
         );
-        assert!(g.redo());
+        assert!(g.redo(Instant::now()));
         assert_eq!(
             (letters(&g).as_str(), g.mark(1)),
             ("COT...#..", Mark::Wrong)
@@ -1005,7 +1022,7 @@ mod tests {
         type_word(&mut g, "CO");
         g.checkpoint();
         g.goto_last();
-        g.replace_cell("E");
+        g.replace_cell("E", Instant::now());
         g.goto_first();
         g.step(0, 1);
         g.check(Scope::Cell); // O is wrong
@@ -1020,7 +1037,7 @@ mod tests {
         assert!(g.drop_unchanged_checkpoint());
         assert!(!g.undo());
         g.checkpoint();
-        g.type_letters("C");
+        g.type_letters("C", Instant::now());
         assert!(!g.drop_unchanged_checkpoint());
         assert!(g.undo());
     }
@@ -1121,7 +1138,7 @@ mod tests {
         assert_eq!(restored.mark(2), Mark::Correct);
         // The stale letter is no longer locked, so the puzzle can be solved.
         restored.goto_first();
-        restored.replace_cell("C");
+        restored.replace_cell("C", Instant::now());
         assert_eq!(restored.letter(0), "C");
     }
 
@@ -1148,9 +1165,9 @@ mod tests {
     fn status_follows_the_letters_and_the_solve() {
         let mut g = game();
         assert_eq!(g.progress(Instant::now()).status(), Status::New);
-        g.type_letters("C");
+        g.type_letters("C", Instant::now());
         assert_eq!(g.progress(Instant::now()).status(), Status::Started);
-        g.reveal(Scope::Puzzle);
+        g.reveal(Scope::Puzzle, Instant::now());
         assert_eq!(g.progress(Instant::now()).status(), Status::Solved);
     }
 }

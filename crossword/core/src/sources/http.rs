@@ -20,7 +20,7 @@ impl Http {
     pub fn new() -> Http {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
-            .user_agent(concat!("crossword-tui/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("crossword/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
         Http { agent }
