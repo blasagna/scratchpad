@@ -1,0 +1,8 @@
+[
+  {"answer": "CAT", "clue": "Feline", "crossword_id": "bbbb-2222", "id": "c1", "is_across": true, "x": 0, "y": 0},
+  {"answer": "ARE", "clue": "Exist", "crossword_id": "bbbb-2222", "id": "c2", "is_across": true, "x": 0, "y": 1},
+  {"answer": "Ee", "clue": "Letter pair", "crossword_id": "bbbb-2222", "id": "c3", "is_across": true, "x": 1, "y": 2},
+  {"answer": "CA", "clue": "Golden State, briefly", "crossword_id": "bbbb-2222", "id": "c4", "is_across": false, "x": 0, "y": 0},
+  {"answer": "ARE", "clue": "Exist", "crossword_id": "bbbb-2222", "id": "c5", "is_across": false, "x": 1, "y": 0},
+  {"answer": "TEE", "clue": "Golf peg", "crossword_id": "bbbb-2222", "id": "c6", "is_across": false, "x": 2, "y": 0}
+]
