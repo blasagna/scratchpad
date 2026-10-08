@@ -288,9 +288,13 @@ impl Fetcher {
         }
     }
 
-    /// Downloads a puzzle, or reads it from the cache when it is there.
+    /// Downloads a puzzle, or reads it from the cache when it is there. A
+    /// cached puzzle that no longer builds is downloaded again, and the new
+    /// copy replaces it. Otherwise one bad file would fail every later fetch.
     pub fn fetch(&self, puzzle: &PuzzleRef) -> Result<PuzzleData, SourceError> {
-        if let Some(cached) = self.store.as_ref().and_then(|s| s.load_puzzle(puzzle)) {
+        let cached = self.store.as_ref().and_then(|s| s.load_puzzle(puzzle));
+        if let Some(cached) = cached.filter(|data| crate::puzzle::Puzzle::new(data.clone()).is_ok())
+        {
             return Ok(cached);
         }
         let data = self.download(puzzle)?;
@@ -555,6 +559,30 @@ mod tests {
             Err(SourceError::NeedsCookie)
         );
         let puzzle = PuzzleRef::dated(SourceId::NytMini, today);
+        assert_eq!(fetcher.fetch(&puzzle), Err(SourceError::NeedsCookie));
+    }
+
+    #[test]
+    fn a_cached_puzzle_that_does_not_build_is_downloaded_again() {
+        // With no cookie, a download of an NYT puzzle fails before any
+        // request, so NeedsCookie shows that the fetch skipped the cache.
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("cache"), dir.path().join("data"));
+        let puzzle = PuzzleRef::dated(
+            SourceId::NytMini,
+            NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+        );
+        let fetcher = Fetcher::new(None, Some(store.clone()));
+
+        let good = crate::puzzle::tests::small().data().clone();
+        store.save_puzzle(&puzzle, &good).unwrap();
+        assert_eq!(fetcher.fetch(&puzzle), Ok(good.clone()));
+
+        let bad = PuzzleData {
+            width: good.width + 1,
+            ..good
+        };
+        store.save_puzzle(&puzzle, &bad).unwrap();
         assert_eq!(fetcher.fetch(&puzzle), Err(SourceError::NeedsCookie));
     }
 }
