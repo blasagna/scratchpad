@@ -5,12 +5,12 @@ use std::time::Instant;
 
 use iced::font::{self, Font};
 use iced::widget::{
-    Column, button, canvas, center, column, container, mouse_area, opaque, row, scrollable, space,
-    stack, text,
+    Column, button, canvas, center, column, container, mouse_area, opaque, row, scrollable, sensor,
+    space, stack, text,
 };
 use iced::{Center, Element, Fill, FillPortion};
 
-use crossword_core::app::{App, Listing, Mode, Screen, Solve, Tone, format_duration};
+use crossword_core::app::{App, Listing, Mode, Page, Screen, Solve, Tone, format_duration};
 use crossword_core::game::Game;
 use crossword_core::help::{self, Section};
 use crossword_core::puzzle::Direction;
@@ -19,7 +19,17 @@ use crossword_core::store::Status;
 
 use crate::grid::Grid;
 use crate::style::{self, ACCENT, CORRECT, ClueKind, INK, MUTED, REVEALED, STARTED, WRONG};
-use crate::{ACROSS_LIST, DOWN_LIST, Message, PUZZLE_LIST};
+use crate::{ACROSS_LIST, DOWN_LIST, Message};
+
+/// The height of a puzzle's row in a listing, and the gap between rows. The
+/// rows have a fixed height, so the GUI can tell how many fit on a page.
+const ROW: f32 = 34.0;
+const ROW_GAP: f32 = 2.0;
+
+/// How many puzzle rows fit in a listing of this height.
+pub fn rows_that_fit(height: f32) -> usize {
+    ((height + ROW_GAP) / (ROW + ROW_GAP)).floor().max(1.0) as usize
+}
 
 const BOLD: Font = Font {
     weight: font::Weight::Bold,
@@ -174,22 +184,31 @@ fn browse_view(app: &App) -> Element<'_, Message> {
             center(text("This source lists no puzzles.")).into()
         }
         Listing::Ready(items) => {
-            let rows = items.iter().enumerate().map(|(i, item)| {
+            // The list stays in place, and the selection moves down it. Past
+            // the last row, the next page replaces the whole list.
+            let page = tab.page(app.page_len());
+            let rows = (page.start..page.end).map(|i| {
                 button(
-                    row![status_label(item.status), text(item.puzzle.label())]
+                    row![status_label(items[i].status), text(items[i].puzzle.label())]
                         .spacing(8)
                         .align_y(Center),
                 )
                 .width(Fill)
+                .height(ROW)
                 .padding([6, 12])
                 .style(style::list_item(i == tab.selected))
                 .on_press(Message::Item(i))
                 .into()
             });
-            scrollable(Column::with_children(rows).spacing(2))
-                .id(PUZZLE_LIST)
-                .height(Fill)
-                .into()
+            // The sensor measures the room for rows, and the core turns
+            // that into the page length when it changes.
+            let list = sensor(
+                container(Column::with_children(rows).spacing(ROW_GAP))
+                    .width(Fill)
+                    .height(Fill),
+            )
+            .on_resize(|size| Message::ListHeight(size.height));
+            column![list, pager(page)].spacing(8).into()
         }
     };
 
@@ -200,6 +219,7 @@ fn browse_view(app: &App) -> Element<'_, Message> {
         hints(&[
             ("h/l", "source"),
             ("j/k", "move"),
+            ("Ctrl-b/f", "page"),
             ("Enter", "open"),
             ("r", "reload"),
             ("q", "back"),
@@ -209,6 +229,28 @@ fn browse_view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(14)
     .padding(24)
+    .into()
+}
+
+/// The page number, between buttons that turn the page. A listing that fits
+/// on one page shows nothing here.
+fn pager<'a>(page: Page) -> Element<'a, Message> {
+    if page.count < 2 {
+        return space().into();
+    }
+    let turn = |label, pages: isize, enabled: bool| {
+        button(text(label))
+            .padding([4, 12])
+            .style(style::link)
+            .on_press_maybe(enabled.then_some(Message::Page(pages)))
+    };
+    row![
+        turn("‹ Previous", -1, page.number > 0),
+        text(format!("Page {} of {}", page.number + 1, page.count)).color(MUTED),
+        turn("Next ›", 1, page.number + 1 < page.count),
+    ]
+    .spacing(12)
+    .align_y(Center)
     .into()
 }
 

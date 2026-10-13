@@ -164,6 +164,7 @@ fn run(terminal: &mut Tui, cli: &Cli, store: Option<Store>) -> io::Result<()> {
             .draw(|frame| ui::render(frame, &app, Instant::now()))?
             .area;
         app.set_help_max_scroll(ui::help_max_scroll(screen));
+        app.set_page_len(ui::page_len(screen));
 
         if event::poll(TICK)? {
             // Drain everything queued, so fast typing redraws once.

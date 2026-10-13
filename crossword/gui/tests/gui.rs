@@ -180,6 +180,73 @@ fn clicking_an_item_requests_its_puzzle() {
 }
 
 #[test]
+fn a_long_listing_shows_one_page_that_fits_the_window() {
+    let mut gui = Gui::new(App::new(None), None);
+    let refs = (0..60)
+        .map(|i| PuzzleRef {
+            id: format!("p{i}"),
+            title: Some(format!("Puzzle {i:02}")),
+            date: None,
+            ..reference()
+        })
+        .collect();
+    apply(
+        &mut gui,
+        vec![
+            Message::Size(Size::Crossword),
+            Message::Fetched(Box::new(Response::Listed(SourceId::Universal, Ok(refs)))),
+        ],
+    );
+    // The first draw measures the listing, and the core takes the page
+    // length from it.
+    let messages = interact(&gui, "browse-measure", |ui| {
+        let _ = ui.snapshot(&Theme::Light);
+    });
+    assert!(
+        messages.iter().any(|m| matches!(m, Message::ListHeight(_))),
+        "{messages:?}"
+    );
+    apply(&mut gui, messages);
+    let len = gui.app().page_len();
+    assert!((5..60).contains(&len), "{len} rows fit in 820 pixels");
+
+    let messages = interact(&gui, "browse-page", |ui| {
+        assert!(ui.find(format!("Puzzle {:02}", len - 1)).is_ok());
+        assert!(ui.find(format!("Puzzle {len:02}")).is_err());
+        assert!(
+            ui.find(format!("Page 1 of {}", 60_usize.div_ceil(len)))
+                .is_ok()
+        );
+        ui.click("Next ›").expect("next page");
+    });
+    // A snapshot redraws, and the redraw measures the listing again.
+    let turns = |messages: &[Message]| {
+        messages
+            .iter()
+            .filter(|m| !matches!(m, Message::ListHeight(_)))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        matches!(turns(&messages)[..], [Message::Page(1)]),
+        "{messages:?}"
+    );
+    apply(&mut gui, messages);
+    let tab = gui.app().browse.as_ref().unwrap().tab();
+    assert_eq!(tab.selected, len);
+
+    let messages = interact(&gui, "browse-page-2", |ui| {
+        assert!(ui.find(format!("Puzzle {len:02}")).is_ok());
+        assert!(ui.find("Puzzle 00").is_err());
+        ui.click("‹ Previous").expect("previous page");
+    });
+    assert!(
+        matches!(turns(&messages)[..], [Message::Page(-1)]),
+        "{messages:?}"
+    );
+}
+
+#[test]
 fn solve_screen_shows_clues_and_a_clue_click_moves_the_cursor() {
     let mut gui = solving();
     let messages = interact(&gui, "solve", |ui| {

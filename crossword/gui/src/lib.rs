@@ -22,10 +22,9 @@ use crossword_core::app::{App, Screen};
 use crossword_core::keys::Key;
 use crossword_core::sources::{Fetcher, Request, Response, Size, SourceError};
 
-/// Scrollable ids, so updates can bring the selection into view.
+/// Scrollable ids, so updates can bring the current clues into view.
 pub const ACROSS_LIST: &str = "across";
 pub const DOWN_LIST: &str = "down";
-pub const PUZZLE_LIST: &str = "puzzles";
 
 /// How often the solve timer redraws.
 const TICK: Duration = Duration::from_millis(500);
@@ -45,6 +44,10 @@ pub enum Message {
     Size(Size),
     Tab(usize),
     Item(usize),
+    /// Turns the listing this many pages: 1 forward, -1 back.
+    Page(isize),
+    /// The listing's room for rows changed; the core needs the page length.
+    ListHeight(f32),
     Back,
     Reload,
     Cell(usize),
@@ -53,18 +56,13 @@ pub enum Message {
     CloseHelp,
 }
 
-/// What the lists last scrolled to show. They move only when it changes, so
-/// they never fight the player's own scrolling.
+/// What the clue lists last scrolled to show: the current entry and the
+/// crossing one. They move only when it changes, so they never fight the
+/// player's own scrolling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScrollTarget {
-    Clues {
-        active: usize,
-        crossing: Option<usize>,
-    },
-    Puzzles {
-        tab: usize,
-        selected: usize,
-    },
+struct ScrollTarget {
+    active: usize,
+    crossing: Option<usize>,
 }
 
 pub struct Gui {
@@ -106,6 +104,8 @@ impl Gui {
             Message::Size(size) => app.open_size(size),
             Message::Tab(index) => app.select_tab(index),
             Message::Item(index) => app.open_item(index),
+            Message::Page(pages) => app.turn_page(pages),
+            Message::ListHeight(height) => app.set_page_len(view::rows_that_fit(height)),
             Message::Back => app.back(now),
             Message::Reload => app.reload(),
             Message::Cell(cell) => app.click_cell(cell),
@@ -181,74 +181,52 @@ impl Gui {
         }))
     }
 
-    /// Brings the current clue and the crossing clue, or the selected
-    /// puzzle, into view after they change.
+    /// Brings the current clue and the crossing clue into view after they
+    /// change. The puzzle listing needs no scrolling: it shows one page.
     fn scroll(&mut self) -> Vec<Task<Message>> {
-        let target = match self.app.screen {
-            Screen::Solve => self.app.solve.as_ref().map(|s| ScrollTarget::Clues {
+        let target = match (self.app.screen, &self.app.solve) {
+            (Screen::Solve, Some(s)) => Some(ScrollTarget {
                 active: s.game.current_entry(),
                 crossing: s.game.crossing_entry(),
             }),
-            Screen::Browse => self.app.browse.as_ref().map(|b| ScrollTarget::Puzzles {
-                tab: b.active,
-                selected: b.tab().selected,
-            }),
-            Screen::Home => None,
+            // Off the solve screen, forget the target: the clue lists come
+            // back new, and must scroll again.
+            _ => None,
         };
-        if target.is_none() || target == self.scrolled {
+        if target == self.scrolled {
             return Vec::new();
         }
         self.scrolled = target;
+        let (Some(ScrollTarget { active, crossing }), Some(solve)) = (target, &self.app.solve)
+        else {
+            return Vec::new();
+        };
 
         // A relative offset of i / (n - 1) always shows row i of n equal rows.
         let fraction =
             |index: usize, count: usize| index as f32 / count.saturating_sub(1).max(1) as f32;
-        match target {
-            Some(ScrollTarget::Clues { active, crossing }) => {
-                let puzzle = self
-                    .app
-                    .solve
-                    .as_ref()
-                    .map(|s| s.game.puzzle())
-                    .expect("solving");
-                [Some(active), crossing]
-                    .into_iter()
-                    .flatten()
-                    .map(|entry| {
-                        let direction = puzzle.entry(entry).direction;
-                        let list: Vec<usize> = (0..puzzle.entries().len())
-                            .filter(|&e| puzzle.entry(e).direction == direction)
-                            .collect();
-                        let index = list.iter().position(|&e| e == entry).unwrap_or(0);
-                        let id = match direction {
-                            crossword_core::puzzle::Direction::Across => ACROSS_LIST,
-                            crossword_core::puzzle::Direction::Down => DOWN_LIST,
-                        };
-                        snap_to(
-                            id,
-                            RelativeOffset {
-                                x: 0.0,
-                                y: fraction(index, list.len()),
-                            },
-                        )
-                    })
-                    .collect()
-            }
-            Some(ScrollTarget::Puzzles { selected, .. }) => {
-                let count = self
-                    .app
-                    .browse
-                    .as_ref()
-                    .map_or(0, |b| b.tab().items().len());
-                vec![snap_to(
-                    PUZZLE_LIST,
+        let puzzle = solve.game.puzzle();
+        [Some(active), crossing]
+            .into_iter()
+            .flatten()
+            .map(|entry| {
+                let direction = puzzle.entry(entry).direction;
+                let list: Vec<usize> = (0..puzzle.entries().len())
+                    .filter(|&e| puzzle.entry(e).direction == direction)
+                    .collect();
+                let index = list.iter().position(|&e| e == entry).unwrap_or(0);
+                let id = match direction {
+                    crossword_core::puzzle::Direction::Across => ACROSS_LIST,
+                    crossword_core::puzzle::Direction::Down => DOWN_LIST,
+                };
+                snap_to(
+                    id,
                     RelativeOffset {
                         x: 0.0,
-                        y: fraction(selected, count),
+                        y: fraction(index, list.len()),
                     },
-                )]
-            }
-            None => Vec::new(),
-        }
+                )
+            })
+            .collect()
     }
 }

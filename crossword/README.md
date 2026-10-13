@@ -159,7 +159,8 @@ A scope is `cell`, `word` or `puzzle`. The default is `word`.
 
 | Keys | Action |
 |------|--------|
-| `j` `k`, `g` `G`, `Ctrl-d` `Ctrl-u` | Move. |
+| `j` `k`, `g` `G` | Move the cursor. The list stays in place. The next page replaces it when the cursor moves off the page. |
+| `Ctrl-f` `Ctrl-b`, `Ctrl-d` `Ctrl-u`, `PageDown` `PageUp` | Go to the next or the previous page. The cursor keeps its row. |
 | `h` `l`, `Tab` | Switch the source tab. |
 | `Enter` | Open the puzzle. |
 | `r` | Reload the list. |
@@ -170,6 +171,7 @@ A scope is `cell`, `word` or `puzzle`. The default is `word`.
 | Click | Action |
 |-------|--------|
 | a size, a tab or a puzzle | Open it. |
+| `Next ›`, `‹ Previous` | Go to the next or the previous page of puzzles. |
 | a square | Move the cursor there. Click the cursor's square to switch between across and down. |
 | a clue | Go to the start of its entry. |
 | `← List`, `← Sizes` | Go back. The app saves your progress. |

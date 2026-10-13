@@ -15,7 +15,8 @@ use crate::puzzle::{Direction, Puzzle};
 use crate::sources::{PuzzleRef, Request, Response, Size, SourceId};
 use crate::store::{Status, Store};
 
-/// How far `Ctrl-d` and `Ctrl-u` move in a listing.
+/// How many puzzles a page of a listing holds until the frontend reports how
+/// many fit.
 const PAGE: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +126,35 @@ impl Tab {
         let last = self.items().len().saturating_sub(1);
         self.selected = self.selected.saturating_add_signed(delta).min(last);
     }
+
+    /// The page of `len` items that holds the selection. The list stays in
+    /// place while the selection moves inside the page, and turns a whole
+    /// page when the selection leaves it.
+    pub fn page(&self, len: usize) -> Page {
+        let len = len.max(1);
+        let items = self.items().len();
+        let number = self.selected.min(items.saturating_sub(1)) / len;
+        let start = number * len;
+        Page {
+            start,
+            end: (start + len).min(items),
+            number,
+            count: items.div_ceil(len).max(1),
+        }
+    }
+}
+
+/// One page of a listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Page {
+    /// The index of the first item on the page.
+    pub start: usize,
+    /// One past the index of the last item on the page.
+    pub end: usize,
+    /// The page's number, from 0.
+    pub number: usize,
+    /// How many pages the listing has. An empty listing has one.
+    pub count: usize,
 }
 
 /// The browse screen: one tab per source of a size.
@@ -236,6 +266,9 @@ pub struct App {
     pub help_scroll: u16,
     /// How far the help can scroll, as the frontend last reported it.
     help_max_scroll: u16,
+    /// How many puzzles a page of a listing holds, as the frontend last
+    /// reported it.
+    page_len: usize,
     pub should_quit: bool,
     /// The puzzle being downloaded, while a download is in flight.
     pub loading: Option<PuzzleRef>,
@@ -261,6 +294,7 @@ impl App {
             show_help: false,
             help_scroll: 0,
             help_max_scroll: crate::help::line_count(),
+            page_len: PAGE,
             should_quit: false,
             loading: None,
             store,
@@ -400,6 +434,16 @@ impl App {
         self.help_scroll = self.help_scroll.min(max);
     }
 
+    /// Sets how many puzzles a page of a listing holds. That depends on how
+    /// many rows the frontend has room for, so the frontend reports it.
+    pub fn set_page_len(&mut self, len: usize) {
+        self.page_len = len.max(1);
+    }
+
+    pub fn page_len(&self) -> usize {
+        self.page_len
+    }
+
     /// Saves progress, then asks the event loop to exit.
     pub fn quit(&mut self, now: Instant) {
         self.save(now);
@@ -454,15 +498,16 @@ impl App {
         };
         let (tabs, active) = (browse.tabs.len(), browse.active);
         let tab = browse.tab_mut();
+        let page = self.page_len as isize;
         match key.code {
             KeyCode::Char('c') if ctrl(key) => self.should_quit = true,
-            KeyCode::Char('d') if ctrl(key) => tab.move_selection(PAGE as isize),
-            KeyCode::Char('u') if ctrl(key) => tab.move_selection(-(PAGE as isize)),
+            KeyCode::Char('d' | 'f') if ctrl(key) => tab.move_selection(page),
+            KeyCode::Char('u' | 'b') if ctrl(key) => tab.move_selection(-page),
             _ if ctrl(key) => {}
             KeyCode::Char('j') | KeyCode::Down => tab.move_selection(1),
             KeyCode::Char('k') | KeyCode::Up => tab.move_selection(-1),
-            KeyCode::PageDown => tab.move_selection(PAGE as isize),
-            KeyCode::PageUp => tab.move_selection(-(PAGE as isize)),
+            KeyCode::PageDown => tab.move_selection(page),
+            KeyCode::PageUp => tab.move_selection(-page),
             KeyCode::Char('g') | KeyCode::Home => tab.selected = 0,
             KeyCode::Char('G') | KeyCode::End => tab.move_selection(isize::MAX),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
@@ -502,6 +547,16 @@ impl App {
         if index < tab.items().len() {
             tab.selected = index;
             self.open_selected();
+        }
+    }
+
+    /// Turns the current tab's listing a page forward, or back for a
+    /// negative `pages`. The selection keeps its row on the page, or stops
+    /// on the last item.
+    pub fn turn_page(&mut self, pages: isize) {
+        let page = self.page_len as isize;
+        if let Some(browse) = self.browse.as_mut() {
+            browse.tab_mut().move_selection(pages.saturating_mul(page));
         }
     }
 
@@ -1432,6 +1487,97 @@ mod tests {
         app.open_item(1);
         assert_eq!(app.take_requests(), [Request::Fetch(other.clone())]);
         assert_eq!(app.loading, Some(other));
+    }
+
+    /// A Crossword list of `count` Universal puzzles, in pages of `len`.
+    fn listing(count: usize, len: usize) -> App {
+        let mut app = App::new(None);
+        app.open_size(Size::Crossword);
+        let refs = (0..count)
+            .map(|i| PuzzleRef {
+                id: format!("puzzle-{i}"),
+                ..reference()
+            })
+            .collect();
+        app.on_response(
+            Response::Listed(SourceId::Universal, Ok(refs)),
+            Instant::now(),
+        );
+        app.set_page_len(len);
+        app
+    }
+
+    fn page(app: &App) -> (usize, Page) {
+        let tab = app.browse.as_ref().unwrap().tab();
+        (tab.selected, tab.page(app.page_len()))
+    }
+
+    #[test]
+    fn the_cursor_moves_inside_a_page_and_turns_it_at_the_edge() {
+        let mut app = listing(7, 3);
+        let first = Page {
+            start: 0,
+            end: 3,
+            number: 0,
+            count: 3,
+        };
+        assert_eq!(page(&app), (0, first));
+        keys(&mut app, "jj");
+        assert_eq!(page(&app), (2, first));
+        keys(&mut app, "j");
+        let second = Page {
+            start: 3,
+            end: 6,
+            number: 1,
+            count: 3,
+        };
+        assert_eq!(page(&app), (3, second));
+        keys(&mut app, "k");
+        assert_eq!(page(&app), (2, first));
+        // The last page holds what is left.
+        keys(&mut app, "G");
+        let last = Page {
+            start: 6,
+            end: 7,
+            number: 2,
+            count: 3,
+        };
+        assert_eq!(page(&app), (6, last));
+    }
+
+    #[test]
+    fn page_keys_keep_the_row_or_stop_on_the_last_item() {
+        let mut app = listing(7, 3);
+        keys(&mut app, "j");
+        ctrl_key(&mut app, 'f');
+        assert_eq!(page(&app).0, 4);
+        ctrl_key(&mut app, 'd');
+        assert_eq!(page(&app).0, 6);
+        ctrl_key(&mut app, 'b');
+        assert_eq!(page(&app).0, 3);
+        ctrl_key(&mut app, 'u');
+        assert_eq!(page(&app).0, 0);
+        app.turn_page(1);
+        assert_eq!(page(&app).0, 3);
+        app.turn_page(-1);
+        assert_eq!(page(&app).0, 0);
+    }
+
+    #[test]
+    fn an_empty_or_unloaded_listing_has_one_empty_page() {
+        let app = listing(0, 3);
+        let empty = Page {
+            start: 0,
+            end: 0,
+            number: 0,
+            count: 1,
+        };
+        assert_eq!(page(&app), (0, empty));
+        let mut app = App::new(None);
+        app.open_size(Size::Crossword);
+        app.set_page_len(0); // a frontend with no room still gets one row
+        assert_eq!(page(&app), (0, empty));
+        assert_eq!(app.page_len(), 1);
     }
 
     #[test]

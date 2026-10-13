@@ -164,8 +164,7 @@ fn render_browse(frame: &mut Frame, app: &App) {
     let Some(browse) = app.browse.as_ref() else {
         return;
     };
-    let [main, status] =
-        Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(frame.area());
+    let areas = browse_layout(frame.area());
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(Span::styled(
@@ -180,15 +179,7 @@ fn render_browse(frame: &mut Frame, app: &App) {
             ("q", "back"),
             ("?", "help"),
         ]));
-    let inner = block.inner(main);
-    frame.render_widget(block, main);
-
-    let [tabs_area, rule, list_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ])
-    .areas(inner);
+    frame.render_widget(block, areas.main);
     let titles: Vec<Line> = browse
         .tabs
         .iter()
@@ -203,16 +194,55 @@ fn render_browse(frame: &mut Frame, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )
         .divider(Span::styled("│", Style::default().fg(LINES)));
-    frame.render_widget(tabs, tabs_area);
+    frame.render_widget(tabs, areas.tabs);
     frame.render_widget(
-        Paragraph::new("─".repeat(rule.width as usize)).style(Style::default().fg(LINES)),
-        rule,
+        Paragraph::new("─".repeat(areas.rule.width as usize)).style(Style::default().fg(LINES)),
+        areas.rule,
     );
-    render_listing(frame, browse, list_area);
-    frame.render_widget(Paragraph::new(message_line(app)), status);
+    render_listing(frame, browse, areas.list, areas.pager);
+    frame.render_widget(Paragraph::new(message_line(app)), areas.status);
 }
 
-fn render_listing(frame: &mut Frame, browse: &Browse, area: Rect) {
+/// Where the parts of the browse screen go.
+struct BrowseAreas {
+    /// The bordered frame, and the status line under it.
+    main: Rect,
+    status: Rect,
+    /// Inside the frame: the source tabs, the rule under them, one page of
+    /// the listing, and the page number.
+    tabs: Rect,
+    rule: Rect,
+    list: Rect,
+    pager: Rect,
+}
+
+fn browse_layout(screen: Rect) -> BrowseAreas {
+    let [main, status] =
+        Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(screen);
+    let [tabs, rule, list, pager] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(Block::bordered().inner(main));
+    BrowseAreas {
+        main,
+        status,
+        tabs,
+        rule,
+        list,
+        pager,
+    }
+}
+
+/// How many puzzles a page of a listing holds on this screen. The event loop
+/// reports it to the core, so the page keys turn exactly one page.
+pub fn page_len(screen: Rect) -> usize {
+    browse_layout(screen).list.height.max(1) as usize
+}
+
+fn render_listing(frame: &mut Frame, browse: &Browse, area: Rect, pager: Rect) {
     let tab = browse.tab();
     match &tab.listing {
         Listing::Loading => {
@@ -246,7 +276,10 @@ fn render_listing(frame: &mut Frame, browse: &Browse, area: Rect) {
             );
         }
         Listing::Ready(items) => {
-            let rows: Vec<ListItem> = items
+            // The list stays in place, and the selection moves down it. Past
+            // the last row, the next page replaces the whole list.
+            let page = browse.tab().page(area.height as usize);
+            let rows: Vec<ListItem> = items[page.start..page.end]
                 .iter()
                 .map(|item| {
                     ListItem::new(Line::from(vec![
@@ -255,18 +288,23 @@ fn render_listing(frame: &mut Frame, browse: &Browse, area: Rect) {
                     ]))
                 })
                 .collect();
-            let visible = area.height as usize;
-            let offset = tab
-                .selected
-                .saturating_sub(visible / 2)
-                .min(items.len().saturating_sub(visible));
-            let mut state = ListState::default()
-                .with_selected(Some(tab.selected))
-                .with_offset(offset);
+            let mut state = ListState::default().with_selected(Some(tab.selected - page.start));
             let list = List::new(rows)
                 .highlight_symbol("▶")
                 .highlight_style(Style::default().fg(INK).bg(ACCENT));
             frame.render_stateful_widget(list, area, &mut state);
+            if page.count > 1 {
+                frame.render_widget(
+                    Paragraph::new(format!(
+                        "Ctrl-b/f page · {} of {} ",
+                        page.number + 1,
+                        page.count
+                    ))
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(LINES)),
+                    pager,
+                );
+            }
         }
     }
 }

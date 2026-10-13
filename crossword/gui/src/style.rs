@@ -118,7 +118,10 @@ pub fn clue(kind: ClueKind) -> impl Fn(&Theme, button::Status) -> button::Style 
 pub fn link(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: hovered(status).then_some(Background::Color(HOVER)),
-        text_color: ACCENT,
+        text_color: match status {
+            button::Status::Disabled => MUTED,
+            _ => ACCENT,
+        },
         border: rounded(6.0),
         ..button::Style::default()
     }

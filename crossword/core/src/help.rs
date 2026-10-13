@@ -58,7 +58,7 @@ pub const LISTS: Section = Section {
     title: "Lists",
     rows: &[
         ("j k  g G", "move"),
-        ("Ctrl-d  Ctrl-u", "move a page"),
+        ("Ctrl-f  Ctrl-b", "next / previous page"),
         ("h l  Tab", "switch source"),
         ("Enter  r", "open / reload"),
         ("q", "back"),

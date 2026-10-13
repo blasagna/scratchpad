@@ -154,6 +154,51 @@ fn browse_shows_tabs_items_and_failures() {
 }
 
 #[test]
+fn a_long_listing_stays_in_place_and_turns_a_page_at_a_time() {
+    let mut app = App::new(None);
+    app.open_size(Size::Mini);
+    let refs = (0..15)
+        .map(|i| PuzzleRef {
+            source: SourceId::PrincetonianMini,
+            id: format!("p{i}"),
+            date: None,
+            title: Some(format!("Puzzle {i:02}")),
+        })
+        .collect();
+    app.on_response(
+        Response::Listed(SourceId::PrincetonianMini, Ok(refs)),
+        Instant::now(),
+    );
+    // At 80x12 the list has six rows.
+    app.set_page_len(crossword_tui::ui::page_len(Rect::new(0, 0, 80, 12)));
+    assert_eq!(app.page_len(), 6);
+    let row_of = |lines: &[String], text: &str| lines.iter().position(|l| l.contains(text));
+
+    let before = render(&app, 80, 12);
+    assert!(row_of(&before, "Puzzle 05").is_some());
+    assert!(row_of(&before, "Puzzle 06").is_none());
+    assert!(row_of(&before, "1 of 3").is_some());
+
+    // The cursor moves down the list, and the list does not move.
+    press(&mut app, "jjjjj");
+    let after = render(&app, 80, 12);
+    for i in 0..6 {
+        let text = format!("Puzzle {i:02}");
+        assert_eq!(row_of(&before, &text), row_of(&after, &text), "{text}");
+    }
+    let cursor = row_of(&after, "▶").unwrap();
+    assert_eq!(Some(cursor), row_of(&after, "Puzzle 05"));
+
+    // One more step turns the page, and the cursor goes to its top.
+    press(&mut app, "j");
+    let next = render(&app, 80, 12);
+    assert!(row_of(&next, "Puzzle 05").is_none());
+    assert_eq!(row_of(&next, "Puzzle 06"), row_of(&before, "Puzzle 00"));
+    assert_eq!(row_of(&next, "▶"), row_of(&next, "Puzzle 06"));
+    assert!(row_of(&next, "2 of 3").is_some());
+}
+
+#[test]
 fn boxed_grid_puts_numbers_in_the_borders() {
     let app = solving(small_data());
     let lines = render(&app, 100, 30);
