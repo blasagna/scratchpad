@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "headline": "Quick crossword No 1",
+  "crossword": {
+    "id": "crosswords/quick/1",
+    "number": 1,
+    "name": "Quick crossword No 1",
+    "date": 1760572800000,
+    "dimensions": {"cols": 3, "rows": 3},
+    "crosswordType": "quick",
+    "solutionAvailable": true,
+    "entries": [
+      {"id": "1-across", "number": 1, "humanNumber": "1", "clue": "Water carrier (3)", "direction": "across", "length": 3, "group": ["1-across"], "position": {"x": 0, "y": 0}, "separatorLocations": {}, "solution": "URN"},
+      {"id": "2-down", "number": 2, "humanNumber": "2", "clue": "Fish eggs (3)", "direction": "down", "length": 3, "group": ["2-down"], "position": {"x": 1, "y": 0}, "separatorLocations": {}, "solution": "ROE"},
+      {"id": "3-across", "number": 3, "humanNumber": "3", "clue": "Afternoon <i>cuppa</i> &amp; cake? (3)", "direction": "across", "length": 3, "group": ["3-across"], "position": {"x": 0, "y": 2}, "separatorLocations": {}, "solution": "TEA"}
+    ]
+  }
+}

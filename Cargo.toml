@@ -3,6 +3,9 @@ resolver = "3"
 members = [
     "text_analyzer/rust",
     "morse_trainer",
+    "crossword/core",
+    "crossword/tui",
+    "crossword/gui",
     "copy_file/rust",
     "simple_logger/rust",
     "matrix_ops/rust",
